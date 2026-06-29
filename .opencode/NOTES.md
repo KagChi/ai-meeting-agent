@@ -1,6 +1,6 @@
 # Meeting Agent — Notes
 
-**Architecture Context:** See `/Users/kagchi/Documents/projects/bmw-ntust-internship/docs/study-notes/14_Meetily_Cloud_First_Transcription.md`
+**Architecture Context:** See `/Users/kagchi/Documents/projects/bmw-ntust-internship/docs/study-notes/14_Simple_Whisper_Transcription_Service.md`
 
 ---
 
