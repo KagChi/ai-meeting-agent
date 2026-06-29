@@ -1,0 +1,26 @@
+[package]
+name = "meeting-agent-cli"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "meeting-agent"
+path = "src/main.rs"
+
+[dependencies]
+# Local dependencies
+meeting-agent-core = { path = "../core" }
+
+# Workspace dependencies
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+reqwest = { workspace = true }
+clap = { workspace = true }
+colored = { workspace = true }
+indicatif = { workspace = true }
+comfy-table = { workspace = true }
