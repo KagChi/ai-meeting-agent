@@ -76,4 +76,4 @@ experiments/
 .cursor/
 target/
 
-frontend/src-tauri/binaries/
+audio

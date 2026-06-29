@@ -49,3 +49,6 @@ comfy-table = "7"
 
 # Config
 dotenv = "0.15"
+
+# FFmpeg wrapper
+ffmpeg-sidecar = "2.5"
