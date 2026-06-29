@@ -38,8 +38,18 @@ log = "0.4"
 env_logger = "0.11"
 
 # Web framework (server only)
-axum = "0.7"
+axum = { version = "0.7", features = ["multipart"] }
 tower-http = { version = "0.5", features = ["cors", "trace", "compression-gzip"] }
+
+# Async utilities
+tokio-util = { version = "0.7", features = ["rt"] }
+
+# Temp files
+tempfile = "3"
+
+# Stream utilities
+futures-util = "0.3"
+tokio-stream = { version = "0.1", features = ["sync"] }
 
 # CLI (cli only)
 clap = { version = "4", features = ["derive", "env"] }

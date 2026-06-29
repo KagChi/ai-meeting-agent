@@ -10,6 +10,7 @@ pub enum ApiError {
     NotFound(String),            // 404
     BadRequest(String),          // 400
     Unauthorized,                // 401
+    Conflict(String),            // 409
     InternalServerError(String), // 500
 }
 
@@ -23,6 +24,7 @@ impl IntoResponse for ApiError {
                 Some(msg),
             ),
             ApiError::Unauthorized => (StatusCode::UNAUTHORIZED, "Unauthorized".to_string(), None),
+            ApiError::Conflict(msg) => (StatusCode::CONFLICT, "Conflict".to_string(), Some(msg)),
             ApiError::InternalServerError(msg) => (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "Internal Server Error".to_string(),
@@ -77,6 +79,13 @@ mod tests {
         let err = ApiError::InternalServerError("Database error".to_string());
         let response = err.into_response();
         assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    #[tokio::test]
+    async fn test_conflict_error_response() {
+        let err = ApiError::Conflict("Job already completed".to_string());
+        let response = err.into_response();
+        assert_eq!(response.status(), StatusCode::CONFLICT);
     }
 
     #[test]

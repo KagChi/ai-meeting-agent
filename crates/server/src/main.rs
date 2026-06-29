@@ -2,13 +2,18 @@
 //!
 //! HTTP API server for the meeting agent system.
 
-use axum::{middleware, routing::get, Router};
+use axum::{
+    middleware,
+    routing::{get, post},
+    Router,
+};
 use std::net::SocketAddr;
 use tower_http::{cors::CorsLayer, trace::TraceLayer};
 
 mod auth;
 mod error;
 mod handlers;
+mod import_handlers;
 mod state;
 mod types;
 mod validation;
@@ -48,6 +53,21 @@ async fn main() -> anyhow::Result<()> {
                 .delete(handlers::delete_meeting),
         )
         .route("/meetings/:id/transcript", get(handlers::get_transcript))
+        // Import endpoints
+        .route("/import", post(import_handlers::create_import))
+        .route("/import/validate", post(import_handlers::validate_import))
+        .route(
+            "/import/:job_id/status",
+            get(import_handlers::get_import_status),
+        )
+        .route(
+            "/import/:job_id/events",
+            get(import_handlers::get_import_events),
+        )
+        .route(
+            "/import/:job_id/cancel",
+            post(import_handlers::cancel_import),
+        )
         .route_layer(middleware::from_fn_with_state(
             state.clone(),
             auth::auth_middleware,

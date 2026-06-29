@@ -1,4 +1,5 @@
 use chrono::{DateTime, Utc};
+use meeting_agent_core::jobs::{ImportJob, JobState};
 use meeting_agent_core::models::{Meeting, MeetingStatus};
 use meeting_agent_core::transcription::TranscriptionResponse;
 use serde::{Deserialize, Serialize};
@@ -43,6 +44,58 @@ pub struct ErrorResponse {
     pub error: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub details: Option<String>,
+}
+
+// === Import Types ===
+
+/// Response when creating an import job (202 Accepted)
+#[derive(Debug, Serialize)]
+pub struct ImportResponse {
+    pub job_id: String,
+    pub status: JobState,
+}
+
+/// Response for polling import job status
+#[derive(Debug, Serialize)]
+pub struct ImportStatusResponse {
+    pub job_id: String,
+    pub state: JobState,
+    pub progress: Vec<meeting_agent_core::jobs::ProgressEvent>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub meeting_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+impl From<ImportJob> for ImportStatusResponse {
+    fn from(job: ImportJob) -> Self {
+        Self {
+            created_at: job.created_at,
+            updated_at: job.updated_at,
+            progress: job.progress,
+            job_id: job.id,
+            state: job.state,
+            meeting_id: job.meeting_id,
+            error: job.error,
+        }
+    }
+}
+
+/// Response for import validation
+#[derive(Debug, Serialize)]
+pub struct ImportValidationResponse {
+    pub valid: bool,
+    pub format: String,
+    pub size: u64,
+}
+
+/// Response for cancel operation
+#[derive(Debug, Serialize)]
+pub struct CancelImportResponse {
+    pub job_id: String,
+    pub cancelled: bool,
 }
 
 #[cfg(test)]

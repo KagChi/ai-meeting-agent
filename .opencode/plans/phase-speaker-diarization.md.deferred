@@ -1,0 +1,316 @@
+# Phase: Speaker Diarization with sherpa-onnx
+
+**Goal**: Integrate sherpa-onnx for local speaker diarization to map transcript segments to individual speakers with persistent identification across meetings.
+
+## Overview
+
+**Solution**: Use [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) — a production-ready library with Rust bindings that provides:
+- **Offline speaker diarization** (no cloud API required)
+- **Speaker segmentation** via pyannote models
+- **Speaker embedding extraction** via 3D-Speaker or NeMo models
+- **Speaker identification** with persistent speaker database
+- **Multi-language support** (language-agnostic, works with Indonesian/English/Mandarin)
+- **5+ speaker support** (tested with multiple speakers)
+- **Rust API** with examples at `rust-api-examples/`
+
+## Architecture
+
+```
+Audio File
+    ↓
+[Transcription] ← Whisper API (existing)
+    ↓
+[Speaker Diarization] ← sherpa-onnx (NEW)
+    ├─ Speaker Segmentation (pyannote model)
+    └─ Speaker Embedding Extraction (3D-Speaker/NeMo)
+    ↓
+[Segment-Speaker Mapping] (NEW)
+    ↓
+Enhanced Transcript with speaker labels
+```
+
+## Dependencies to Add
+
+### Cargo.toml (crates/core)
+
+```toml
+[dependencies]
+# Existing dependencies...
+
+# Speaker diarization
+sherpa-onnx = "1.10"  # Check latest version
+```
+
+### Pre-trained Models (to download)
+
+**Speaker Segmentation Model** (choose one):
+- `sherpa-onnx-pyannote-segmentation-3-0` (recommended)
+  - URL: https://github.com/k2-fsa/sherpa-onnx/releases/tag/speaker-segmentation-models
+  - Size: ~16 MB (model.onnx) or ~5 MB (model.int8.onnx, quantized)
+
+**Speaker Embedding Model** (choose one):
+- `3D-Speaker` (recommended for quality)
+  - URL: https://github.com/k2-fsa/sherpa-onnx/releases/tag/speaker-recongition-models
+  - sherpa-onnx-3dspeaker-speech-campplus-sv-zh-cn-16k-common.onnx
+- `NeMo` (alternative, smaller)
+  - sherpa-onnx-nemo-titanet-en-large.onnx
+
+Models will be stored at: `~/.meeting-agent/models/`
+
+## Tasks
+
+### 1. Model Management
+
+- [ ] Create `crates/core/src/models/diarization.rs` module
+- [ ] Add model download functionality (HTTP client to GitHub releases)
+- [ ] Implement model caching in `~/.meeting-agent/models/`
+- [ ] Add model verification (checksum validation)
+- [ ] Create `ModelConfig` struct for model paths
+
+### 2. Speaker Diarization Module
+
+- [ ] Create `crates/core/src/diarization.rs` module
+- [ ] Implement `SpeakerDiarizer` struct wrapping sherpa-onnx APIs
+- [ ] Implement `diarize(audio_path) -> Vec<SpeakerSegment>` method
+  - Returns segments with (start, end, speaker_id)
+- [ ] Add speaker embedding extraction
+- [ ] Implement speaker clustering algorithm integration
+- [ ] Add configuration options (min_duration, clustering_threshold)
+
+### 3. Speaker Database
+
+- [ ] Create `crates/core/src/speaker_db.rs` module
+- [ ] Implement `SpeakerDatabase` struct for persistent speaker storage
+- [ ] Add speaker registration: `register_speaker(name, embedding) -> speaker_id`
+- [ ] Add speaker identification: `identify_speaker(embedding) -> Option<speaker_id>`
+- [ ] Add speaker search with similarity threshold
+- [ ] Store speaker database at `~/.meeting-agent/speakers.json`
+- [ ] Implement speaker profile management (CRUD operations)
+
+### 4. Segment-Speaker Mapping
+
+- [ ] Create `crates/core/src/segment_mapper.rs` module
+- [ ] Implement `map_segments_to_speakers()` function
+  - Input: transcript segments (with timestamps), speaker segments (with timestamps)
+  - Output: transcript segments enhanced with speaker_id
+  - Algorithm: overlap detection (find speaker active during each transcript segment)
+- [ ] Handle edge cases (overlapping speech, silence gaps)
+- [ ] Add confidence scoring for speaker assignments
+
+### 5. Data Model Updates
+
+- [ ] Update `TranscriptSegment` struct in `crates/core/src/models.rs`:
+  ```rust
+  pub struct TranscriptSegment {
+      pub id: u32,
+      pub start: f64,
+      pub end: f64,
+      pub text: String,
+      pub speaker_id: Option<String>,  // NEW: speaker identifier
+      pub speaker_name: Option<String>, // NEW: optional speaker name
+      pub confidence: Option<f64>,      // NEW: speaker assignment confidence
+      // ... existing fields
+  }
+  ```
+- [ ] Add `SpeakerSegment` struct:
+  ```rust
+  pub struct SpeakerSegment {
+      pub start: f64,
+      pub end: f64,
+      pub speaker_id: String,
+      pub embedding: Vec<f32>,
+  }
+  ```
+- [ ] Add `Speaker` struct:
+  ```rust
+  pub struct Speaker {
+      pub id: String,
+      pub name: Option<String>,
+      pub embedding: Vec<f32>,
+      pub first_seen: DateTime<Utc>,
+      pub last_seen: DateTime<Utc>,
+      pub meeting_count: u32,
+  }
+  ```
+
+### 6. Integration with Import Flow
+
+- [ ] Update CLI import command (`crates/cli/src/main.rs`)
+  - After transcription, run speaker diarization
+  - Map speakers to transcript segments
+  - Save enhanced transcript with speaker information
+- [ ] Add progress indicators for diarization steps:
+  ```
+  [1/3] Transcribing audio... ✓
+  [2/3] Detecting speakers... ✓
+  [3/3] Mapping speakers to transcript... ✓
+  ```
+- [ ] Add flag `--skip-diarization` to disable speaker detection
+
+### 7. Configuration
+
+- [ ] Add `DiarizationConfig` to `Config` struct:
+  ```rust
+  pub struct DiarizationConfig {
+      pub enabled: bool,
+      pub segmentation_model: String,
+      pub embedding_model: String,
+      pub min_duration: f64,          // Minimum speaker segment duration (seconds)
+      pub clustering_threshold: f64,   // Speaker similarity threshold
+      pub num_speakers: Option<usize>, // Expected number of speakers (optional)
+  }
+  ```
+- [ ] Add environment variable support:
+  - `DIARIZATION_ENABLED=true`
+  - `DIARIZATION_MODEL_DIR=/path/to/models`
+- [ ] Add config validation
+
+### 8. HTTP API Endpoints (Future)
+
+- [ ] `GET /meetings/{id}/speakers` - List speakers in a meeting
+- [ ] `GET /speakers` - List all known speakers
+- [ ] `POST /speakers` - Register a new speaker
+- [ ] `GET /speakers/{id}` - Get speaker details
+- [ ] `PATCH /speakers/{id}` - Update speaker name/metadata
+- [ ] `DELETE /speakers/{id}` - Remove speaker
+- [ ] `POST /meetings/{id}/speakers/identify` - Re-run speaker identification
+
+### 9. CLI Commands (Future)
+
+- [ ] `meeting-agent speakers list` - List all known speakers
+- [ ] `meeting-agent speakers show <id>` - Show speaker details
+- [ ] `meeting-agent speakers rename <id> <name>` - Rename speaker
+- [ ] `meeting-agent speakers merge <id1> <id2>` - Merge duplicate speakers
+- [ ] `meeting-agent import --speakers <audio>` - Import with specific speaker assignment
+
+### 10. Testing
+
+- [ ] Unit tests for speaker segmentation
+- [ ] Unit tests for speaker embedding extraction
+- [ ] Unit tests for segment-speaker mapping algorithm
+- [ ] Unit tests for speaker database operations
+- [ ] Integration test: end-to-end diarization pipeline
+- [ ] Test with multi-language audio (Indonesian/English/Mandarin)
+- [ ] Test with 5+ speakers
+- [ ] Performance benchmarks (diarization speed vs audio duration)
+
+### 11. Documentation
+
+- [ ] Document sherpa-onnx setup and model download
+- [ ] Add speaker diarization usage guide
+- [ ] Document speaker identification workflow
+- [ ] Add troubleshooting section (model loading errors, memory issues)
+- [ ] Add example transcript output with speaker labels
+
+## File Structure Changes
+
+```
+~/.meeting-agent/
+├── config.json
+├── speakers.json                    # NEW: Speaker database
+├── models/                          # NEW: Pre-trained models
+│   ├── segmentation/
+│   │   └── pyannote-3.0.onnx
+│   └── embedding/
+│       └── 3dspeaker.onnx
+└── meetings/{uuid}/
+    ├── meeting.json
+    ├── transcript.json              # Enhanced with speaker_id fields
+    ├── speakers.json                # NEW: Meeting-specific speaker mapping
+    └── audio.mp3
+```
+
+## Transcript Output Format (Enhanced)
+
+```json
+{
+  "segments": [
+    {
+      "id": 0,
+      "start": 0.0,
+      "end": 3.2,
+      "text": "Hello everyone, welcome to the meeting.",
+      "speaker_id": "spk_001",
+      "speaker_name": "John Doe",
+      "confidence": 0.95
+    },
+    {
+      "id": 1,
+      "start": 3.5,
+      "end": 6.8,
+      "text": "Thank you for having me.",
+      "speaker_id": "spk_002",
+      "speaker_name": "Jane Smith",
+      "confidence": 0.92
+    }
+  ],
+  "speakers": [
+    {
+      "id": "spk_001",
+      "name": "John Doe",
+      "total_duration": 45.2,
+      "segment_count": 12
+    },
+    {
+      "id": "spk_002",
+      "name": "Jane Smith",
+      "total_duration": 38.7,
+      "segment_count": 10
+    }
+  ]
+}
+```
+
+## Implementation Phases
+
+### Phase 1: Basic Diarization (Week 1)
+- Model management and download
+- sherpa-onnx integration
+- Basic speaker segmentation
+- Segment-speaker mapping
+
+### Phase 2: Speaker Identification (Week 2)
+- Speaker database
+- Speaker embedding extraction
+- Persistent speaker identification across meetings
+
+### Phase 3: Integration & Testing (Week 3)
+- CLI integration
+- Configuration management
+- Comprehensive testing
+- Documentation
+
+## Success Criteria
+
+- ✓ Can detect 5+ speakers in a meeting
+- ✓ Works with Indonesian/English/Mandarin audio
+- ✓ Provides speaker timestamps synchronized with transcript
+- ✓ Identifies speakers persistently across meetings
+- ✓ Runs locally (no cloud API dependency)
+- ✓ Pure Rust implementation
+- ✓ Processing time < 1x audio duration (real-time capable)
+
+## Risks and Mitigations
+
+**Risk**: sherpa-onnx Rust crate version mismatch or API changes
+- **Mitigation**: Pin specific version, test thoroughly, monitor upstream releases
+
+**Risk**: Model download failures or network issues
+- **Mitigation**: Implement retry logic, allow manual model placement, cache models permanently
+
+**Risk**: Poor speaker clustering with 5+ speakers
+- **Mitigation**: Allow manual clustering threshold adjustment, provide speaker merging tools
+
+**Risk**: Memory usage with large audio files
+- **Mitigation**: Process audio in chunks, add memory limits in config
+
+**Risk**: Slow processing time
+- **Mitigation**: Use quantized models (int8), optimize audio preprocessing, consider parallel processing
+
+## References
+
+- sherpa-onnx GitHub: https://github.com/k2-fsa/sherpa-onnx
+- sherpa-onnx Rust examples: https://github.com/k2-fsa/sherpa-onnx/tree/master/rust-api-examples
+- Speaker segmentation models: https://github.com/k2-fsa/sherpa-onnx/releases/tag/speaker-segmentation-models
+- Speaker embedding models: https://github.com/k2-fsa/sherpa-onnx/releases/tag/speaker-recongition-models
+- sherpa-onnx docs: https://k2-fsa.github.io/sherpa/onnx/speaker-diarization/index.html

@@ -15,36 +15,38 @@
 - [x] Set up basic HTTP server skeleton with Axum
 - [x] Add health and version endpoints
 
-## Phase 2: Core Transcription Client Implementation
+## Phase 2: Core Transcription Client Implementation ✅
 
-- [ ] Create transcription module in meeting-agent-core
-- [ ] Implement TranscriptionClient with OpenAI-compatible API support
-- [ ] Add request/response models (TranscriptionRequest, TranscriptionResponse)
-- [ ] Implement multipart file upload for audio files
-- [ ] Add error handling and retry logic
-- [ ] Support multiple response formats (json, verbose_json, srt, vtt, text)
-- [ ] Add environment variable loading for TRANSCRIPTION_* vars
-- [ ] Update Config to load from both file and environment variables
+- [x] Create transcription module in meeting-agent-core
+- [x] Implement TranscriptionClient with OpenAI-compatible API support
+- [x] Add request/response models (TranscriptionRequest, TranscriptionResponse)
+- [x] Implement multipart file upload for audio files
+- [x] Add error handling and retry logic
+- [x] Support multiple response formats (json, verbose_json, srt, vtt, text)
+- [x] Add environment variable loading for TRANSCRIPTION_* vars
+- [x] Update Config to load from both file and environment variables
+- [x] Add FFmpeg integration for audio format conversion
+- [x] Implement CLI import command with progress indicators
 
-## Phase 3: File System and Meeting Management
+## Phase 3: File System and Meeting Management ✅
 
-- [ ] Implement meeting storage operations (create, read, update, delete)
-- [ ] Add meeting metadata management
-- [ ] Implement audio file handling (copy to meeting directory)
-- [ ] Add transcript storage (save verbose_json format)
-- [ ] Implement meeting listing and search
-- [ ] Add file cleanup on meeting deletion
+- [x] Implement meeting storage operations (create, read, update, delete)
+- [x] Add meeting metadata management
+- [x] Implement audio file handling (copy to meeting directory)
+- [x] Add transcript storage (save verbose_json format)
+- [x] Implement meeting listing and search
+- [x] Add file cleanup on meeting deletion
 
-## Phase 4: HTTP API Endpoints - Meetings & Transcripts
+## Phase 4: HTTP API Endpoints - Meetings & Transcripts ✅
 
-- [ ] Implement GET /meetings (list all meetings)
-- [ ] Implement GET /meetings/{id} (get meeting details)
-- [ ] Implement POST /meetings (create meeting)
-- [ ] Implement PATCH /meetings/{id} (update meeting metadata)
-- [ ] Implement DELETE /meetings/{id} (delete meeting)
-- [ ] Implement GET /meetings/{id}/transcript (get transcript)
-- [ ] Add request validation and error responses
-- [ ] Add authentication middleware with MEETING_AGENT_API_KEY
+- [x] Implement GET /meetings (list all meetings)
+- [x] Implement GET /meetings/{id} (get meeting details)
+- [x] Implement POST /meetings (create meeting)
+- [x] Implement PATCH /meetings/{id} (update meeting metadata)
+- [x] Implement DELETE /meetings/{id} (delete meeting)
+- [x] Implement GET /meetings/{id}/transcript (get transcript)
+- [x] Add request validation and error responses
+- [x] Add authentication middleware with MEETING_AGENT_API_KEY
 
 ## Phase 5: Import System with Background Jobs
 
