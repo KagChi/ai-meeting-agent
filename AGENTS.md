@@ -18,6 +18,31 @@
   to record a new rule, format, or behavior, ask first ("should I
   document this?"). The user curates.
 
+## Pre-Commit Verification (mandatory)
+
+Before every commit, run the following checks in order:
+
+1. **Format check**: `cargo fmt --all -- --check`
+   - If formatting issues found, run `cargo fmt --all` to fix them
+2. **Lint check**: `cargo clippy --all --all-targets -- -D warnings`
+   - All clippy warnings must be resolved before committing
+3. **Test check**: `cargo test --all`
+   - All tests must pass before committing
+
+**Commit workflow:**
+1. Run all pre-commit checks (fmt, clippy, test)
+2. Fix any issues found
+3. **Ask for permission to commit** — never assume permission
+4. Stage only the intended files (avoid `git add .`)
+5. Create commit with clear, conventional message
+6. **Never batch commits** — ask before each commit action
+
+**Permission is per-action:**
+- Each commit requires explicit permission
+- Each push requires explicit permission
+- Permission never carries over from previous actions
+- "commit & push" in one user message = permission for both actions in sequence
+
 ## Internship Track
 
 **Two-repo structure:**
