@@ -57,16 +57,36 @@ impl Default for Config {
 
 impl Config {
     /// Load config from file, or create default if not exists
+    /// Environment variables override file values:
+    /// - TRANSCRIPTION_PROVIDER
+    /// - TRANSCRIPTION_API_KEY
+    /// - TRANSCRIPTION_BASE_URL
+    /// - TRANSCRIPTION_MODEL
     pub fn load(path: &PathBuf) -> anyhow::Result<Self> {
-        if path.exists() {
+        let mut config = if path.exists() {
             let content = std::fs::read_to_string(path)?;
-            let config: Config = serde_json::from_str(&content)?;
-            Ok(config)
+            serde_json::from_str(&content)?
         } else {
             let config = Config::default();
             config.save(path)?;
-            Ok(config)
+            config
+        };
+
+        // Override with environment variables if present
+        if let Ok(provider) = std::env::var("TRANSCRIPTION_PROVIDER") {
+            config.transcription.provider = provider;
         }
+        if let Ok(api_key) = std::env::var("TRANSCRIPTION_API_KEY") {
+            config.transcription.api_key = Some(api_key);
+        }
+        if let Ok(base_url) = std::env::var("TRANSCRIPTION_BASE_URL") {
+            config.transcription.base_url = base_url;
+        }
+        if let Ok(model) = std::env::var("TRANSCRIPTION_MODEL") {
+            config.transcription.model = model;
+        }
+
+        Ok(config)
     }
 
     /// Save config to file

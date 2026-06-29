@@ -24,3 +24,4 @@ clap = { workspace = true }
 colored = { workspace = true }
 indicatif = { workspace = true }
 comfy-table = { workspace = true }
+dotenv = { workspace = true }

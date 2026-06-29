@@ -76,6 +76,9 @@ enum ConfigCommands {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    // Load environment variables
+    dotenv::dotenv().ok();
+
     let cli = Cli::parse();
 
     match cli.command {

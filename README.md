@@ -55,10 +55,11 @@ Key environment variables:
 MEETING_AGENT_PORT=8080
 MEETING_AGENT_HOST=127.0.0.1
 
-# Transcription
+# Transcription (choose one provider)
 TRANSCRIPTION_PROVIDER=openai
-OPENAI_API_KEY=your-api-key-here
-OPENAI_BASE_URL=https://api.openai.com/v1
+TRANSCRIPTION_API_KEY=your-api-key-here
+TRANSCRIPTION_BASE_URL=https://api.openai.com/v1
+TRANSCRIPTION_MODEL=whisper-1
 
 # Summary
 SUMMARY_PROVIDER=openai

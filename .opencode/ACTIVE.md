@@ -1,12 +1,12 @@
 # Active Work
 
-**Project:** Meeting Agent Cloud-First Transformation
+**Project:** Meeting Agent Cloud-First Transcription
 
-**Goal:** Create.
+**Goal:** Build ai-meeting-agent with universal TRANSCRIPTION_* environment variables supporting OpenAI, Groq, and custom/vLLM providers.
 
-**Current Phase:** Phase 3 — Remove Local Transcription Dependencies
+**Current Phase:** Phase 1 Complete — Initial repository setup done, ready for Phase 2 (Core Transcription Client Implementation)
 
 **Extern Repo:**
 - Branch: `2026-TEEP-5-Samuel` at `/Users/kagchi/Documents/projects/bmw-ntust-internship`
 - Todo: `docs/daily-logs/08_MeetingAgent.md`
-- Study Notes: `docs/study-notes/14_Meetily_Cloud_First_Transcription.md`
+- Study Notes: `docs/study-notes/14_Simple_Whisper_Transcription_Service.md`

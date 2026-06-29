@@ -1080,6 +1080,7 @@ dependencies = [
  "clap",
  "colored",
  "comfy-table",
+ "dotenv",
  "indicatif",
  "meeting-agent-core",
  "reqwest",
