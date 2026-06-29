@@ -50,37 +50,37 @@
 
 ## Phase 5: Import System with Background Jobs
 
-- [ ] Design background job system for import processing
-- [ ] Implement POST /import (accept audio file, spawn background job)
-- [ ] Implement POST /import/validate (validate audio file format)
-- [ ] Implement GET /import/{job_id}/status (poll job status)
-- [ ] Implement GET /import/{job_id}/events (SSE stream of progress)
-- [ ] Implement POST /import/{job_id}/cancel (cancel import)
-- [ ] Add job state management (pending, processing, completed, failed)
-- [ ] Add progress tracking (upload, transcription, storage)
+- [x] Design background job system for import processing
+- [x] Implement POST /import (accept audio file, spawn background job)
+- [x] Implement POST /import/validate (validate audio file format)
+- [x] Implement GET /import/{job_id}/status (poll job status)
+- [x] Implement GET /import/{job_id}/events (SSE stream of progress)
+- [x] Implement POST /import/{job_id}/cancel (cancel import)
+- [x] Add job state management (pending, processing, completed, failed)
+- [x] Add progress tracking (upload, transcription, storage)
 
 ## Phase 6: Summary Generation System
 
-- [ ] Create summary module with OpenAI/Anthropic client
-- [ ] Implement POST /meetings/{id}/summary (generate summary)
-- [ ] Implement GET /meetings/{id}/summary (get summary status and data)
-- [ ] Implement PUT /meetings/{id}/summary (save/update summary)
-- [ ] Implement POST /meetings/{id}/summary/cancel (cancel generation)
-- [ ] Implement GET /meetings/{id}/summary/events (SSE stream)
-- [ ] Add summary templates (key points, action items, decisions)
-- [ ] Add language preference support
+- [x] Create summary module with OpenAI-compatible client (configurable via SUMMARY_* env / config)
+- [x] Implement POST /meetings/{id}/summary (generate summary, spawns background job)
+- [x] Implement GET /meetings/{id}/summary (list all summaries for meeting)
+- [x] Implement GET /meetings/{id}/summary/{template} (fetch specific summary)
+- [x] Generalize job routes: /jobs/{job_id}/{status,events,cancel} (shared by import + summary)
+- [x] Add summary templates (key_points, action_items, decisions, full)
+- [x] Add language preference support (per-request + SUMMARY_LANGUAGE env default)
+- [x] Block summary generation if meeting status != Ready
 
 ## Phase 7: CLI Implementation
 
-- [ ] Implement `meeting-agent import` command (import audio file)
-- [ ] Implement `meeting-agent list` command (list all meetings)
-- [ ] Implement `meeting-agent show <id>` command (show meeting details)
-- [ ] Implement `meeting-agent summarize <id>` command (generate summary)
-- [ ] Implement `meeting-agent export <id>` command (export transcript as srt/vtt/text)
-- [ ] Implement `meeting-agent config show` command (show current config)
-- [ ] Implement `meeting-agent config set` command (update config)
-- [ ] Implement `meeting-agent server` command (start API server)
-- [ ] Add progress bars and colored output
+- [x] Implement `meeting-agent import` command (import audio file)
+- [x] Implement `meeting-agent list` command (list all meetings)
+- [x] Implement `meeting-agent show <id>` command (show meeting details, 8-char prefix OK)
+- [x] Implement `meeting-agent summarize <id>` command (generate summary, synchronous)
+- [x] Implement `meeting-agent export <id>` command (export transcript as srt/vtt/text/json)
+- [x] Implement `meeting-agent config show` command (show current config, API keys masked)
+- [x] Implement `meeting-agent config set` command (update config, dotted notation)
+- [x] Implement `meeting-agent server` command (start API server, --port/--host overrides)
+- [x] Add progress bars and colored output (indicatif spinners, colored status, comfy-table)
 - [ ] Add interactive mode for configuration
 
 ## Phase 8: Configuration Management API
