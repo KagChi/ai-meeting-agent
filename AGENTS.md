@@ -168,7 +168,21 @@ Comment format (matches the existing daily-log pattern in the thread):
 - Use commit range instead of single "latest commit" link to show all commits in the session
 - Get first commit: `git log --oneline --reverse | head -1`
 - Get last commit: `git log --oneline -1`
-- **Time ranges must be continuous with NO gaps unless lunch break.** Use first commit timestamp as start, last commit timestamp as end. Single range per work session (e.g., `09:26-11:18`), not multiple fragmented ranges.
+- **One bullet per continuous work stretch.** A "work stretch" = any
+  continuous period of work (no significant break). Each stretch gets
+  exactly one bullet.
+- **Time range per bullet = first commit → last commit of that stretch.**
+  Continuous, no gaps within a stretch.
+- **New stretch = new bullet.** After a break (lunch, end of day, stopping
+  and resuming later), start a fresh bullet. The gap between stretches is
+  expected and allowed (not an error).
+- **When PATCHing an existing same-day comment within the same stretch:**
+  rewrite the current bullet to extend its time range (first commit →
+  latest commit). Do NOT append a new bullet for the same stretch.
+- **One bullet per phase, with continuous time ranges.** Each phase gets
+  its own bullet. Time ranges must be continuous — the next phase's bullet
+  starts where the previous one ended (e.g., `10:05-11:18` then
+  `11:18-11:48`), no gaps.
 
 Sync in lockstep with the Daily-Logs Sync Rule:
 
@@ -176,7 +190,9 @@ Sync in lockstep with the Daily-Logs Sync Rule:
    the #812 thread in the same turn. **One comment per day** — **ALWAYS check
    first if a comment for today exists** by querying:
    `gh api repos/bmw-ntust-internship/internship/issues/812/comments --jq '.[] | select(.created_at | startswith("YYYY-MM-DD"))'`
-   If found, PATCH it in place to append the new work. Only post a new comment
+   If found, PATCH it in place to merge into the current bullet — rewrite its
+   time range (first commit → latest commit of that stretch). Append a new
+   bullet only when a new work stretch begins. Only post a new comment
    (`gh issue comment 812 --repo bmw-ntust-internship/internship --body-file <tmp>`)
    when no comment exists yet for the current calendar day. **NEVER create a new
    comment without checking first.**
