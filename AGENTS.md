@@ -147,15 +147,18 @@ Comment format (matches the existing daily-log pattern in the thread):
 - Use commit range instead of single "latest commit" link to show all commits in the session
 - Get first commit: `git log --oneline --reverse | head -1`
 - Get last commit: `git log --oneline -1`
+- **Time ranges must be continuous with NO gaps unless lunch break.** Use first commit timestamp as start, last commit timestamp as end. Single range per work session (e.g., `09:26-11:18`), not multiple fragmented ranges.
 
 Sync in lockstep with the Daily-Logs Sync Rule:
 
 1. **Code complete → comment**: when you flip items in the extern todo, update
-   the #812 thread in the same turn. **One comment per day** — if a comment
-   for today already exists, PATCH it in place to append the new work; only
-   post a new comment (`gh issue comment 812 --repo
-   bmw-ntust-internship/internship --body-file <tmp>`) when no comment exists
-   yet for the current calendar day.
+   the #812 thread in the same turn. **One comment per day** — **ALWAYS check
+   first if a comment for today exists** by querying:
+   `gh api repos/bmw-ntust-internship/internship/issues/812/comments --jq '.[] | select(.created_at | startswith("YYYY-MM-DD"))'`
+   If found, PATCH it in place to append the new work. Only post a new comment
+   (`gh issue comment 812 --repo bmw-ntust-internship/internship --body-file <tmp>`)
+   when no comment exists yet for the current calendar day. **NEVER create a new
+   comment without checking first.**
 2. **Comment → plan link**: when you add a new plan file to `.opencode/plans/`
    that the user should be able to read from the thread, include its GitHub
    URL in the comment's Links block.
