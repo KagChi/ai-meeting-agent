@@ -32,16 +32,16 @@ Before every commit, run the following checks in order:
 **Commit workflow:**
 1. Run all pre-commit checks (fmt, clippy, test)
 2. Fix any issues found
-3. **Ask for permission to commit** — never assume permission
-4. Stage only the intended files (avoid `git add .`)
-5. Create commit with clear, conventional message
-6. **Never batch commits** — ask before each commit action
+3. Stage only the intended files (avoid `git add .`)
+4. **STOP and ask for permission to commit** — never commit without explicit permission
+5. Only after receiving permission: create commit with clear, conventional message
 
-**Permission is per-action:**
-- Each commit requires explicit permission
+**Permission is per-action and NEVER assumed:**
+- Each commit requires explicit permission — **NEVER commit automatically**
 - Each push requires explicit permission
 - Permission never carries over from previous actions
 - "commit & push" in one user message = permission for both actions in sequence
+- **If you commit without permission, immediately undo with `git reset --soft HEAD~1`**
 
 ## Internship Track
 
@@ -95,11 +95,14 @@ be left dangling locally. After the Daily-Logs Sync Rule triggers an edit to
 the extern repo, commit and push in the **same turn**, before posting the
 #812 comment:
 
-1. **Commit**: stage the changed extern files and commit with message
-   `chore: update` (matching the existing extern-repo style). Do not craft a
-   long custom message; the #812 comment carries the narrative.
-2. **Push — still requires explicit permission.** The Working Agreement's "No
-   push without explicit permission" applies to the extern repo too. Ask
+1. **Commit — REQUIRES explicit permission.** The Working Agreement's "No
+   commit without explicit permission" applies to the extern repo too. **STOP
+   and ask for permission before staging and committing.** Never commit
+   automatically. Stage the changed extern files and commit with message
+   `chore: update` (matching the existing extern-repo style) only after
+   receiving explicit permission. Do not craft a long custom message; the
+   #812 comment carries the narrative.
+2. **Push — still requires explicit permission.** After committing, ask
    ("extern repo has commits — push to origin/2026-TEEP-5-Samuel?") and wait
    for the user before `git push`. Default: commit locally, ask, wait.
 3. **#812 links reference the pushed HEAD.** When the Issues Sync Rule posts

@@ -7,9 +7,11 @@ pub mod audio;
 pub mod config;
 pub mod fs;
 pub mod models;
+pub mod storage;
 pub mod transcription;
 
 // Re-export commonly used types
 pub use config::Config;
 pub use models::{Meeting, Transcript};
+pub use storage::MeetingStorage;
 pub use transcription::{TranscriptionClient, TranscriptionRequest, TranscriptionResponse};

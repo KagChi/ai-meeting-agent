@@ -4,8 +4,8 @@
 
 use clap::{Parser, Subcommand};
 use meeting_agent_core::{
-    config::Config, fs, models::Meeting, transcription::TranscriptionClient,
-    transcription::TranscriptionRequest,
+    config::Config, fs, models::Meeting, storage::MeetingStorage,
+    transcription::TranscriptionClient, transcription::TranscriptionRequest,
 };
 
 #[derive(Parser)]
@@ -256,7 +256,7 @@ async fn import_audio(file: String, title: Option<String>) -> anyhow::Result<()>
         println!("{}: {}", "Segments".bold(), segments.len());
     }
 
-    // Create a meeting and save the transcript
+    // Create a meeting and save the transcript using storage module
     let meeting_title = title.unwrap_or_else(|| {
         file_path
             .file_stem()
@@ -266,23 +266,30 @@ async fn import_audio(file: String, title: Option<String>) -> anyhow::Result<()>
     });
 
     let meeting = Meeting::new(meeting_title);
+    let storage = MeetingStorage;
 
-    // Create meeting directory
-    let meeting_path = fs::meeting_dir(&meeting.id.to_string())?;
-    std::fs::create_dir_all(&meeting_path)?;
+    // Create meeting
+    storage.create_meeting(&meeting)?;
 
-    // Save meeting metadata
-    let meeting_json = serde_json::to_string_pretty(&meeting)?;
-    std::fs::write(meeting_path.join("meeting.json"), meeting_json)?;
+    // Save original audio file
+    storage.save_audio(&meeting.id, &file_path)?;
 
     // Save transcript
-    let transcript_json = serde_json::to_string_pretty(&response)?;
-    std::fs::write(meeting_path.join("transcript.json"), transcript_json)?;
+    storage.save_transcript(&meeting.id, &response)?;
+
+    // Mark transcription as complete
+    let duration_seconds = response.duration.map(|d| d as u64);
+    storage.mark_transcription_complete(
+        &meeting.id,
+        &config.transcription.provider,
+        &config.transcription.model,
+        duration_seconds,
+    )?;
 
     println!(
         "\n{} Meeting saved with ID: {}",
         "✓".green().bold(),
-        meeting.id.to_string().cyan()
+        meeting.id.cyan()
     );
     println!(
         "  View with: {} {}",
