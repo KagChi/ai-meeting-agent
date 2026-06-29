@@ -21,8 +21,8 @@ use axum::{
     },
 };
 use futures_util::stream::Stream;
-use meeting_agent_core::import::run_import;
 use meeting_agent_core::jobs::ProgressEvent;
+use meeting_agent_core::runners::run_import;
 use std::convert::Infallible;
 use std::path::PathBuf;
 use tokio_stream::wrappers::BroadcastStream;

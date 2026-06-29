@@ -1,30 +1,23 @@
-//! Background import processing
+//! Background job runners.
 //!
-//! Runs transcription pipeline as a background tokio task.
-//! Reports progress via JobRegistry, supports cancellation via CancellationToken.
+//! Two pipelines share the same pattern: an async entry point spawns
+//! `run_*_inner`, which reports progress via `JobRegistry` and checks
+//! cancellation between steps. On Ok → `complete_job`; on Err →
+//! `cancel_job` (if cancelled) or `fail_job`.
 
 use crate::audio;
+use crate::config::Config;
 use crate::jobs::{JobRegistry, ProgressEvent};
-use crate::models::Meeting;
+use crate::models::{Meeting, SummaryStatus, SummaryTemplate};
 use crate::storage::MeetingStorage;
+use crate::summary::{SummarizeOptions, SummaryClient};
 use crate::transcription::{TranscriptionClient, TranscriptionRequest};
-use crate::Config;
-use anyhow::Result;
+use anyhow::{Context, Result};
+use chrono::Utc;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 
-/// Run the full import pipeline as a background task.
-///
-/// Steps:
-/// 1. Convert audio to mp3 if needed (ffmpeg)
-/// 2. Create Meeting record (status=Importing)
-/// 3. Transcribe via TranscriptionClient
-/// 4. Save audio + transcript
-/// 5. Mark meeting as Ready
-///
-/// On error: fail_job + mark_transcription_failed (if meeting created).
-/// On cancel: job already marked Cancelled by registry; mark_transcription_failed if meeting created.
 pub async fn run_import(
     job_id: String,
     audio_path: PathBuf,
@@ -55,8 +48,6 @@ pub async fn run_import(
         Err(e) => {
             if cancel_token.is_cancelled() {
                 log::info!("Import job {} was cancelled", job_id);
-                // cancel_job already called by the cancel endpoint; ensure state
-                // If not already cancelled (e.g. internal cancel), set it
                 if registry.get_job_state(&job_id) != Some(crate::jobs::JobState::Cancelled) {
                     registry.cancel_job(&job_id);
                 }
@@ -77,7 +68,6 @@ async fn run_import_inner(
     registry: &Arc<JobRegistry>,
     cancel_token: &CancellationToken,
 ) -> Result<()> {
-    // Step 1: Convert audio if needed
     registry.update_progress(
         job_id,
         ProgressEvent::new("converting", "Preparing audio file"),
@@ -99,7 +89,6 @@ async fn run_import_inner(
 
     check_cancelled(cancel_token)?;
 
-    // Step 2: Create meeting
     registry.update_progress(
         job_id,
         ProgressEvent::new("processing", "Creating meeting record"),
@@ -119,7 +108,6 @@ async fn run_import_inner(
 
     check_cancelled(cancel_token)?;
 
-    // Step 3: Transcribe
     registry.update_progress(
         job_id,
         ProgressEvent::new("transcribing", "Sending audio to transcription API").with_percent(10.0),
@@ -140,7 +128,6 @@ async fn run_import_inner(
 
     check_cancelled(cancel_token)?;
 
-    // Step 4: Save audio + transcript
     registry.update_progress(
         job_id,
         ProgressEvent::new("saving", "Saving transcript and audio").with_percent(90.0),
@@ -149,7 +136,6 @@ async fn run_import_inner(
     storage.save_audio(&meeting.id, &final_audio.to_path_buf())?;
     storage.save_transcript(&meeting.id, &transcription)?;
 
-    // Step 5: Mark complete
     let duration_seconds = transcription.duration.map(|d| d as u64);
     storage.mark_transcription_complete(
         &meeting.id,
@@ -161,7 +147,120 @@ async fn run_import_inner(
     Ok(())
 }
 
-/// Check if the job has been cancelled. Returns error if cancelled.
+#[allow(clippy::too_many_arguments)]
+pub async fn run_summary(
+    job_id: String,
+    meeting_id: String,
+    template: SummaryTemplate,
+    language: Option<String>,
+    config: Config,
+    storage: Arc<MeetingStorage>,
+    registry: Arc<JobRegistry>,
+    cancel_token: CancellationToken,
+) {
+    let result = run_summary_inner(
+        &job_id,
+        &meeting_id,
+        template,
+        language,
+        &config,
+        &storage,
+        &registry,
+        &cancel_token,
+    )
+    .await;
+
+    match result {
+        Ok(()) => {
+            registry.complete_job(&job_id);
+        }
+        Err(e) => {
+            if cancel_token.is_cancelled() {
+                registry.cancel_job(&job_id);
+            } else {
+                registry.fail_job(&job_id, e.to_string());
+            }
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn run_summary_inner(
+    job_id: &str,
+    meeting_id: &str,
+    template: SummaryTemplate,
+    language: Option<String>,
+    config: &Config,
+    storage: &Arc<MeetingStorage>,
+    registry: &Arc<JobRegistry>,
+    cancel_token: &CancellationToken,
+) -> Result<()> {
+    registry.update_progress(
+        job_id,
+        ProgressEvent::new("initializing", "Starting summary generation"),
+    );
+
+    check_cancelled(cancel_token)?;
+
+    registry.update_progress(
+        job_id,
+        ProgressEvent::new("loading_transcript", "Loading meeting transcript"),
+    );
+    let transcript = storage
+        .get_transcript(meeting_id)
+        .context("Failed to load transcript")?;
+
+    check_cancelled(cancel_token)?;
+
+    registry.update_progress_with_percent(
+        job_id,
+        "generating",
+        "Generating summary with LLM",
+        50.0,
+    );
+
+    let client =
+        SummaryClient::new(config.summary.clone()).context("Failed to create summary client")?;
+
+    let options = SummarizeOptions {
+        template: template.clone(),
+        language: language.clone(),
+    };
+
+    let result = client
+        .summarize(&transcript, &options)
+        .await
+        .context("Summary generation failed")?;
+
+    check_cancelled(cancel_token)?;
+
+    registry.update_progress_with_percent(job_id, "saving", "Saving summary", 90.0);
+
+    let summary = crate::models::Summary {
+        id: uuid::Uuid::new_v4().to_string(),
+        meeting_id: meeting_id.to_string(),
+        template,
+        language,
+        status: SummaryStatus::Completed,
+        content: result.content,
+        key_points: result.key_points,
+        action_items: result.action_items,
+        decisions: result.decisions,
+        provider: config.summary.provider.clone(),
+        model: config.summary.model.clone(),
+        created_at: Utc::now(),
+        updated_at: Utc::now(),
+    };
+
+    storage
+        .save_summary(meeting_id, &summary)
+        .context("Failed to save summary")?;
+
+    registry.update_progress_with_percent(job_id, "done", "Summary complete", 100.0);
+
+    Ok(())
+}
+
 fn check_cancelled(cancel_token: &CancellationToken) -> Result<()> {
     if cancel_token.is_cancelled() {
         anyhow::bail!("Job cancelled");

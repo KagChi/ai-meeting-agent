@@ -63,7 +63,12 @@ TRANSCRIPTION_MODEL=whisper-1
 
 # Summary
 SUMMARY_PROVIDER=openai
+SUMMARY_API_KEY=your-api-key-here
+SUMMARY_BASE_URL=https://api.openai.com/v1
 SUMMARY_MODEL=gpt-4o-mini
+SUMMARY_TEMPERATURE=0.3
+SUMMARY_MAX_TOKENS=1024
+SUMMARY_LANGUAGE=en
 ```
 
 ## Usage
@@ -116,13 +121,15 @@ meeting-agent config set transcription.provider openai
 
 #### Transcripts & Summaries
 - `GET /meetings/{id}/transcript` - Get transcript
-- `GET /meetings/{id}/summary` - Get summary
-- `POST /meetings/{id}/summary` - Generate summary
+- `GET /meetings/{id}/summary` - List all summaries for a meeting
+- `POST /meetings/{id}/summary` - Generate summary (templates: key_points, action_items, decisions, full)
+- `GET /meetings/{id}/summary/{template}` - Get specific summary
 
-#### Import
+#### Jobs (shared by import & summary)
 - `POST /import` - Import audio file
-- `GET /import/{job_id}/status` - Check import status
-- `GET /import/{job_id}/events` - SSE stream of import progress
+- `GET /jobs/{job_id}/status` - Check job status
+- `GET /jobs/{job_id}/events` - SSE stream of job progress
+- `POST /jobs/{job_id}/cancel` - Cancel a running job
 
 #### Configuration
 - `GET /config` - Get current config
@@ -139,7 +146,11 @@ All data is stored in `~/.meeting-agent/`:
     ├── metadata.json
     ├── audio.wav
     ├── transcript.json
-    └── summary.json
+    └── summaries/
+        ├── key_points.json
+        ├── action_items.json
+        ├── decisions.json
+        └── full.json
 ```
 
 ## Development

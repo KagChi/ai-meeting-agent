@@ -12,7 +12,7 @@ use axum::{
 };
 use meeting_agent_core::jobs::JobType;
 use meeting_agent_core::models::MeetingStatus;
-use meeting_agent_core::summary_job::run_summary;
+use meeting_agent_core::runners::run_summary;
 
 pub async fn create_summary(
     State(state): State<AppState>,
