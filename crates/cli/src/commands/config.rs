@@ -1,0 +1,85 @@
+use anyhow::Result;
+use colored::Colorize;
+use meeting_agent_core::{config::Config, fs};
+
+pub fn show() -> Result<()> {
+    let config_path = fs::config_path()?;
+    let config = Config::load(&config_path)?;
+
+    println!("{}", "Current Configuration".bold().green());
+    println!("{}", "─".repeat(50));
+    println!("{} {}", "Path:".bold(), config_path.display());
+
+    println!("\n{} Transcription", "▸".cyan());
+    println!("  provider:  {}", config.transcription.provider);
+    println!(
+        "  api_key:   {}",
+        mask_secret(config.transcription.api_key.as_deref().unwrap_or(""))
+    );
+    println!("  base_url:  {}", config.transcription.base_url);
+    println!("  model:     {}", config.transcription.model);
+
+    println!("\n{} Summary", "▸".cyan());
+    println!("  provider:    {}", config.summary.provider);
+    println!(
+        "  api_key:     {}",
+        mask_secret(config.summary.api_key.as_deref().unwrap_or(""))
+    );
+    println!("  base_url:    {}", config.summary.base_url);
+    println!("  model:       {}", config.summary.model);
+    println!("  temperature: {}", config.summary.temperature);
+    println!("  max_tokens:  {}", config.summary.max_tokens);
+    if let Some(lang) = &config.summary.language {
+        println!("  language:    {}", lang);
+    } else {
+        println!("  language:    (auto)");
+    }
+
+    println!("\n{} Server", "▸".cyan());
+    println!("  port:    {}", config.server.port);
+    println!("  host:    {}", config.server.host);
+    println!(
+        "  api_key: {}",
+        mask_secret(config.server.api_key.as_deref().unwrap_or(""))
+    );
+
+    Ok(())
+}
+
+pub fn set(key: String, value: String) -> Result<()> {
+    let config_path = fs::config_path()?;
+    let mut config = Config::load(&config_path)?;
+
+    match key.as_str() {
+        "transcription.provider" => config.transcription.provider = value.clone(),
+        "transcription.api_key" => config.transcription.api_key = Some(value.clone()),
+        "transcription.base_url" => config.transcription.base_url = value.clone(),
+        "transcription.model" => config.transcription.model = value.clone(),
+        "summary.provider" => config.summary.provider = value.clone(),
+        "summary.api_key" => config.summary.api_key = Some(value.clone()),
+        "summary.base_url" => config.summary.base_url = value.clone(),
+        "summary.model" => config.summary.model = value.clone(),
+        "summary.temperature" => config.summary.temperature = value.parse()?,
+        "summary.max_tokens" => config.summary.max_tokens = value.parse()?,
+        "summary.language" => config.summary.language = Some(value.clone()),
+        "server.port" => config.server.port = value.parse()?,
+        "server.host" => config.server.host = value.clone(),
+        "server.api_key" => config.server.api_key = Some(value.clone()),
+        other => anyhow::bail!("Unknown config key: {}", other),
+    }
+
+    config.save(&config_path)?;
+    println!("{} Set {} = {}", "✓".green().bold(), key, value);
+
+    Ok(())
+}
+
+fn mask_secret(s: &str) -> String {
+    if s.is_empty() {
+        return "(not set)".to_string();
+    }
+    if s.len() <= 8 {
+        return "****".to_string();
+    }
+    format!("{}****{}", &s[..4], &s[s.len() - 4..])
+}

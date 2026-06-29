@@ -6,6 +6,10 @@ authors.workspace = true
 license.workspace = true
 repository.workspace = true
 
+[lib]
+name = "meeting_agent_server"
+path = "src/lib.rs"
+
 [[bin]]
 name = "meeting-agent-server"
 path = "src/main.rs"

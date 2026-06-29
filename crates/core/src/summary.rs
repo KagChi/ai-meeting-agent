@@ -183,15 +183,19 @@ fn build_prompt(template: SummaryTemplate, transcript: &str, language: Option<&s
 
 fn format_transcript(transcript: &TranscriptionResponse) -> String {
     let segments = transcript.segments.as_deref().unwrap_or(&[]);
-    segments
-        .iter()
-        .map(|s| {
-            let mm = (s.start as u64) / 60;
-            let ss = (s.start as u64) % 60;
-            format!("[{mm:02}:{ss:02}] {}", s.text.trim())
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
+    if !segments.is_empty() {
+        segments
+            .iter()
+            .map(|s| {
+                let mm = (s.start as u64) / 60;
+                let ss = (s.start as u64) % 60;
+                format!("[{mm:02}:{ss:02}] {}", s.text.trim())
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    } else {
+        transcript.text.clone()
+    }
 }
 
 fn parse_sections(
@@ -325,6 +329,30 @@ mod tests {
         let out = format_transcript(&t);
         assert!(out.contains("[00:00] Hello world"));
         assert!(out.contains("[01:05] Second line"));
+    }
+
+    #[test]
+    fn test_format_transcript_no_segments_fallback() {
+        let t = TranscriptionResponse {
+            text: "Hello world from text".to_string(),
+            language: None,
+            duration: None,
+            segments: None,
+        };
+        let out = format_transcript(&t);
+        assert_eq!(out, "Hello world from text");
+    }
+
+    #[test]
+    fn test_format_transcript_empty_segments_fallback() {
+        let t = TranscriptionResponse {
+            text: "Fallback text".to_string(),
+            language: None,
+            duration: None,
+            segments: Some(vec![]),
+        };
+        let out = format_transcript(&t);
+        assert_eq!(out, "Fallback text");
     }
 
     #[test]

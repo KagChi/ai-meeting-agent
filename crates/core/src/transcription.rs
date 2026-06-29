@@ -93,8 +93,8 @@ impl TranscriptionClient {
             .unwrap_or("audio.m4a")
             .to_string();
 
-        // Build the API URL
-        let url = format!("{}/audio/transcriptions/auto", self.config.base_url);
+        // Build the API URL (OpenAI-compatible: {base}/audio/transcriptions)
+        let url = format!("{}/audio/transcriptions", self.config.base_url);
 
         // Prepare authorization header
         let api_key = self

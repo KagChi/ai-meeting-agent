@@ -1133,16 +1133,21 @@ name = "meeting-agent-cli"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "chrono",
  "clap",
  "colored",
  "comfy-table",
  "dotenv",
+ "env_logger",
  "indicatif",
+ "log",
  "meeting-agent-core",
+ "meeting-agent-server",
  "reqwest",
  "serde",
  "serde_json",
  "tokio",
+ "uuid",
 ]
 
 [[package]]
