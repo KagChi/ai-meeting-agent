@@ -132,7 +132,8 @@ Comment format (matches the existing daily-log pattern in the thread):
 - HH:MM-HH:MM <what you did, with concrete file/function pointers>
 
 **Links:**
-- <relevant URLs — todo, study notes, plan files, this repo's HEAD>
+- <relevant URLs — todo, study notes, plan files>
+- Commits: <repo>/compare/<first_commit>...<last_commit>
 ```
 
 **Comment content guidelines:**
@@ -140,6 +141,9 @@ Comment format (matches the existing daily-log pattern in the thread):
 - Include only code changes and technical work (no planning/discussion unless it resulted in code)
 - Reference the BMW upstream repo (`bmw-ece-ntust/ai-meeting-agent`) in all workspace links, not personal forks
 - Keep format minimal: date, goal, time ranges with brief descriptions, links
+- Use commit range instead of single "latest commit" link to show all commits in the session
+- Get first commit: `git log --oneline --reverse | head -1`
+- Get last commit: `git log --oneline -1`
 
 Sync in lockstep with the Daily-Logs Sync Rule:
 
