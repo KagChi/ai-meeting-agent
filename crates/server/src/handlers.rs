@@ -25,9 +25,7 @@ pub async fn version() -> Json<Value> {
 }
 
 /// List all meetings
-pub async fn list_meetings(
-    State(_state): State<AppState>,
-) -> Result<Json<Value>, StatusCode> {
+pub async fn list_meetings(State(_state): State<AppState>) -> Result<Json<Value>, StatusCode> {
     // TODO: Implement actual listing logic
     Ok(Json(json!({
         "meetings": []

@@ -19,7 +19,7 @@ enum Commands {
         /// Port to listen on
         #[arg(short, long, default_value = "8080")]
         port: u16,
-        
+
         /// Host to bind to
         #[arg(long, default_value = "127.0.0.1")]
         host: String,
@@ -28,7 +28,7 @@ enum Commands {
     Import {
         /// Path to audio file
         file: String,
-        
+
         /// Meeting title
         #[arg(short, long)]
         title: Option<String>,
@@ -49,7 +49,7 @@ enum Commands {
     Export {
         /// Meeting ID
         id: String,
-        
+
         /// Export format (srt, vtt, json)
         #[arg(short, long, default_value = "srt")]
         format: String,

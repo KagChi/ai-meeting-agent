@@ -2,15 +2,9 @@
 //!
 //! HTTP API server for the meeting agent system.
 
-use axum::{
-    routing::get,
-    Router,
-};
+use axum::{routing::get, Router};
 use std::net::SocketAddr;
-use tower_http::{
-    cors::CorsLayer,
-    trace::TraceLayer,
-};
+use tower_http::{cors::CorsLayer, trace::TraceLayer};
 
 mod handlers;
 mod state;
@@ -47,7 +41,7 @@ async fn main() -> anyhow::Result<()> {
 
     // Parse address
     let addr = SocketAddr::from(([127, 0, 0, 1], config.server.port));
-    
+
     log::info!("Starting server on http://{}", addr);
 
     // Start server

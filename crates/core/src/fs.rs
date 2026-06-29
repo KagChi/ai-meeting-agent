@@ -23,10 +23,10 @@ pub fn config_path() -> Result<PathBuf> {
 pub fn ensure_data_dir() -> Result<()> {
     let data = data_dir()?;
     let meetings = meetings_dir()?;
-    
+
     std::fs::create_dir_all(&data)?;
     std::fs::create_dir_all(&meetings)?;
-    
+
     Ok(())
 }
 
