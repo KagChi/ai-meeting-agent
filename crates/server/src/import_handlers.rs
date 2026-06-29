@@ -9,7 +9,7 @@
 use crate::error::ApiError;
 use crate::state::AppState;
 use crate::types::{
-    CancelImportResponse, ImportResponse, ImportStatusResponse, ImportValidationResponse,
+    CancelImportResponse, ImportResponse, ImportValidationResponse, JobStatusResponse,
 };
 use axum::{
     body::Bytes,
@@ -107,7 +107,9 @@ pub async fn create_import(
         .map_err(|e| ApiError::InternalServerError(format!("Failed to persist upload: {e}")))?;
 
     // Create job
-    let job_id = state.jobs.create_job();
+    let job_id = state
+        .jobs
+        .create_job(meeting_agent_core::jobs::JobType::Import);
     let cancel_token = state
         .jobs
         .cancel_token(&job_id)
@@ -192,13 +194,13 @@ pub async fn validate_import(
 pub async fn get_import_status(
     State(state): State<AppState>,
     Path(job_id): Path<String>,
-) -> Result<Json<ImportStatusResponse>, ApiError> {
+) -> Result<Json<JobStatusResponse>, ApiError> {
     let job = state
         .jobs
         .get_job(&job_id)
         .ok_or_else(|| ApiError::NotFound(format!("Import job not found: {job_id}")))?;
 
-    Ok(Json(ImportStatusResponse::from(job)))
+    Ok(Json(JobStatusResponse::from(job)))
 }
 
 /// GET /import/:job_id/events

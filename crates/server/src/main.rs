@@ -15,6 +15,7 @@ mod error;
 mod handlers;
 mod import_handlers;
 mod state;
+mod summary_handlers;
 mod types;
 mod validation;
 
@@ -53,21 +54,28 @@ async fn main() -> anyhow::Result<()> {
                 .delete(handlers::delete_meeting),
         )
         .route("/meetings/:id/transcript", get(handlers::get_transcript))
+        // Summary endpoints
+        .route(
+            "/meetings/:id/summary",
+            get(summary_handlers::list_summaries).post(summary_handlers::create_summary),
+        )
+        .route(
+            "/meetings/:id/summary/:template",
+            get(summary_handlers::get_summary),
+        )
         // Import endpoints
         .route("/import", post(import_handlers::create_import))
         .route("/import/validate", post(import_handlers::validate_import))
+        // Job endpoints (shared by import + summary)
         .route(
-            "/import/:job_id/status",
+            "/jobs/:job_id/status",
             get(import_handlers::get_import_status),
         )
         .route(
-            "/import/:job_id/events",
+            "/jobs/:job_id/events",
             get(import_handlers::get_import_events),
         )
-        .route(
-            "/import/:job_id/cancel",
-            post(import_handlers::cancel_import),
-        )
+        .route("/jobs/:job_id/cancel", post(import_handlers::cancel_import))
         .route_layer(middleware::from_fn_with_state(
             state.clone(),
             auth::auth_middleware,

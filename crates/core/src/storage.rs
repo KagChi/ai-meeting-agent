@@ -3,7 +3,7 @@
 //! Handles file system operations for meetings, transcripts, and audio files.
 
 use crate::fs;
-use crate::models::{Meeting, MeetingStatus, TranscriptionInfo};
+use crate::models::{Meeting, MeetingStatus, Summary, SummaryTemplate, TranscriptionInfo};
 use crate::transcription::TranscriptionResponse;
 use anyhow::{Context, Result};
 use chrono::Utc;
@@ -197,6 +197,78 @@ impl MeetingStorage {
 
         self.update_meeting(&meeting)?;
 
+        Ok(())
+    }
+
+    fn summaries_dir(meeting_id: &str) -> Result<PathBuf> {
+        let meeting_path = fs::meeting_dir(meeting_id)?;
+        Ok(meeting_path.join("summaries"))
+    }
+
+    fn summary_file_name(template: SummaryTemplate) -> String {
+        let name = match template {
+            SummaryTemplate::KeyPoints => "key_points",
+            SummaryTemplate::ActionItems => "action_items",
+            SummaryTemplate::Decisions => "decisions",
+            SummaryTemplate::Full => "full",
+        };
+        format!("{name}.json")
+    }
+
+    /// Save a summary for a meeting. Stored at `meetings/{id}/summaries/{template}.json`.
+    pub fn save_summary(&self, meeting_id: &str, summary: &Summary) -> Result<()> {
+        let dir = Self::summaries_dir(meeting_id)?;
+        std::fs::create_dir_all(&dir).context("Failed to create summaries directory")?;
+
+        let path = dir.join(Self::summary_file_name(summary.template.clone()));
+        let json = serde_json::to_string_pretty(summary).context("Failed to serialize summary")?;
+        std::fs::write(&path, json).context("Failed to write summary")?;
+
+        Ok(())
+    }
+
+    /// Get a specific summary by template for a meeting.
+    pub fn get_summary(&self, meeting_id: &str, template: SummaryTemplate) -> Result<Summary> {
+        let path = Self::summaries_dir(meeting_id)?.join(Self::summary_file_name(template));
+        if !path.exists() {
+            anyhow::bail!("Summary not found for meeting: {}", meeting_id);
+        }
+        let json = std::fs::read_to_string(&path).context("Failed to read summary")?;
+        let summary: Summary = serde_json::from_str(&json).context("Failed to parse summary")?;
+        Ok(summary)
+    }
+
+    /// List all summaries for a meeting.
+    pub fn list_summaries(&self, meeting_id: &str) -> Result<Vec<Summary>> {
+        let dir = Self::summaries_dir(meeting_id)?;
+        if !dir.exists() {
+            return Ok(Vec::new());
+        }
+
+        let mut summaries = Vec::new();
+        for entry in std::fs::read_dir(&dir).context("Failed to read summaries directory")? {
+            let entry = entry.context("Failed to read directory entry")?;
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) != Some("json") {
+                continue;
+            }
+            let json = std::fs::read_to_string(&path).context("Failed to read summary file")?;
+            let summary: Summary =
+                serde_json::from_str(&json).context("Failed to parse summary")?;
+            summaries.push(summary);
+        }
+
+        summaries.sort_by_key(|a| a.created_at);
+        Ok(summaries)
+    }
+
+    /// Delete a specific summary by template for a meeting.
+    pub fn delete_summary(&self, meeting_id: &str, template: SummaryTemplate) -> Result<()> {
+        let path = Self::summaries_dir(meeting_id)?.join(Self::summary_file_name(template));
+        if !path.exists() {
+            anyhow::bail!("Summary not found for meeting: {}", meeting_id);
+        }
+        std::fs::remove_file(&path).context("Failed to delete summary")?;
         Ok(())
     }
 }

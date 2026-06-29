@@ -1,6 +1,6 @@
 use chrono::{DateTime, Utc};
-use meeting_agent_core::jobs::{ImportJob, JobState};
-use meeting_agent_core::models::{Meeting, MeetingStatus};
+use meeting_agent_core::jobs::{Job, JobState, JobType};
+use meeting_agent_core::models::{Meeting, MeetingStatus, Summary, SummaryTemplate};
 use meeting_agent_core::transcription::TranscriptionResponse;
 use serde::{Deserialize, Serialize};
 
@@ -55,29 +55,34 @@ pub struct ImportResponse {
     pub status: JobState,
 }
 
-/// Response for polling import job status
+/// Response for polling job status (import or summary)
 #[derive(Debug, Serialize)]
-pub struct ImportStatusResponse {
+pub struct JobStatusResponse {
     pub job_id: String,
+    pub job_type: JobType,
     pub state: JobState,
     pub progress: Vec<meeting_agent_core::jobs::ProgressEvent>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub meeting_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub template: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
 
-impl From<ImportJob> for ImportStatusResponse {
-    fn from(job: ImportJob) -> Self {
+impl From<Job> for JobStatusResponse {
+    fn from(job: Job) -> Self {
         Self {
             created_at: job.created_at,
             updated_at: job.updated_at,
             progress: job.progress,
             job_id: job.id,
+            job_type: job.job_type,
             state: job.state,
             meeting_id: job.meeting_id,
+            template: job.template,
             error: job.error,
         }
     }
@@ -96,6 +101,33 @@ pub struct ImportValidationResponse {
 pub struct CancelImportResponse {
     pub job_id: String,
     pub cancelled: bool,
+}
+
+// === Summary Types ===
+
+#[derive(Debug, Deserialize)]
+pub struct CreateSummaryRequest {
+    pub template: SummaryTemplate,
+    #[serde(default)]
+    pub language: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct SummaryResponse {
+    #[serde(flatten)]
+    pub summary: Summary,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ListSummariesResponse {
+    pub meeting_id: String,
+    pub summaries: Vec<Summary>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct CreateSummaryResponse {
+    pub job_id: String,
+    pub status: JobState,
 }
 
 #[cfg(test)]

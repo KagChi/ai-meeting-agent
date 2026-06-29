@@ -1,7 +1,7 @@
-//! Background job registry for import processing
+//! Background job registry for import and summary processing
 //!
-//! In-memory store for tracking background transcription jobs.
-//! Thread-safe via Arc<Mutex<HashMap>>.
+//! In-memory store for tracking background jobs (transcription import,
+//! summary generation). Thread-safe via Arc<Mutex<HashMap>>.
 
 use chrono::{DateTime, Utc};
 use serde::Serialize;
@@ -13,7 +13,15 @@ use tokio_util::sync::CancellationToken;
 /// Buffer size for progress event broadcast channels.
 const EVENT_CHANNEL_CAPACITY: usize = 16;
 
-/// State of a background import job.
+/// Kind of background job.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum JobType {
+    Import,
+    Summary,
+}
+
+/// State of a background job.
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum JobState {
@@ -50,28 +58,33 @@ impl ProgressEvent {
     }
 }
 
-/// A background import job.
+/// A background job (import or summary).
 #[derive(Debug, Clone, Serialize)]
-pub struct ImportJob {
+pub struct Job {
     pub id: String,
+    pub job_type: JobType,
     pub state: JobState,
     pub progress: Vec<ProgressEvent>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub meeting_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub template: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
 
-impl ImportJob {
-    fn new(id: String) -> Self {
+impl Job {
+    fn new(id: String, job_type: JobType) -> Self {
         let now = Utc::now();
         Self {
             id,
+            job_type,
             state: JobState::Pending,
             progress: Vec::new(),
             meeting_id: None,
+            template: None,
             error: None,
             created_at: now,
             updated_at: now,
@@ -90,7 +103,7 @@ impl ImportJob {
 /// Thread-safe registry holding all in-flight and recently completed jobs.
 #[derive(Clone)]
 pub struct JobRegistry {
-    jobs: Arc<std::sync::Mutex<HashMap<String, ImportJob>>>,
+    jobs: Arc<std::sync::Mutex<HashMap<String, Job>>>,
     cancel_tokens: Arc<std::sync::Mutex<HashMap<String, CancellationToken>>>,
     event_txs: Arc<std::sync::Mutex<HashMap<String, broadcast::Sender<ProgressEvent>>>>,
 }
@@ -105,9 +118,9 @@ impl JobRegistry {
     }
 
     /// Create a new pending job. Returns the job_id.
-    pub fn create_job(&self) -> String {
+    pub fn create_job(&self, job_type: JobType) -> String {
         let job_id = uuid::Uuid::new_v4().to_string();
-        let job = ImportJob::new(job_id.clone());
+        let job = Job::new(job_id.clone(), job_type);
         let (tx, _rx) = broadcast::channel::<ProgressEvent>(EVENT_CHANNEL_CAPACITY);
 
         {
@@ -127,7 +140,7 @@ impl JobRegistry {
     }
 
     /// Get a clone of a job.
-    pub fn get_job(&self, job_id: &str) -> Option<ImportJob> {
+    pub fn get_job(&self, job_id: &str) -> Option<Job> {
         let jobs = self.jobs.lock().unwrap();
         jobs.get(job_id).cloned()
     }
@@ -162,6 +175,18 @@ impl JobRegistry {
         }
     }
 
+    /// Convenience: update progress with stage, message, and percent.
+    pub fn update_progress_with_percent(
+        &self,
+        job_id: &str,
+        stage: impl Into<String>,
+        message: impl Into<String>,
+        percent: f64,
+    ) {
+        let event = ProgressEvent::new(stage, message).with_percent(percent);
+        self.update_progress(job_id, event);
+    }
+
     /// Associate a meeting_id with a job.
     pub fn set_meeting_id(&self, job_id: &str, meeting_id: String) {
         let mut jobs = self.jobs.lock().unwrap();
@@ -171,9 +196,18 @@ impl JobRegistry {
         }
     }
 
+    /// Associate a summary template with a job.
+    pub fn set_template(&self, job_id: &str, template: String) {
+        let mut jobs = self.jobs.lock().unwrap();
+        if let Some(job) = jobs.get_mut(job_id) {
+            job.template = Some(template);
+            job.updated_at = Utc::now();
+        }
+    }
+
     /// Mark a job as completed.
     pub fn complete_job(&self, job_id: &str) {
-        let event = ProgressEvent::new("completed", "Import completed successfully");
+        let event = ProgressEvent::new("completed", "Job completed successfully");
         {
             let mut jobs = self.jobs.lock().unwrap();
             if let Some(job) = jobs.get_mut(job_id) {
@@ -187,7 +221,7 @@ impl JobRegistry {
 
     /// Mark a job as failed.
     pub fn fail_job(&self, job_id: &str, error: String) {
-        let event = ProgressEvent::new("failed", format!("Import failed: {error}"));
+        let event = ProgressEvent::new("failed", format!("Job failed: {error}"));
         {
             let mut jobs = self.jobs.lock().unwrap();
             if let Some(job) = jobs.get_mut(job_id) {
@@ -220,7 +254,7 @@ impl JobRegistry {
             if let Some(token) = self.cancel_tokens.lock().unwrap().get(job_id).cloned() {
                 token.cancel();
             }
-            let event = ProgressEvent::new("cancelled", "Import cancelled by user");
+            let event = ProgressEvent::new("cancelled", "Job cancelled by user");
             self.broadcast_and_close(job_id, event);
         }
 
@@ -245,9 +279,9 @@ impl JobRegistry {
     }
 
     /// List all jobs.
-    pub fn list_jobs(&self) -> Vec<ImportJob> {
+    pub fn list_jobs(&self) -> Vec<Job> {
         let jobs = self.jobs.lock().unwrap();
-        let mut list: Vec<ImportJob> = jobs.values().cloned().collect();
+        let mut list: Vec<Job> = jobs.values().cloned().collect();
         list.sort_by_key(|a| std::cmp::Reverse(a.created_at));
         list
     }
@@ -276,9 +310,10 @@ mod tests {
     #[test]
     fn test_create_job_returns_pending() {
         let registry = JobRegistry::new();
-        let job_id = registry.create_job();
+        let job_id = registry.create_job(JobType::Import);
         let job = registry.get_job(&job_id).unwrap();
         assert_eq!(job.state, JobState::Pending);
+        assert_eq!(job.job_type, JobType::Import);
         assert!(job.progress.is_empty());
         assert!(job.meeting_id.is_none());
         assert!(!job.is_terminal());
@@ -287,7 +322,7 @@ mod tests {
     #[test]
     fn test_update_progress_sets_processing() {
         let registry = JobRegistry::new();
-        let job_id = registry.create_job();
+        let job_id = registry.create_job(JobType::Import);
         registry.update_progress(&job_id, ProgressEvent::new("transcribing", "Started"));
         let job = registry.get_job(&job_id).unwrap();
         assert_eq!(job.state, JobState::Processing);
@@ -296,9 +331,19 @@ mod tests {
     }
 
     #[test]
+    fn test_update_progress_with_percent() {
+        let registry = JobRegistry::new();
+        let job_id = registry.create_job(JobType::Summary);
+        registry.update_progress_with_percent(&job_id, "generating", "50% done", 50.0);
+        let job = registry.get_job(&job_id).unwrap();
+        assert_eq!(job.progress.len(), 1);
+        assert_eq!(job.progress[0].percent, Some(50.0));
+    }
+
+    #[test]
     fn test_complete_job_sets_completed() {
         let registry = JobRegistry::new();
-        let job_id = registry.create_job();
+        let job_id = registry.create_job(JobType::Import);
         registry.complete_job(&job_id);
         let job = registry.get_job(&job_id).unwrap();
         assert_eq!(job.state, JobState::Completed);
@@ -308,7 +353,7 @@ mod tests {
     #[test]
     fn test_fail_job_sets_failed_with_error() {
         let registry = JobRegistry::new();
-        let job_id = registry.create_job();
+        let job_id = registry.create_job(JobType::Import);
         registry.fail_job(&job_id, "network error".to_string());
         let job = registry.get_job(&job_id).unwrap();
         assert_eq!(job.state, JobState::Failed);
@@ -319,7 +364,7 @@ mod tests {
     #[test]
     fn test_cancel_job_sets_cancelled() {
         let registry = JobRegistry::new();
-        let job_id = registry.create_job();
+        let job_id = registry.create_job(JobType::Import);
         assert!(registry.cancel_job(&job_id));
         let job = registry.get_job(&job_id).unwrap();
         assert_eq!(job.state, JobState::Cancelled);
@@ -329,7 +374,7 @@ mod tests {
     #[test]
     fn test_cancel_terminal_job_returns_false() {
         let registry = JobRegistry::new();
-        let job_id = registry.create_job();
+        let job_id = registry.create_job(JobType::Import);
         registry.complete_job(&job_id);
         assert!(!registry.cancel_job(&job_id));
     }
@@ -337,7 +382,7 @@ mod tests {
     #[test]
     fn test_cancel_token_cancels() {
         let registry = JobRegistry::new();
-        let job_id = registry.create_job();
+        let job_id = registry.create_job(JobType::Import);
         let token = registry.cancel_token(&job_id).unwrap();
         assert!(!token.is_cancelled());
         registry.cancel_job(&job_id);
@@ -347,7 +392,7 @@ mod tests {
     #[test]
     fn test_cancel_token_none_after_terminal() {
         let registry = JobRegistry::new();
-        let job_id = registry.create_job();
+        let job_id = registry.create_job(JobType::Import);
         registry.fail_job(&job_id, "err".to_string());
         assert!(registry.cancel_token(&job_id).is_none());
     }
@@ -355,16 +400,25 @@ mod tests {
     #[test]
     fn test_set_meeting_id() {
         let registry = JobRegistry::new();
-        let job_id = registry.create_job();
+        let job_id = registry.create_job(JobType::Import);
         registry.set_meeting_id(&job_id, "meeting-123".to_string());
         let job = registry.get_job(&job_id).unwrap();
         assert_eq!(job.meeting_id, Some("meeting-123".to_string()));
     }
 
     #[test]
+    fn test_set_template() {
+        let registry = JobRegistry::new();
+        let job_id = registry.create_job(JobType::Summary);
+        registry.set_template(&job_id, "full".to_string());
+        let job = registry.get_job(&job_id).unwrap();
+        assert_eq!(job.template, Some("full".to_string()));
+    }
+
+    #[test]
     fn test_subscribe_receives_events() {
         let registry = JobRegistry::new();
-        let job_id = registry.create_job();
+        let job_id = registry.create_job(JobType::Import);
         let mut rx = registry.subscribe(&job_id).unwrap();
         registry.update_progress(&job_id, ProgressEvent::new("transcribing", "Started"));
         let event = rx.try_recv().unwrap();
@@ -374,7 +428,7 @@ mod tests {
     #[test]
     fn test_subscribe_none_after_close() {
         let registry = JobRegistry::new();
-        let job_id = registry.create_job();
+        let job_id = registry.create_job(JobType::Import);
         let _rx = registry.subscribe(&job_id).unwrap();
         registry.complete_job(&job_id);
         // After close, sender dropped — subscribe returns None
@@ -384,7 +438,7 @@ mod tests {
     #[test]
     fn test_update_progress_ignored_after_terminal() {
         let registry = JobRegistry::new();
-        let job_id = registry.create_job();
+        let job_id = registry.create_job(JobType::Import);
         registry.complete_job(&job_id);
         registry.update_progress(&job_id, ProgressEvent::new("transcribing", "late event"));
         let job = registry.get_job(&job_id).unwrap();
@@ -395,9 +449,9 @@ mod tests {
     #[test]
     fn test_list_jobs_sorted_by_created_desc() {
         let registry = JobRegistry::new();
-        let id1 = registry.create_job();
+        let id1 = registry.create_job(JobType::Import);
         std::thread::sleep(std::time::Duration::from_millis(2));
-        let id2 = registry.create_job();
+        let id2 = registry.create_job(JobType::Import);
         let list = registry.list_jobs();
         assert_eq!(list.len(), 2);
         assert_eq!(list[0].id, id2);
@@ -420,7 +474,7 @@ mod tests {
     fn test_registry_clone_shares_state() {
         let registry = JobRegistry::new();
         let registry2 = registry.clone();
-        let job_id = registry.create_job();
+        let job_id = registry.create_job(JobType::Import);
         assert!(registry2.get_job(&job_id).is_some());
     }
 }

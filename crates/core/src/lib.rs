@@ -10,11 +10,14 @@ pub mod import;
 pub mod jobs;
 pub mod models;
 pub mod storage;
+pub mod summary;
+pub mod summary_job;
 pub mod transcription;
 
 // Re-export commonly used types
 pub use config::Config;
-pub use jobs::{JobRegistry, JobState};
-pub use models::{Meeting, Transcript};
+pub use jobs::{Job, JobRegistry, JobState, JobType};
+pub use models::{Meeting, Summary, SummaryTemplate, Transcript};
 pub use storage::MeetingStorage;
+pub use summary::{SummarizeOptions, SummaryClient};
 pub use transcription::{TranscriptionClient, TranscriptionRequest, TranscriptionResponse};
