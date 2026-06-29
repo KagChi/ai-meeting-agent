@@ -43,6 +43,27 @@ Before every commit, run the following checks in order:
 - "commit & push" in one user message = permission for both actions in sequence
 - **If you commit without permission, immediately undo with `git reset --soft HEAD~1`**
 
+## Large File Writing Strategy (mandatory)
+
+When writing large plan files, documentation, or any file that may approach token limits:
+
+1. **Write in chunks** - Break the content into logical sections and write them sequentially
+2. **Use Write tool for initial content** - First write creates the file with initial sections
+3. **Use Edit tool to append** - Subsequent writes append new sections to the end
+4. **Verify each chunk** - After each write, verify the content was written correctly
+5. **Track progress** - Use TodoWrite to track which sections have been written
+6. **Context management** - Keep active writing context minimal to avoid hitting limits
+
+**Example workflow:**
+```
+1. Write initial file (header, overview, architecture)
+2. Edit to append section 2 (tasks 1-3)
+3. Edit to append section 3 (tasks 4-6)
+4. Edit to append section 4 (implementation notes, references)
+```
+
+This approach prevents hitting context limits during plan file creation and ensures all content is preserved.
+
 ## Internship Track
 
 **Two-repo structure:**

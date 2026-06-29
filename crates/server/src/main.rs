@@ -2,12 +2,16 @@
 //!
 //! HTTP API server for the meeting agent system.
 
-use axum::{routing::get, Router};
+use axum::{middleware, routing::get, Router};
 use std::net::SocketAddr;
 use tower_http::{cors::CorsLayer, trace::TraceLayer};
 
+mod auth;
+mod error;
 mod handlers;
 mod state;
+mod types;
+mod validation;
 
 use state::AppState;
 
@@ -33,8 +37,21 @@ async fn main() -> anyhow::Result<()> {
     let app = Router::new()
         .route("/health", get(handlers::health))
         .route("/version", get(handlers::version))
-        .route("/meetings", get(handlers::list_meetings))
-        .route("/meetings/:id", get(handlers::get_meeting))
+        .route(
+            "/meetings",
+            get(handlers::list_meetings).post(handlers::create_meeting),
+        )
+        .route(
+            "/meetings/:id",
+            get(handlers::get_meeting)
+                .patch(handlers::update_meeting)
+                .delete(handlers::delete_meeting),
+        )
+        .route("/meetings/:id/transcript", get(handlers::get_transcript))
+        .route_layer(middleware::from_fn_with_state(
+            state.clone(),
+            auth::auth_middleware,
+        ))
         .with_state(state)
         .layer(CorsLayer::permissive())
         .layer(TraceLayer::new_for_http());
