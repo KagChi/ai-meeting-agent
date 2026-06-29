@@ -25,8 +25,14 @@ pub async fn auth_middleware(
         // API key is set - require authentication
         let auth_header = request
             .headers()
-            .get("X-API-Key")
-            .and_then(|v| v.to_str().ok());
+            .get("Authorization")
+            .and_then(|v| v.to_str().ok())
+            .or_else(|| {
+                request
+                    .headers()
+                    .get("X-API-Key")
+                    .and_then(|v| v.to_str().ok())
+            });
 
         match auth_header {
             Some(key) if key == expected_key => {
