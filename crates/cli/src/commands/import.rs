@@ -101,6 +101,40 @@ pub async fn run(file: String, title: Option<String>) -> Result<()> {
         .await?;
     pb.finish_with_message("Transcription complete!".green().to_string());
 
+    // Optional speaker diarization (must run before temp audio deletion).
+    let response = if config.diarize.enabled {
+        let pb2 = ProgressBar::new_spinner();
+        pb2.set_style(
+            ProgressStyle::default_spinner()
+                .template("{spinner:.green} {msg}")
+                .unwrap(),
+        );
+        pb2.set_message("Diarizing speakers...");
+        pb2.enable_steady_tick(std::time::Duration::from_millis(100));
+
+        let diarize_client =
+            meeting_agent_core::diarize::DiarizeClient::new(config.diarize.base_url.clone());
+        match diarize_client
+            .diarize(
+                &audio_file_to_transcribe,
+                &response,
+                config.diarize.num_speakers,
+            )
+            .await
+        {
+            Ok(resp) => {
+                pb2.finish_with_message("Diarization complete!".green().to_string());
+                meeting_agent_core::diarize::merge_speakers(response, resp)
+            }
+            Err(e) => {
+                pb2.finish_with_message(format!("Diarization failed: {}", e).yellow().to_string());
+                response
+            }
+        }
+    } else {
+        response
+    };
+
     if temp_file_created {
         let _ = std::fs::remove_file(&audio_file_to_transcribe);
     }

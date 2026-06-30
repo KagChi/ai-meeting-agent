@@ -67,6 +67,10 @@ pub struct TranscriptSegment {
     pub compression_ratio: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub no_speech_prob: Option<f32>,
+    /// Speaker index from diarization (None when diarization is disabled
+    /// or no overlap was found; -1 = unknown sentinel from diarize service).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub speaker: Option<i32>,
 }
 
 /// Deserialize `Option<f64>` tolerating number, numeric string, or null/missing.
@@ -144,6 +148,7 @@ fn parse_response(raw: &str) -> Result<TranscriptionResponse> {
                     avg_logprob: None,
                     compression_ratio: None,
                     no_speech_prob: None,
+                    speaker: None,
                 }
             })
             .collect();
@@ -559,6 +564,7 @@ fn merge_chunk_responses(
                     avg_logprob: seg.avg_logprob,
                     compression_ratio: seg.compression_ratio,
                     no_speech_prob: seg.no_speech_prob,
+                    speaker: seg.speaker,
                 });
                 global_id += 1;
             }
@@ -715,6 +721,7 @@ mod tests {
                     avg_logprob: None,
                     compression_ratio: None,
                     no_speech_prob: None,
+                    speaker: None,
                 },
                 TranscriptSegment {
                     id: 1,
@@ -726,6 +733,7 @@ mod tests {
                     avg_logprob: None,
                     compression_ratio: None,
                     no_speech_prob: None,
+                    speaker: None,
                 },
             ]),
         };
@@ -744,6 +752,7 @@ mod tests {
                     avg_logprob: None,
                     compression_ratio: None,
                     no_speech_prob: None,
+                    speaker: None,
                 },
                 TranscriptSegment {
                     id: 1,
@@ -755,6 +764,7 @@ mod tests {
                     avg_logprob: None,
                     compression_ratio: None,
                     no_speech_prob: None,
+                    speaker: None,
                 },
             ]),
         };
@@ -800,6 +810,7 @@ mod tests {
                 avg_logprob: None,
                 compression_ratio: None,
                 no_speech_prob: None,
+                speaker: None,
             }]),
         };
         let merged = merge_chunk_responses(vec![chunk.clone()], vec![100.0]);

@@ -8,6 +8,8 @@ pub struct Config {
     pub transcription: TranscriptionConfig,
     pub summary: SummaryConfig,
     pub server: ServerConfig,
+    #[serde(default)]
+    pub diarize: DiarizeConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -67,6 +69,39 @@ pub struct ServerConfig {
     pub api_key: Option<String>,
 }
 
+/// Configuration for the optional speaker-diarization step.
+///
+/// When `enabled` is false (the default), the import pipeline skips
+/// diarization entirely and `TranscriptionResponse.segments` carry no
+/// `speaker` field. When true, the pipeline POSTs the audio + Whisper
+/// transcript to a running `diarize-server` instance at `base_url`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiarizeConfig {
+    /// Whether to invoke the diarize service during import. Default false.
+    #[serde(default)]
+    pub enabled: bool,
+    /// Base URL of the diarize-server (e.g. "http://localhost:8002").
+    #[serde(default = "default_diarize_base_url")]
+    pub base_url: String,
+    /// Optional fixed speaker count hint. None = auto-detect.
+    #[serde(default)]
+    pub num_speakers: Option<i32>,
+}
+
+fn default_diarize_base_url() -> String {
+    "http://localhost:8002".to_string()
+}
+
+impl Default for DiarizeConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            base_url: default_diarize_base_url(),
+            num_speakers: None,
+        }
+    }
+}
+
 impl Default for Config {
     fn default() -> Self {
         Self {
@@ -92,6 +127,7 @@ impl Default for Config {
                 host: "127.0.0.1".to_string(),
                 api_key: None,
             },
+            diarize: DiarizeConfig::default(),
         }
     }
 }
@@ -112,6 +148,9 @@ impl Config {
     /// - SUMMARY_TEMPERATURE
     /// - SUMMARY_MAX_TOKENS
     /// - SUMMARY_LANGUAGE
+    /// - DIARIZE_ENABLED (1/true/yes to enable speaker diarization)
+    /// - DIARIZE_BASE_URL
+    /// - DIARIZE_NUM_SPEAKERS (0 = auto-detect)
     pub fn load(path: &PathBuf) -> anyhow::Result<Self> {
         let mut config = if path.exists() {
             let content = std::fs::read_to_string(path)?;
@@ -170,6 +209,20 @@ impl Config {
         }
         if let Ok(language) = std::env::var("SUMMARY_LANGUAGE") {
             config.summary.language = Some(language);
+        }
+
+        // Diarization overrides
+        if let Ok(enabled) = std::env::var("DIARIZE_ENABLED") {
+            config.diarize.enabled =
+                matches!(enabled.to_lowercase().as_str(), "1" | "true" | "yes");
+        }
+        if let Ok(base_url) = std::env::var("DIARIZE_BASE_URL") {
+            config.diarize.base_url = base_url;
+        }
+        if let Ok(num_speakers) = std::env::var("DIARIZE_NUM_SPEAKERS") {
+            if let Ok(n) = num_speakers.parse::<i32>() {
+                config.diarize.num_speakers = Some(n);
+            }
         }
 
         Ok(config)

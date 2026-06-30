@@ -4,6 +4,7 @@ members = [
     "crates/core",
     "crates/server",
     "crates/cli",
+    "crates/diarize",
 ]
 
 [workspace.package]
@@ -62,3 +63,7 @@ dotenv = "0.15"
 
 # FFmpeg wrapper
 ffmpeg-sidecar = "2.5"
+
+# Speaker diarization (diarize crate)
+sherpa-onnx = "1.13"
+symphonia = { version = "0.5", features = ["mp3", "wav"] }

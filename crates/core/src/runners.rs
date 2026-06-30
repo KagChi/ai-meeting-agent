@@ -132,6 +132,29 @@ async fn run_import_inner(
 
     check_cancelled(cancel_token)?;
 
+    // Optional speaker diarization. Resilient: on failure, log and proceed
+    // without speaker labels rather than failing the whole import.
+    let transcription = if config.diarize.enabled {
+        registry.update_progress(
+            job_id,
+            ProgressEvent::new("diarizing", "Speaker diarization").with_percent(70.0),
+        );
+        check_cancelled(cancel_token)?;
+        let client = crate::diarize::DiarizeClient::new(config.diarize.base_url.clone());
+        match client
+            .diarize(final_audio, &transcription, config.diarize.num_speakers)
+            .await
+        {
+            Ok(resp) => crate::diarize::merge_speakers(transcription, resp),
+            Err(e) => {
+                log::warn!("[diarize] failed, proceeding without speaker labels: {}", e);
+                transcription
+            }
+        }
+    } else {
+        transcription
+    };
+
     registry.update_progress(
         job_id,
         ProgressEvent::new("saving", "Saving transcript and audio").with_percent(90.0),

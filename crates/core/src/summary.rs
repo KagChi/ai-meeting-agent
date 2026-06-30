@@ -312,6 +312,7 @@ mod tests {
             avg_logprob: None,
             compression_ratio: None,
             no_speech_prob: None,
+            speaker: None,
         }
     }
 
