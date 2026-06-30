@@ -16,6 +16,13 @@ use crate::types::{
 use crate::validation;
 
 /// Health check endpoint
+#[utoipa::path(
+    get,
+    path = "/health",
+    responses(
+        (status = 200, description = "Service is healthy")
+    )
+)]
 pub async fn health() -> Json<Value> {
     Json(json!({
         "status": "ok"
@@ -23,6 +30,13 @@ pub async fn health() -> Json<Value> {
 }
 
 /// Version endpoint
+#[utoipa::path(
+    get,
+    path = "/version",
+    responses(
+        (status = 200, description = "Service version information")
+    )
+)]
 pub async fn version() -> Json<Value> {
     Json(json!({
         "version": env!("CARGO_PKG_VERSION"),
@@ -31,6 +45,14 @@ pub async fn version() -> Json<Value> {
 }
 
 /// List all meetings
+#[utoipa::path(
+    get,
+    path = "/meetings",
+    tag = "meetings",
+    responses(
+        (status = 200, description = "List of all meetings", body = ListMeetingsResponse)
+    )
+)]
 pub async fn list_meetings(
     State(state): State<AppState>,
 ) -> Result<Json<ListMeetingsResponse>, ApiError> {
@@ -39,6 +61,18 @@ pub async fn list_meetings(
 }
 
 /// Get a specific meeting
+#[utoipa::path(
+    get,
+    path = "/meetings/{id}",
+    tag = "meetings",
+    params(
+        ("id" = String, Path, description = "Meeting ID or prefix")
+    ),
+    responses(
+        (status = 200, description = "Meeting details", body = MeetingResponse),
+        (status = 404, description = "Meeting not found", body = ErrorResponse)
+    )
+)]
 pub async fn get_meeting(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -49,6 +83,18 @@ pub async fn get_meeting(
 }
 
 /// Get meeting transcript
+#[utoipa::path(
+    get,
+    path = "/meetings/{id}/transcript",
+    tag = "transcripts",
+    params(
+        ("id" = String, Path, description = "Meeting ID or prefix")
+    ),
+    responses(
+        (status = 200, description = "Meeting transcript", body = TranscriptResponse),
+        (status = 404, description = "Meeting not found", body = ErrorResponse)
+    )
+)]
 pub async fn get_transcript(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -69,6 +115,16 @@ pub async fn get_transcript(
 }
 
 /// Create a new meeting
+#[utoipa::path(
+    post,
+    path = "/meetings",
+    tag = "meetings",
+    request_body = CreateMeetingRequest,
+    responses(
+        (status = 201, description = "Meeting created", body = MeetingResponse),
+        (status = 400, description = "Invalid request", body = ErrorResponse)
+    )
+)]
 pub async fn create_meeting(
     State(state): State<AppState>,
     Json(req): Json<CreateMeetingRequest>,
@@ -91,6 +147,20 @@ pub async fn create_meeting(
 }
 
 /// Update an existing meeting
+#[utoipa::path(
+    patch,
+    path = "/meetings/{id}",
+    tag = "meetings",
+    params(
+        ("id" = String, Path, description = "Meeting ID or prefix")
+    ),
+    request_body = UpdateMeetingRequest,
+    responses(
+        (status = 200, description = "Meeting updated", body = MeetingResponse),
+        (status = 400, description = "Invalid request", body = ErrorResponse),
+        (status = 404, description = "Meeting not found", body = ErrorResponse)
+    )
+)]
 pub async fn update_meeting(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -123,6 +193,18 @@ pub async fn update_meeting(
 }
 
 /// Delete a meeting
+#[utoipa::path(
+    delete,
+    path = "/meetings/{id}",
+    tag = "meetings",
+    params(
+        ("id" = String, Path, description = "Meeting ID or prefix")
+    ),
+    responses(
+        (status = 204, description = "Meeting deleted"),
+        (status = 404, description = "Meeting not found", body = ErrorResponse)
+    )
+)]
 pub async fn delete_meeting(
     State(state): State<AppState>,
     Path(id): Path<String>,

@@ -10,12 +10,37 @@ use chrono::Utc;
 use std::path::PathBuf;
 
 /// Meeting storage manager
-pub struct MeetingStorage;
+#[derive(Clone, Debug)]
+pub struct MeetingStorage {
+    base: PathBuf,
+}
 
 impl MeetingStorage {
+    /// Create a new storage instance using the default data directory
+    pub fn new() -> Self {
+        Self {
+            base: fs::data_dir().expect("Failed to determine home directory"),
+        }
+    }
+
+    /// Create a storage instance with a custom base directory (for testing)
+    pub fn with_base(base: PathBuf) -> Self {
+        Self { base }
+    }
+
+    /// Get the meetings directory path
+    fn meetings_dir(&self) -> PathBuf {
+        self.base.join("meetings")
+    }
+
+    /// Get a specific meeting's directory path
+    fn meeting_dir(&self, meeting_id: &str) -> PathBuf {
+        self.meetings_dir().join(meeting_id)
+    }
+
     /// Create a new meeting with metadata
     pub fn create_meeting(&self, meeting: &Meeting) -> Result<()> {
-        let meeting_path = fs::meeting_dir(&meeting.id)?;
+        let meeting_path = self.meeting_dir(&meeting.id);
         std::fs::create_dir_all(&meeting_path).context("Failed to create meeting directory")?;
 
         let meeting_json = serde_json::to_string_pretty(&meeting)
@@ -28,7 +53,7 @@ impl MeetingStorage {
 
     /// Get meeting by ID
     pub fn get_meeting(&self, meeting_id: &str) -> Result<Meeting> {
-        let meeting_path = fs::meeting_dir(meeting_id)?;
+        let meeting_path = self.meeting_dir(meeting_id);
         let meeting_file = meeting_path.join("meeting.json");
 
         if !meeting_file.exists() {
@@ -55,13 +80,13 @@ impl MeetingStorage {
         }
 
         // Fast path: exact directory exists
-        let exact_path = fs::meeting_dir(id_or_prefix)?;
+        let exact_path = self.meeting_dir(id_or_prefix);
         if exact_path.join("meeting.json").exists() {
             return Ok(id_or_prefix.to_string());
         }
 
         // Scan for prefix matches
-        let meetings_path = fs::meetings_dir()?;
+        let meetings_path = self.meetings_dir();
         if !meetings_path.exists() {
             anyhow::bail!("Meeting not found: {}", id_or_prefix);
         }
@@ -94,7 +119,7 @@ impl MeetingStorage {
 
     /// Update meeting metadata
     pub fn update_meeting(&self, meeting: &Meeting) -> Result<()> {
-        let meeting_path = fs::meeting_dir(&meeting.id)?;
+        let meeting_path = self.meeting_dir(&meeting.id);
         let meeting_file = meeting_path.join("meeting.json");
 
         if !meeting_file.exists() {
@@ -110,7 +135,7 @@ impl MeetingStorage {
 
     /// Delete meeting and all associated files
     pub fn delete_meeting(&self, meeting_id: &str) -> Result<()> {
-        let meeting_path = fs::meeting_dir(meeting_id)?;
+        let meeting_path = self.meeting_dir(meeting_id);
 
         if !meeting_path.exists() {
             anyhow::bail!("Meeting not found: {}", meeting_id);
@@ -123,7 +148,7 @@ impl MeetingStorage {
 
     /// List all meetings
     pub fn list_meetings(&self) -> Result<Vec<Meeting>> {
-        let meetings_path = fs::meetings_dir()?;
+        let meetings_path = self.meetings_dir();
 
         if !meetings_path.exists() {
             return Ok(vec![]);
@@ -161,7 +186,7 @@ impl MeetingStorage {
         meeting_id: &str,
         response: &TranscriptionResponse,
     ) -> Result<()> {
-        let meeting_path = fs::meeting_dir(meeting_id)?;
+        let meeting_path = self.meeting_dir(meeting_id);
 
         if !meeting_path.exists() {
             anyhow::bail!("Meeting not found: {}", meeting_id);
@@ -177,7 +202,7 @@ impl MeetingStorage {
 
     /// Get transcript for a meeting
     pub fn get_transcript(&self, meeting_id: &str) -> Result<TranscriptionResponse> {
-        let meeting_path = fs::meeting_dir(meeting_id)?;
+        let meeting_path = self.meeting_dir(meeting_id);
         let transcript_file = meeting_path.join("transcript.json");
 
         if !transcript_file.exists() {
@@ -194,7 +219,7 @@ impl MeetingStorage {
 
     /// Save audio file to meeting directory
     pub fn save_audio(&self, meeting_id: &str, audio_path: &PathBuf) -> Result<PathBuf> {
-        let meeting_path = fs::meeting_dir(meeting_id)?;
+        let meeting_path = self.meeting_dir(meeting_id);
 
         if !meeting_path.exists() {
             anyhow::bail!("Meeting not found: {}", meeting_id);
@@ -249,9 +274,8 @@ impl MeetingStorage {
         Ok(())
     }
 
-    fn summaries_dir(meeting_id: &str) -> Result<PathBuf> {
-        let meeting_path = fs::meeting_dir(meeting_id)?;
-        Ok(meeting_path.join("summaries"))
+    fn summaries_dir(&self, meeting_id: &str) -> PathBuf {
+        self.meeting_dir(meeting_id).join("summaries")
     }
 
     fn summary_file_name(template: SummaryTemplate) -> String {
@@ -266,7 +290,7 @@ impl MeetingStorage {
 
     /// Save a summary for a meeting. Stored at `meetings/{id}/summaries/{template}.json`.
     pub fn save_summary(&self, meeting_id: &str, summary: &Summary) -> Result<()> {
-        let dir = Self::summaries_dir(meeting_id)?;
+        let dir = self.summaries_dir(meeting_id);
         std::fs::create_dir_all(&dir).context("Failed to create summaries directory")?;
 
         let path = dir.join(Self::summary_file_name(summary.template.clone()));
@@ -278,7 +302,9 @@ impl MeetingStorage {
 
     /// Get a specific summary by template for a meeting.
     pub fn get_summary(&self, meeting_id: &str, template: SummaryTemplate) -> Result<Summary> {
-        let path = Self::summaries_dir(meeting_id)?.join(Self::summary_file_name(template));
+        let path = self
+            .summaries_dir(meeting_id)
+            .join(Self::summary_file_name(template));
         if !path.exists() {
             anyhow::bail!("Summary not found for meeting: {}", meeting_id);
         }
@@ -289,7 +315,7 @@ impl MeetingStorage {
 
     /// List all summaries for a meeting.
     pub fn list_summaries(&self, meeting_id: &str) -> Result<Vec<Summary>> {
-        let dir = Self::summaries_dir(meeting_id)?;
+        let dir = self.summaries_dir(meeting_id);
         if !dir.exists() {
             return Ok(Vec::new());
         }
@@ -313,12 +339,20 @@ impl MeetingStorage {
 
     /// Delete a specific summary by template for a meeting.
     pub fn delete_summary(&self, meeting_id: &str, template: SummaryTemplate) -> Result<()> {
-        let path = Self::summaries_dir(meeting_id)?.join(Self::summary_file_name(template));
+        let path = self
+            .summaries_dir(meeting_id)
+            .join(Self::summary_file_name(template));
         if !path.exists() {
             anyhow::bail!("Summary not found for meeting: {}", meeting_id);
         }
         std::fs::remove_file(&path).context("Failed to delete summary")?;
         Ok(())
+    }
+}
+
+impl Default for MeetingStorage {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -329,11 +363,9 @@ mod tests {
 
     #[test]
     fn test_create_and_get_meeting() {
-        let storage = MeetingStorage;
+        let temp_dir = tempfile::tempdir().unwrap();
+        let storage = MeetingStorage::with_base(temp_dir.path().to_path_buf());
         let meeting = Meeting::new("Test Meeting".to_string());
-
-        // Ensure data directory exists
-        fs::ensure_data_dir().unwrap();
 
         // Create meeting
         storage.create_meeting(&meeting).unwrap();
@@ -343,14 +375,13 @@ mod tests {
         assert_eq!(retrieved.id, meeting.id);
         assert_eq!(retrieved.title, meeting.title);
 
-        // Cleanup
-        storage.delete_meeting(&meeting.id).unwrap();
+        // Cleanup happens automatically when temp_dir is dropped
     }
 
     #[test]
     fn test_list_meetings() {
-        let storage = MeetingStorage;
-        fs::ensure_data_dir().unwrap();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let storage = MeetingStorage::with_base(temp_dir.path().to_path_buf());
 
         let meeting1 = Meeting::new("Meeting 1".to_string());
         let meeting2 = Meeting::new("Meeting 2".to_string());
@@ -359,17 +390,13 @@ mod tests {
         storage.create_meeting(&meeting2).unwrap();
 
         let meetings = storage.list_meetings().unwrap();
-        assert!(meetings.len() >= 2);
-
-        // Cleanup
-        storage.delete_meeting(&meeting1.id).unwrap();
-        storage.delete_meeting(&meeting2.id).unwrap();
+        assert_eq!(meetings.len(), 2);
     }
 
     #[test]
     fn test_resolve_meeting_id_full() {
-        let storage = MeetingStorage;
-        fs::ensure_data_dir().unwrap();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let storage = MeetingStorage::with_base(temp_dir.path().to_path_buf());
 
         let meeting = Meeting::new("Resolver Test".to_string());
         storage.create_meeting(&meeting).unwrap();
@@ -377,14 +404,12 @@ mod tests {
         // Full UUID resolves
         let resolved = storage.resolve_meeting_id(&meeting.id).unwrap();
         assert_eq!(resolved, meeting.id);
-
-        storage.delete_meeting(&meeting.id).unwrap();
     }
 
     #[test]
     fn test_resolve_meeting_id_short() {
-        let storage = MeetingStorage;
-        fs::ensure_data_dir().unwrap();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let storage = MeetingStorage::with_base(temp_dir.path().to_path_buf());
 
         let meeting = Meeting::new("Short ID Test".to_string());
         storage.create_meeting(&meeting).unwrap();
@@ -393,14 +418,12 @@ mod tests {
         let prefix = &meeting.id[..8];
         let resolved = storage.resolve_meeting_id(prefix).unwrap();
         assert_eq!(resolved, meeting.id);
-
-        storage.delete_meeting(&meeting.id).unwrap();
     }
 
     #[test]
     fn test_resolve_meeting_id_too_short() {
-        let storage = MeetingStorage;
-        fs::ensure_data_dir().unwrap();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let storage = MeetingStorage::with_base(temp_dir.path().to_path_buf());
 
         let result = storage.resolve_meeting_id("abc");
         assert!(result.is_err());
@@ -409,8 +432,8 @@ mod tests {
 
     #[test]
     fn test_resolve_meeting_id_not_found() {
-        let storage = MeetingStorage;
-        fs::ensure_data_dir().unwrap();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let storage = MeetingStorage::with_base(temp_dir.path().to_path_buf());
 
         let result = storage.resolve_meeting_id("nonexist01");
         assert!(result.is_err());
@@ -422,8 +445,8 @@ mod tests {
 
     #[test]
     fn test_resolve_meeting_id_ambiguous() {
-        let storage = MeetingStorage;
-        fs::ensure_data_dir().unwrap();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let storage = MeetingStorage::with_base(temp_dir.path().to_path_buf());
 
         // Create two meetings with IDs starting with same 8 chars is unlikely
         // with random UUIDs, so we test ambiguity by creating meetings and
@@ -437,7 +460,5 @@ mod tests {
         // Use 8-char prefix that won't match
         let result = storage.resolve_meeting_id("zzzzzzzz");
         assert!(result.is_err());
-
-        storage.delete_meeting(&meeting.id).unwrap();
     }
 }

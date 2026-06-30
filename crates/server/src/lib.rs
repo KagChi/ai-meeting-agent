@@ -7,6 +7,7 @@ pub mod config_handlers;
 pub mod error;
 pub mod handlers;
 pub mod import_handlers;
+pub mod openapi;
 pub mod state;
 pub mod summary_handlers;
 pub mod types;
@@ -17,16 +18,14 @@ pub use state::AppState;
 use axum::{middleware, routing::get, routing::post, Router};
 use std::net::SocketAddr;
 use tower_http::{cors::CorsLayer, trace::TraceLayer};
+use utoipa::OpenApi;
+use utoipa_swagger_ui::SwaggerUi;
 
-/// Run the API server with the given configuration.
-pub async fn run(config: meeting_agent_core::Config) -> anyhow::Result<()> {
-    // Extract server config values before moving config into AppState
-    let host_str = config.server.host.clone();
-    let port = config.server.port;
-
-    let state = AppState::new(config);
-
-    let app = Router::new()
+/// Build the router with all routes configured. Exposed for testing.
+pub fn build_router(state: AppState) -> Router {
+    Router::new()
+        // Swagger UI - publicly accessible (no auth)
+        .merge(SwaggerUi::new("/docs").url("/api-docs/openapi.json", openapi::ApiDoc::openapi()))
         .route("/health", get(handlers::health))
         .route("/version", get(handlers::version))
         .route(
@@ -78,7 +77,17 @@ pub async fn run(config: meeting_agent_core::Config) -> anyhow::Result<()> {
         ))
         .with_state(state)
         .layer(CorsLayer::permissive())
-        .layer(TraceLayer::new_for_http());
+        .layer(TraceLayer::new_for_http())
+}
+
+/// Run the API server with the given configuration.
+pub async fn run(config: meeting_agent_core::Config) -> anyhow::Result<()> {
+    // Extract server config values before moving config into AppState
+    let host_str = config.server.host.clone();
+    let port = config.server.port;
+
+    let state = AppState::new(config);
+    let app = build_router(state);
 
     let host: std::net::IpAddr = host_str
         .parse()

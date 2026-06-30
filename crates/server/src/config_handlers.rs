@@ -6,9 +6,16 @@ use crate::types::{
 };
 use axum::{extract::State, http::StatusCode, response::IntoResponse, Json};
 use meeting_agent_core::config_validation::{resolve_secret, validate_config, MASK_SENTINEL};
-use meeting_agent_core::fs;
 
 /// GET /config - Get current configuration
+#[utoipa::path(
+    get,
+    path = "/config",
+    tag = "config",
+    responses(
+        (status = 200, description = "Current configuration", body = ConfigResponse)
+    )
+)]
 pub async fn get_config(State(state): State<AppState>) -> Result<impl IntoResponse, ApiError> {
     let config = state.config.read().await;
 
@@ -44,6 +51,16 @@ pub async fn get_config(State(state): State<AppState>) -> Result<impl IntoRespon
 }
 
 /// PUT /config - Update entire configuration
+#[utoipa::path(
+    put,
+    path = "/config",
+    tag = "config",
+    request_body = UpdateConfigRequest,
+    responses(
+        (status = 200, description = "Configuration updated", body = ConfigResponse),
+        (status = 400, description = "Invalid configuration", body = ErrorResponse)
+    )
+)]
 pub async fn update_config(
     State(state): State<AppState>,
     Json(req): Json<UpdateConfigRequest>,
@@ -79,9 +96,15 @@ pub async fn update_config(
         ))
     })?;
 
-    // Persist to disk
-    let config_path = fs::config_path()?;
-    config.save(&config_path)?;
+    // Clone config for saving (to drop write lock before I/O)
+    let config_to_save = config.clone();
+    let config_path = state.config_path.clone();
+
+    // Drop write lock before I/O
+    drop(config);
+
+    // Persist to disk (config files are tiny, blocking is acceptable)
+    config_to_save.save(&config_path)?;
 
     Ok((
         StatusCode::OK,
@@ -90,6 +113,14 @@ pub async fn update_config(
 }
 
 /// GET /config/transcription - Get transcription configuration
+#[utoipa::path(
+    get,
+    path = "/config/transcription",
+    tag = "config",
+    responses(
+        (status = 200, description = "Transcription configuration", body = TranscriptionConfigResponse)
+    )
+)]
 pub async fn get_transcription_config(
     State(state): State<AppState>,
 ) -> Result<impl IntoResponse, ApiError> {
@@ -112,6 +143,16 @@ pub async fn get_transcription_config(
 }
 
 /// PUT /config/transcription - Update transcription configuration
+#[utoipa::path(
+    put,
+    path = "/config/transcription",
+    tag = "config",
+    request_body = UpdateTranscriptionConfigRequest,
+    responses(
+        (status = 200, description = "Transcription configuration updated"),
+        (status = 400, description = "Invalid configuration", body = ErrorResponse)
+    )
+)]
 pub async fn update_transcription_config(
     State(state): State<AppState>,
     Json(req): Json<UpdateTranscriptionConfigRequest>,
@@ -137,9 +178,15 @@ pub async fn update_transcription_config(
         ))
     })?;
 
-    // Persist to disk
-    let config_path = fs::config_path()?;
-    config.save(&config_path)?;
+    // Clone config for saving (to drop write lock before I/O)
+    let config_to_save = config.clone();
+    let config_path = state.config_path.clone();
+
+    // Drop write lock before I/O
+    drop(config);
+
+    // Persist to disk (config files are tiny, blocking is acceptable)
+    config_to_save.save(&config_path)?;
 
     Ok((
         StatusCode::OK,
@@ -148,6 +195,14 @@ pub async fn update_transcription_config(
 }
 
 /// GET /config/summary - Get summary configuration
+#[utoipa::path(
+    get,
+    path = "/config/summary",
+    tag = "config",
+    responses(
+        (status = 200, description = "Summary configuration", body = SummaryConfigResponse)
+    )
+)]
 pub async fn get_summary_config(
     State(state): State<AppState>,
 ) -> Result<impl IntoResponse, ApiError> {
@@ -171,6 +226,16 @@ pub async fn get_summary_config(
 }
 
 /// PUT /config/summary - Update summary configuration
+#[utoipa::path(
+    put,
+    path = "/config/summary",
+    tag = "config",
+    request_body = UpdateSummaryConfigRequest,
+    responses(
+        (status = 200, description = "Summary configuration updated"),
+        (status = 400, description = "Invalid configuration", body = ErrorResponse)
+    )
+)]
 pub async fn update_summary_config(
     State(state): State<AppState>,
     Json(req): Json<UpdateSummaryConfigRequest>,
@@ -197,9 +262,15 @@ pub async fn update_summary_config(
         ))
     })?;
 
-    // Persist to disk
-    let config_path = fs::config_path()?;
-    config.save(&config_path)?;
+    // Clone config for saving (to drop write lock before I/O)
+    let config_to_save = config.clone();
+    let config_path = state.config_path.clone();
+
+    // Drop write lock before I/O
+    drop(config);
+
+    // Persist to disk (config files are tiny, blocking is acceptable)
+    config_to_save.save(&config_path)?;
 
     Ok((
         StatusCode::OK,

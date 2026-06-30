@@ -3,7 +3,7 @@ use colored::Colorize;
 use meeting_agent_core::{storage::MeetingStorage, transcription::TranscriptionResponse};
 
 pub async fn run(id: String, format: String, output: Option<String>) -> Result<()> {
-    let storage = MeetingStorage;
+    let storage = MeetingStorage::new();
     let full_id = storage.resolve_meeting_id(&id)?;
     let resp = storage.get_transcript(&full_id)?;
 

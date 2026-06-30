@@ -4,7 +4,7 @@ use comfy_table::{presets::UTF8_FULL, Cell, Color, Table};
 use meeting_agent_core::{models::MeetingStatus, MeetingStorage};
 
 pub async fn run() -> Result<()> {
-    let storage = MeetingStorage;
+    let storage = MeetingStorage::new();
     let meetings = storage.list_meetings()?;
 
     if meetings.is_empty() {

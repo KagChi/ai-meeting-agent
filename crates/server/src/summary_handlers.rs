@@ -14,6 +14,20 @@ use meeting_agent_core::jobs::JobType;
 use meeting_agent_core::models::MeetingStatus;
 use meeting_agent_core::runners::run_summary;
 
+#[utoipa::path(
+    post,
+    path = "/meetings/{id}/summary",
+    tag = "summaries",
+    params(
+        ("id" = String, Path, description = "Meeting ID or prefix")
+    ),
+    request_body = CreateSummaryRequest,
+    responses(
+        (status = 202, description = "Summary generation started", body = CreateSummaryResponse),
+        (status = 404, description = "Meeting not found", body = ErrorResponse),
+        (status = 409, description = "Meeting not ready", body = ErrorResponse)
+    )
+)]
 pub async fn create_summary(
     State(state): State<AppState>,
     Path(meeting_id): Path<String>,
@@ -82,6 +96,18 @@ pub async fn create_summary(
         .into_response())
 }
 
+#[utoipa::path(
+    get,
+    path = "/meetings/{id}/summary",
+    tag = "summaries",
+    params(
+        ("id" = String, Path, description = "Meeting ID or prefix")
+    ),
+    responses(
+        (status = 200, description = "List of summaries", body = ListSummariesResponse),
+        (status = 404, description = "Meeting not found", body = ErrorResponse)
+    )
+)]
 pub async fn list_summaries(
     State(state): State<AppState>,
     Path(meeting_id): Path<String>,
@@ -95,6 +121,20 @@ pub async fn list_summaries(
     }))
 }
 
+#[utoipa::path(
+    get,
+    path = "/meetings/{id}/summary/{template}",
+    tag = "summaries",
+    params(
+        ("id" = String, Path, description = "Meeting ID or prefix"),
+        ("template" = String, Path, description = "Summary template: key_points, action_items, decisions, or full")
+    ),
+    responses(
+        (status = 200, description = "Summary content", body = SummaryResponse),
+        (status = 404, description = "Meeting or summary not found", body = ErrorResponse),
+        (status = 400, description = "Invalid template", body = ErrorResponse)
+    )
+)]
 pub async fn get_summary(
     State(state): State<AppState>,
     Path((meeting_id, template)): Path<(String, String)>,

@@ -22,3 +22,12 @@ ffmpeg-sidecar = { workspace = true }
 tokio-util = { workspace = true }
 tempfile = { workspace = true }
 futures-util = { workspace = true }
+
+# OpenAPI (optional, enabled by server)
+utoipa = { version = "4", optional = true, features = ["chrono", "uuid"] }
+
+[features]
+openapi = ["utoipa"]
+
+[dev-dependencies]
+wiremock = "0.6"

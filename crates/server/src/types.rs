@@ -6,14 +6,14 @@ use serde::{Deserialize, Serialize};
 
 // === Request Types ===
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct CreateMeetingRequest {
     pub title: String,
     #[serde(default)]
     pub date: Option<DateTime<Utc>>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct UpdateMeetingRequest {
     pub title: Option<String>,
     pub date: Option<DateTime<Utc>>,
@@ -21,25 +21,25 @@ pub struct UpdateMeetingRequest {
 
 // === Response Types ===
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ListMeetingsResponse {
     pub meetings: Vec<Meeting>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct MeetingResponse {
     #[serde(flatten)]
     pub meeting: Meeting,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct TranscriptResponse {
     pub meeting_id: String,
     pub status: MeetingStatus,
     pub transcript: Option<TranscriptionResponse>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ErrorResponse {
     pub error: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -49,14 +49,14 @@ pub struct ErrorResponse {
 // === Import Types ===
 
 /// Response when creating an import job (202 Accepted)
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ImportResponse {
     pub job_id: String,
     pub status: JobState,
 }
 
 /// Response for polling job status (import or summary)
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct JobStatusResponse {
     pub job_id: String,
     pub job_type: JobType,
@@ -89,7 +89,7 @@ impl From<Job> for JobStatusResponse {
 }
 
 /// Response for import validation
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ImportValidationResponse {
     pub valid: bool,
     pub format: String,
@@ -97,7 +97,7 @@ pub struct ImportValidationResponse {
 }
 
 /// Response for cancel operation
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct CancelImportResponse {
     pub job_id: String,
     pub cancelled: bool,
@@ -105,26 +105,26 @@ pub struct CancelImportResponse {
 
 // === Summary Types ===
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct CreateSummaryRequest {
     pub template: SummaryTemplate,
     #[serde(default)]
     pub language: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct SummaryResponse {
     #[serde(flatten)]
     pub summary: Summary,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ListSummariesResponse {
     pub meeting_id: String,
     pub summaries: Vec<Summary>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct CreateSummaryResponse {
     pub job_id: String,
     pub status: JobState,
@@ -132,7 +132,7 @@ pub struct CreateSummaryResponse {
 
 // === Config Types ===
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct TranscriptionConfigResponse {
     pub provider: String,
     pub api_key: Option<String>,
@@ -142,7 +142,7 @@ pub struct TranscriptionConfigResponse {
     pub chunk_concurrency: usize,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct SummaryConfigResponse {
     pub provider: String,
     pub api_key: Option<String>,
@@ -153,13 +153,13 @@ pub struct SummaryConfigResponse {
     pub language: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ConfigResponse {
     pub transcription: TranscriptionConfigResponse,
     pub summary: SummaryConfigResponse,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct UpdateTranscriptionConfigRequest {
     pub provider: String,
     pub api_key: Option<String>,
@@ -169,7 +169,7 @@ pub struct UpdateTranscriptionConfigRequest {
     pub chunk_concurrency: usize,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct UpdateSummaryConfigRequest {
     pub provider: String,
     pub api_key: Option<String>,
@@ -180,7 +180,7 @@ pub struct UpdateSummaryConfigRequest {
     pub language: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct UpdateConfigRequest {
     pub transcription: UpdateTranscriptionConfigRequest,
     pub summary: UpdateSummaryConfigRequest,

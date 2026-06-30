@@ -37,6 +37,15 @@ const AUDIO_EXTENSIONS: &[&str] = &[
 ///
 /// Accept multipart upload with `file` (audio) and optional `title` field.
 /// Spawns a background transcription job. Returns 202 with job_id.
+#[utoipa::path(
+    post,
+    path = "/import",
+    tag = "imports",
+    responses(
+        (status = 202, description = "Import job started", body = ImportResponse),
+        (status = 400, description = "Invalid request", body = ErrorResponse)
+    )
+)]
 pub async fn create_import(
     State(state): State<AppState>,
     mut multipart: Multipart,
@@ -154,6 +163,15 @@ pub async fn create_import(
 /// POST /import/validate
 ///
 /// Validate an audio file without importing it. Returns format + size.
+#[utoipa::path(
+    post,
+    path = "/import/validate",
+    tag = "imports",
+    responses(
+        (status = 200, description = "Validation result", body = ImportValidationResponse),
+        (status = 400, description = "Invalid request", body = ErrorResponse)
+    )
+)]
 pub async fn validate_import(
     mut multipart: Multipart,
 ) -> Result<Json<ImportValidationResponse>, ApiError> {
@@ -188,9 +206,21 @@ pub async fn validate_import(
     Err(ApiError::BadRequest("Missing 'file' field".to_string()))
 }
 
-/// GET /import/:job_id/status
+/// GET /jobs/:job_id/status
 ///
 /// Poll the current status of an import job.
+#[utoipa::path(
+    get,
+    path = "/jobs/{job_id}/status",
+    tag = "jobs",
+    params(
+        ("job_id" = String, Path, description = "Job ID")
+    ),
+    responses(
+        (status = 200, description = "Job status", body = JobStatusResponse),
+        (status = 404, description = "Job not found", body = ErrorResponse)
+    )
+)]
 pub async fn get_import_status(
     State(state): State<AppState>,
     Path(job_id): Path<String>,
@@ -203,9 +233,21 @@ pub async fn get_import_status(
     Ok(Json(JobStatusResponse::from(job)))
 }
 
-/// GET /import/:job_id/events
+/// GET /jobs/:job_id/events
 ///
 /// Server-Sent Events stream of progress updates for an import job.
+#[utoipa::path(
+    get,
+    path = "/jobs/{job_id}/events",
+    tag = "jobs",
+    params(
+        ("job_id" = String, Path, description = "Job ID")
+    ),
+    responses(
+        (status = 200, description = "SSE stream of progress events"),
+        (status = 404, description = "Job not found", body = ErrorResponse)
+    )
+)]
 pub async fn get_import_events(
     State(state): State<AppState>,
     Path(job_id): Path<String>,
@@ -251,9 +293,22 @@ pub async fn get_import_events(
     Ok(Sse::new(stream).keep_alive(KeepAlive::default()))
 }
 
-/// POST /import/:job_id/cancel
+/// POST /jobs/:job_id/cancel
 ///
 /// Cancel a running import job. Returns 409 if job already terminal.
+#[utoipa::path(
+    post,
+    path = "/jobs/{job_id}/cancel",
+    tag = "jobs",
+    params(
+        ("job_id" = String, Path, description = "Job ID")
+    ),
+    responses(
+        (status = 200, description = "Job cancelled", body = CancelImportResponse),
+        (status = 404, description = "Job not found", body = ErrorResponse),
+        (status = 409, description = "Job already terminal", body = ErrorResponse)
+    )
+)]
 pub async fn cancel_import(
     State(state): State<AppState>,
     Path(job_id): Path<String>,

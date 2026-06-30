@@ -167,7 +167,7 @@ pub async fn run(file: String, title: Option<String>) -> Result<()> {
     });
 
     let meeting = Meeting::new(meeting_title);
-    let storage = MeetingStorage;
+    let storage = MeetingStorage::new();
 
     storage.create_meeting(&meeting)?;
     storage.save_audio(&meeting.id, &file_path)?;

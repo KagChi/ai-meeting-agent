@@ -15,6 +15,7 @@ const EVENT_CHANNEL_CAPACITY: usize = 16;
 
 /// Kind of background job.
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[serde(rename_all = "lowercase")]
 pub enum JobType {
     Import,
@@ -23,6 +24,7 @@ pub enum JobType {
 
 /// State of a background job.
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[serde(rename_all = "lowercase")]
 pub enum JobState {
     Pending,
@@ -34,6 +36,7 @@ pub enum JobState {
 
 /// A single progress event emitted during job execution.
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct ProgressEvent {
     pub stage: String,
     pub message: String,
@@ -60,6 +63,7 @@ impl ProgressEvent {
 
 /// A background job (import or summary).
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct Job {
     pub id: String,
     pub job_type: JobType,

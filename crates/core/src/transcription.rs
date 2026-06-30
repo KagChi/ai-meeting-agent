@@ -31,6 +31,7 @@ pub struct TranscriptionRequest {
 
 /// Response from transcription API (verbose_json format)
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct TranscriptionResponse {
     /// The transcribed text
     pub text: String,
@@ -51,6 +52,7 @@ pub struct TranscriptionResponse {
 
 /// A segment of the transcript with timing information
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct TranscriptSegment {
     #[serde(default)]
     pub id: u32,
@@ -843,5 +845,141 @@ mod tests {
         assert_eq!(merged.language.as_deref(), Some("en"));
         assert!((merged.duration.unwrap() - 100.0).abs() < 1e-9);
         assert!(merged.segments.is_none());
+    }
+
+    // HTTP integration tests with wiremock
+    #[tokio::test]
+    async fn test_transcribe_http_success() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let mock_server = MockServer::start().await;
+
+        let response_body = r#"{
+            "text": "Hello world",
+            "language": "en",
+            "duration": 2.5,
+            "segments": [
+                {"id": 0, "start": 0.0, "end": 2.5, "text": "Hello world"}
+            ]
+        }"#;
+
+        Mock::given(method("POST"))
+            .and(path("/audio/transcriptions"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(response_body))
+            .mount(&mock_server)
+            .await;
+
+        let config = TranscriptionConfig {
+            provider: "openai".to_string(),
+            api_key: Some("test-key".to_string()),
+            base_url: mock_server.uri(),
+            model: "whisper-1".to_string(),
+            chunk_seconds: 600.0,
+            chunk_concurrency: 2,
+        };
+
+        let client = TranscriptionClient::new(config).unwrap();
+
+        // Create a temporary test audio file
+        let temp_dir = tempfile::tempdir().unwrap();
+        let test_file = temp_dir.path().join("test.txt");
+        std::fs::write(&test_file, b"fake audio content").unwrap();
+
+        let request = TranscriptionRequest {
+            file_path: test_file.to_str().unwrap().to_string(),
+            response_format: Some("verbose_json".to_string()),
+            language: Some("en".to_string()),
+            prompt: None,
+            temperature: None,
+        };
+
+        let result = client.transcribe(request).await;
+        let response = result.expect("Transcription failed");
+        assert_eq!(response.text, "Hello world");
+        assert_eq!(response.language.as_deref(), Some("en"));
+    }
+
+    #[tokio::test]
+    async fn test_transcribe_http_auth_required() {
+        use wiremock::matchers::{header, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/audio/transcriptions"))
+            .and(header("authorization", "Bearer test-key"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(r#"{"text":"authorized"}"#))
+            .mount(&mock_server)
+            .await;
+
+        let config = TranscriptionConfig {
+            provider: "openai".to_string(),
+            api_key: Some("test-key".to_string()),
+            base_url: mock_server.uri(),
+            model: "whisper-1".to_string(),
+            chunk_seconds: 600.0,
+            chunk_concurrency: 2,
+        };
+
+        let client = TranscriptionClient::new(config).unwrap();
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let test_file = temp_dir.path().join("test.txt");
+        std::fs::write(&test_file, b"fake audio").unwrap();
+
+        let request = TranscriptionRequest {
+            file_path: test_file.to_str().unwrap().to_string(),
+            response_format: Some("verbose_json".to_string()),
+            language: None,
+            prompt: None,
+            temperature: None,
+        };
+
+        let result = client.transcribe(request).await;
+        result.expect("Transcription should succeed with valid auth");
+    }
+
+    #[tokio::test]
+    async fn test_transcribe_http_error_handling() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/audio/transcriptions"))
+            .respond_with(
+                ResponseTemplate::new(400).set_body_string(r#"{"error": "Invalid audio file"}"#),
+            )
+            .mount(&mock_server)
+            .await;
+
+        let config = TranscriptionConfig {
+            provider: "openai".to_string(),
+            api_key: Some("test-key".to_string()),
+            base_url: mock_server.uri(),
+            model: "whisper-1".to_string(),
+            chunk_seconds: 600.0,
+            chunk_concurrency: 2,
+        };
+
+        let client = TranscriptionClient::new(config).unwrap();
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let test_file = temp_dir.path().join("test.txt");
+        std::fs::write(&test_file, b"bad audio").unwrap();
+
+        let request = TranscriptionRequest {
+            file_path: test_file.to_str().unwrap().to_string(),
+            response_format: Some("verbose_json".to_string()),
+            language: None,
+            prompt: None,
+            temperature: None,
+        };
+
+        let result = client.transcribe(request).await;
+        assert!(result.is_err());
     }
 }

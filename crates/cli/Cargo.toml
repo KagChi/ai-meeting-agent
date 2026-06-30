@@ -31,3 +31,8 @@ log = { workspace = true }
 chrono = { workspace = true }
 uuid = { workspace = true }
 dialoguer = { version = "0.11", default-features = false, features = ["password"] }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+assert_cmd = "2"
+predicates = "3"

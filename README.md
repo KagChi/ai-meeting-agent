@@ -6,9 +6,14 @@ A standalone meeting agent API & CLI for transcribing and summarizing meeting re
 
 - **HTTP API Server**: RESTful API for managing meetings, transcripts, and summaries
 - **CLI Tool**: Command-line interface for local operations
+- **Interactive Config Wizard**: Guided setup via `meeting-agent config edit`
+- **Live Config API**: Update server config at runtime via `PUT /config` endpoints
+- **OpenAPI / Swagger UI**: Interactive API docs at `/docs`, spec at `/api-docs/openapi.json`
 - **File-Based Storage**: Simple, portable storage using `~/.meeting-agent/` directory
 - **OpenAI-Compatible Transcription**: Works with OpenAI or any OpenAI-compatible STT API
-- **AI-Powered Summaries**: Generate meeting summaries with key points and action items
+- **Chunked Transcription**: Automatically splits long audio into chunks for parallel transcription
+- **Speaker Diarization**: Optional speaker labeling via standalone sherpa-onnx microservice
+- **AI-Powered Summaries**: Generate meeting summaries with key points, action items, and decisions
 
 ## Architecture
 
@@ -77,34 +82,82 @@ SUMMARY_LANGUAGE=en
 ### Start the Server
 
 ```bash
-# Using the CLI
-meeting-agent server --port 8080
+# Using the CLI (default port 8080, host 127.0.0.1)
+meeting-agent server
+
+# Custom port and host
+meeting-agent server --port 3000 --host 0.0.0.0
 
 # Or run the server binary directly
 meeting-agent-server
 ```
 
+### API Documentation (Swagger UI)
+
+Once the server is running, open:
+
+- **Swagger UI**: `http://127.0.0.1:8080/docs`
+- **OpenAPI JSON spec**: `http://127.0.0.1:8080/api-docs/openapi.json`
+
 ### CLI Commands
 
 ```bash
-# Import a meeting recording
+# Import a meeting recording (with optional title)
 meeting-agent import meeting.wav --title "Q3 Planning"
+meeting-agent import recording.mp3
 
 # List all meetings
 meeting-agent list
 
-# Show meeting details
-meeting-agent show <meeting-id>
+# Show meeting details (8-char ID prefix supported)
+meeting-agent show abc12345
 
-# Generate summary
-meeting-agent summarize <meeting-id>
+# Generate summary (templates: full, key-points, action-items, decisions)
+meeting-agent summarize abc12345 --template key-points
+meeting-agent summarize abc12345 --template action-items --language en
 
-# Export transcript
-meeting-agent export <meeting-id> --format srt
+# Export transcript (formats: srt, vtt, text, json)
+meeting-agent export abc12345 --format srt
+meeting-agent export abc12345 --format json --output transcript.json
 
 # Manage configuration
 meeting-agent config show
 meeting-agent config set transcription.provider openai
+meeting-agent config set server.port 3000
+meeting-agent config set diarize.enabled true
+
+# Interactive config wizard (guided setup)
+meeting-agent config edit
+```
+
+### curl Examples
+
+```bash
+# Health check
+curl http://127.0.0.1:8080/health
+
+# List meetings
+curl -H "X-API-Key: your-key" http://127.0.0.1:8080/meetings
+
+# Import audio file
+curl -X POST -H "X-API-Key: your-key" \
+  -F "file=@meeting.mp3" -F "title=Q3 Planning" \
+  http://127.0.0.1:8080/import
+
+# Check job status
+curl -H "X-API-Key: your-key" http://127.0.0.1:8080/jobs/{job_id}/status
+
+# Generate summary
+curl -X POST -H "X-API-Key: your-key" \
+  http://127.0.0.1:8080/meetings/{id}/summary
+
+# Get current config (secrets masked)
+curl -H "X-API-Key: your-key" http://127.0.0.1:8080/config
+
+# Update transcription config
+curl -X PUT -H "X-API-Key: your-key" -H "Content-Type: application/json" \
+  -d '{"provider":"groq","base_url":"https://api.groq.com/openai/v1","model":"whisper-large-v3","chunk_seconds":600,"chunk_concurrency":2}' \
+  http://127.0.0.1:8080/config/transcription
 ```
 
 ### API Endpoints
@@ -132,9 +185,21 @@ meeting-agent config set transcription.provider openai
 - `GET /jobs/{job_id}/events` - SSE stream of job progress
 - `POST /jobs/{job_id}/cancel` - Cancel a running job
 
-#### Configuration
-- `GET /config` - Get current config
-- `PUT /config` - Update config
+#### Configuration (Live API)
+- `GET /config` - Get current config (secrets masked as `****`)
+- `PUT /config` - Update full config (validates before saving)
+- `GET /config/transcription` - Get transcription config
+- `PUT /config/transcription` - Update transcription config
+- `GET /config/summary` - Get summary config
+- `PUT /config/summary` - Update summary config
+
+> **Secret handling**: API keys are masked (`****`) in GET responses. To keep
+> an existing key unchanged, send `"****"` in PUT requests. To replace, send
+> the new key value.
+
+#### API Documentation
+- `GET /docs` - Swagger UI (interactive API docs)
+- `GET /api-docs/openapi.json` - OpenAPI 3.0 spec
 
 ## Data Storage
 
@@ -144,8 +209,9 @@ All data is stored in `~/.meeting-agent/`:
 ~/.meeting-agent/
 ├── config.json
 └── meetings/{id}/
-    ├── metadata.json
-    ├── audio.wav
+    ├── meeting.json
+    ├── audio/
+    │   └── {original-filename}
     ├── transcript.json
     └── summaries/
         ├── key_points.json
@@ -236,6 +302,143 @@ curl -SL -o 3dspeaker_speech_eres2net_base_sv_zh-cn_3dspeaker_16k.onnx \
 | `DIARIZE_CLUSTERING_THRESHOLD` | `0.5` | Agglomerative clustering threshold |
 | `DIARIZE_MAX_BODY_MB` | `512` | Max request body size accepted by diarize-server (MB) |
 | `DIARIZE_TIMEOUT_SECS` | `900` | Client request timeout for diarize calls (seconds) |
+
+## Troubleshooting
+
+### `ffmpeg` not found
+
+Audio conversion and chunking require `ffmpeg` + `ffprobe` on your `PATH`:
+
+```bash
+# macOS
+brew install ffmpeg
+
+# Ubuntu/Debian
+sudo apt install ffmpeg
+```
+
+### Transcription fails with 401/403
+
+Check `TRANSCRIPTION_API_KEY` is set and valid:
+
+```bash
+meeting-agent config show
+# Verify api_key field is not "(not set)"
+```
+
+### Audio file too large / transcription timeout
+
+Long audio is auto-chunked. Adjust chunk settings:
+
+```bash
+meeting-agent config set transcription.chunk_seconds 300
+meeting-agent config set transcription.chunk_concurrency 4
+```
+
+### Diarization not working
+
+Ensure the diarize microservice is running and `diarize.enabled` is `true`:
+
+```bash
+meeting-agent config set diarize.enabled true
+meeting-agent config set diarize.base_url http://localhost:8002
+```
+
+Verify the service is up:
+
+```bash
+curl http://localhost:8002/health
+```
+
+### Config file permissions
+
+The config file (`~/.meeting-agent/config.json`) is created with `chmod 600`
+(owner read/write only). If permissions are wrong:
+
+```bash
+chmod 600 ~/.meeting-agent/config.json
+```
+
+### Reset to defaults
+
+Delete the config file and run any command — a fresh default config is
+auto-created:
+
+```bash
+rm ~/.meeting-agent/config.json
+meeting-agent config show
+```
+
+## Deployment
+
+### Systemd Service (Linux)
+
+Create `/etc/systemd/system/meeting-agent.service`:
+
+```ini
+[Unit]
+Description=Meeting Agent API Server
+After=network.target
+
+[Service]
+Type=simple
+User=meeting
+WorkingDirectory=/opt/meeting-agent
+EnvironmentFile=/opt/meeting-agent/.env
+ExecStart=/opt/meeting-agent/meeting-agent-server
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+```
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now meeting-agent
+```
+
+### Docker
+
+```dockerfile
+FROM rust:1.70-slim as builder
+WORKDIR /app
+COPY . .
+RUN apt-get update && apt-get install -y ffmpeg && cargo build --release
+
+FROM debian:bookworm-slim
+RUN apt-get update && apt-get install -y ffmpeg && rm -rf /var/lib/apt/lists/*
+COPY --from=builder /app/target/release/meeting-agent-server /usr/local/bin/
+EXPOSE 8080
+CMD ["meeting-agent-server"]
+```
+
+```bash
+docker build -t meeting-agent .
+docker run -p 8080:8080 -v ~/.meeting-agent:/root/.meeting-agent meeting-agent
+```
+
+### Reverse Proxy (nginx)
+
+```nginx
+server {
+    listen 80;
+    server_name meetings.example.com;
+
+    location / {
+        proxy_pass http://127.0.0.1:8080;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        # SSE support (for /jobs/{id}/events)
+        proxy_buffering off;
+        proxy_cache off;
+        proxy_read_timeout 86400;
+    }
+}
+```
 
 ## License
 

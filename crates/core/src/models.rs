@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct Meeting {
     pub id: String,
     pub title: String,
@@ -17,6 +18,7 @@ pub struct Meeting {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[serde(rename_all = "lowercase")]
 pub enum MeetingStatus {
     Importing,
@@ -25,6 +27,7 @@ pub enum MeetingStatus {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct TranscriptionInfo {
     pub provider: String,
     pub model: String,
@@ -48,11 +51,13 @@ impl Meeting {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct Transcript {
     pub segments: Vec<TranscriptSegment>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct TranscriptSegment {
     pub id: u32,
     pub start: f64,
@@ -62,6 +67,7 @@ pub struct TranscriptSegment {
 
 /// Template for summary generation. User picks per request.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[serde(rename_all = "lowercase")]
 pub enum SummaryTemplate {
     KeyPoints,
@@ -73,6 +79,7 @@ pub enum SummaryTemplate {
 
 /// Status of a summary generation job.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[serde(rename_all = "lowercase")]
 pub enum SummaryStatus {
     Pending,
@@ -88,6 +95,7 @@ pub enum SummaryStatus {
 /// for `Full` template (all three) or single-template requests (matching
 /// field only); others left empty.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct Summary {
     pub id: String,
     pub meeting_id: String,

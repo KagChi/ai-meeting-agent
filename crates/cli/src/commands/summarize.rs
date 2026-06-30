@@ -24,7 +24,7 @@ pub async fn run(id: String, template: String, language: Option<String>) -> Resu
         }
     };
 
-    let storage = MeetingStorage;
+    let storage = MeetingStorage::new();
     let full_id = storage.resolve_meeting_id(&id)?;
     let meeting = storage.get_meeting(&full_id)?;
 
