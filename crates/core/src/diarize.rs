@@ -37,11 +37,15 @@ pub struct DiarizeClient {
 }
 
 impl DiarizeClient {
-    pub fn new(base_url: String) -> Self {
-        Self {
-            client: reqwest::Client::new(),
+    pub fn new(base_url: String, timeout: std::time::Duration) -> Result<Self> {
+        let client = reqwest::Client::builder()
+            .timeout(timeout)
+            .build()
+            .context("Failed to build HTTP client")?;
+        Ok(Self {
+            client,
             base_url: base_url.trim_end_matches('/').to_string(),
-        }
+        })
     }
 
     /// POST audio + Whisper transcript to `/v1/diarize`.
@@ -106,7 +110,7 @@ impl DiarizeClient {
             .multipart(form)
             .send()
             .await
-            .context("Failed to send diarize request")?;
+            .with_context(|| format!("Failed to send diarize request to {url}"))?;
 
         let status = resp.status();
         if !status.is_success() {

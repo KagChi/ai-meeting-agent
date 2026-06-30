@@ -234,6 +234,8 @@ curl -SL -o 3dspeaker_speech_eres2net_base_sv_zh-cn_3dspeaker_16k.onnx \
 | `DIARIZE_EMBEDDING_MODEL` | (required) | Path to 3D-Speaker ERes2Net `.onnx` |
 | `DIARIZE_NUM_SPEAKERS` | `0` | Override speaker count (`0` = auto-detect) |
 | `DIARIZE_CLUSTERING_THRESHOLD` | `0.5` | Agglomerative clustering threshold |
+| `DIARIZE_MAX_BODY_MB` | `512` | Max request body size accepted by diarize-server (MB) |
+| `DIARIZE_TIMEOUT_SECS` | `900` | Client request timeout for diarize calls (seconds) |
 
 ## License
 

@@ -8,6 +8,9 @@ pub struct DiarizeConfig {
     pub embedding_model: PathBuf,
     pub num_clusters: i32,
     pub clustering_threshold: f32,
+    /// Max request body size accepted by diarize-server, in bytes.
+    /// Read from `DIARIZE_MAX_BODY_MB` (default 512 MB).
+    pub max_body_bytes: usize,
 }
 
 impl DiarizeConfig {
@@ -46,11 +49,22 @@ impl DiarizeConfig {
             .map_err(|e| DiarizeError::ConfigError(format!("DIARIZE_CLUSTERING_THRESHOLD: {e}")))?
             .unwrap_or(0.5);
 
+        let max_body_mb = std::env::var("DIARIZE_MAX_BODY_MB")
+            .ok()
+            .map(|s| s.parse::<u64>())
+            .transpose()
+            .map_err(|e| DiarizeError::ConfigError(format!("DIARIZE_MAX_BODY_MB: {e}")))?
+            .unwrap_or(512);
+        let max_body_bytes = (max_body_mb as usize)
+            .saturating_mul(1024)
+            .saturating_mul(1024);
+
         Ok(Self {
             segmentation_model,
             embedding_model,
             num_clusters,
             clustering_threshold,
+            max_body_bytes,
         })
     }
 }

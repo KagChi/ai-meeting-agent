@@ -1,7 +1,7 @@
 use std::net::SocketAddr;
 
 use axum::{
-    extract::{Multipart, State},
+    extract::{DefaultBodyLimit, Multipart, State},
     http::StatusCode,
     response::IntoResponse,
     routing::{get, post},
@@ -63,9 +63,13 @@ async fn main() -> Result<()> {
     let app = Router::new()
         .route("/health", get(health))
         .route("/v1/diarize", post(diarize))
+        .layer(DefaultBodyLimit::max(cfg.max_body_bytes))
         .with_state(state);
 
-    log::info!("diarize-server listening on {addr}");
+    log::info!(
+        "diarize-server listening on {addr} (max body: {} MB)",
+        cfg.max_body_bytes / 1024 / 1024
+    );
     let listener = tokio::net::TcpListener::bind(addr)
         .await
         .map_err(|e| DiarizeError::ConfigError(format!("bind: {e}")))?;
