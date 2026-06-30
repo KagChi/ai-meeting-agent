@@ -21,3 +21,4 @@ log = { workspace = true }
 ffmpeg-sidecar = { workspace = true }
 tokio-util = { workspace = true }
 tempfile = { workspace = true }
+futures-util = { workspace = true }

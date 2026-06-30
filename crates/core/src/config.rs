@@ -16,6 +16,21 @@ pub struct TranscriptionConfig {
     pub api_key: Option<String>,
     pub base_url: String,
     pub model: String,
+    /// Max audio duration (seconds) per transcription request. Files longer
+    /// than this are split into chunks via ffmpeg. 0 disables chunking.
+    #[serde(default = "default_chunk_seconds")]
+    pub chunk_seconds: f64,
+    /// Max concurrent chunk transcription requests.
+    #[serde(default = "default_chunk_concurrency")]
+    pub chunk_concurrency: usize,
+}
+
+fn default_chunk_seconds() -> f64 {
+    600.0
+}
+
+fn default_chunk_concurrency() -> usize {
+    2
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -60,6 +75,8 @@ impl Default for Config {
                 api_key: None,
                 base_url: "https://api.openai.com/v1".to_string(),
                 model: "whisper-1".to_string(),
+                chunk_seconds: default_chunk_seconds(),
+                chunk_concurrency: default_chunk_concurrency(),
             },
             summary: SummaryConfig {
                 provider: "openai".to_string(),
@@ -86,6 +103,8 @@ impl Config {
     /// - TRANSCRIPTION_API_KEY
     /// - TRANSCRIPTION_BASE_URL
     /// - TRANSCRIPTION_MODEL
+    /// - TRANSCRIPTION_CHUNK_SECONDS (max seconds per request; 0 disables chunking)
+    /// - TRANSCRIPTION_CHUNK_CONCURRENCY (parallel chunk requests)
     /// - SUMMARY_PROVIDER
     /// - SUMMARY_API_KEY
     /// - SUMMARY_BASE_URL
@@ -115,6 +134,16 @@ impl Config {
         }
         if let Ok(model) = std::env::var("TRANSCRIPTION_MODEL") {
             config.transcription.model = model;
+        }
+        if let Ok(chunk_seconds) = std::env::var("TRANSCRIPTION_CHUNK_SECONDS") {
+            if let Ok(c) = chunk_seconds.parse::<f64>() {
+                config.transcription.chunk_seconds = c;
+            }
+        }
+        if let Ok(chunk_concurrency) = std::env::var("TRANSCRIPTION_CHUNK_CONCURRENCY") {
+            if let Ok(c) = chunk_concurrency.parse::<usize>() {
+                config.transcription.chunk_concurrency = c.max(1);
+            }
         }
 
         if let Ok(provider) = std::env::var("SUMMARY_PROVIDER") {

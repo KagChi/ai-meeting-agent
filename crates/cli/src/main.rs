@@ -91,6 +91,7 @@ enum ConfigCommands {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     dotenv::dotenv().ok();
+    env_logger::init();
 
     let cli = Cli::parse();
 

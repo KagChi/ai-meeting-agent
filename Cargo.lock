@@ -1158,6 +1158,7 @@ dependencies = [
  "chrono",
  "dirs",
  "ffmpeg-sidecar",
+ "futures-util",
  "log",
  "reqwest",
  "serde",

@@ -92,7 +92,13 @@ pub async fn run(file: String, title: Option<String>) -> Result<()> {
         temperature: Some(0.0),
     };
 
-    let response = client.transcribe(request).await?;
+    let response = client
+        .transcribe_chunked(
+            request,
+            config.transcription.chunk_seconds,
+            config.transcription.chunk_concurrency,
+        )
+        .await?;
     pb.finish_with_message("Transcription complete!".green().to_string());
 
     if temp_file_created {

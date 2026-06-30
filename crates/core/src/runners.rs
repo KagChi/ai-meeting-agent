@@ -123,7 +123,11 @@ async fn run_import_inner(
     };
 
     let transcription = transcription_client
-        .transcribe(transcription_request)
+        .transcribe_chunked(
+            transcription_request,
+            config.transcription.chunk_seconds,
+            config.transcription.chunk_concurrency,
+        )
         .await?;
 
     check_cancelled(cancel_token)?;
