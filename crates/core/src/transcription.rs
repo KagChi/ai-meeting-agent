@@ -193,10 +193,7 @@ impl TranscriptionClient {
             .to_string();
 
         // Build the API URL (OpenAI-compatible: {base}/audio/transcriptions)
-        let url = format!(
-            "{}/audio/transcriptions",
-            self.config.base_url
-        );
+        let url = format!("{}/audio/transcriptions", self.config.base_url);
 
         log::info!("[transcribe] {} bytes → POST {}", file_bytes.len(), url);
 
@@ -435,12 +432,14 @@ impl TranscriptionClient {
                 form = form.text("prompt", prompt.clone());
             } else if let Some(ref lang) = request.language {
                 let default_prompt = match lang.as_str() {
-                    "id" => Some("Berikut adalah transkripsi percakapan yang jelas dan terstruktur:"),
+                    "id" => {
+                        Some("Berikut adalah transkripsi percakapan yang jelas dan terstruktur:")
+                    }
                     "en" => Some("The following is a clear and structured transcription:"),
                     "ja" => Some("以下は明確で構造化された文字起こしです。"),
                     "ko" => Some("다음은 명확하고 구조화된 대화 녹취록입니다:"),
                     "zh" => Some("以下是清晰且结构化的转录内容："),
-                    _ => None, 
+                    _ => None,
                 };
 
                 if let Some(p) = default_prompt {
