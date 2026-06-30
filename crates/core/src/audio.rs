@@ -94,7 +94,8 @@ pub fn probe_duration(path: &Path) -> Result<f64> {
 
 /// Split an audio file into N-second chunks using ffmpeg's segment muxer.
 ///
-/// Uses `-c copy` to avoid re-encoding (fast, lossless). Returns ordered list
+/// Re-encodes to ensure valid MP3 chunks (stream copy can produce corrupted
+/// segments when boundaries don't align with keyframes). Returns ordered list
 /// of temp mp3 chunk paths. Caller is responsible for cleanup.
 ///
 /// The output pattern uses `%03d` zero-padded indices so lexicographic sort
@@ -108,7 +109,10 @@ pub fn chunk_audio(path: &Path, segment_seconds: f64) -> Result<Vec<PathBuf>> {
         .input(path.to_str().context("Invalid input path")?)
         .args(["-f", "segment"])
         .args(["-segment_time", &segment_seconds.to_string()])
-        .args(["-c", "copy"])
+        .args(["-c:a", "libmp3lame"])
+        .args(["-b:a", "128k"])
+        .args(["-ar", "16000"])
+        .args(["-ac", "1"])
         .overwrite()
         .output(output_pattern.to_str().context("Invalid output pattern")?)
         .spawn()

@@ -277,7 +277,7 @@ impl TranscriptionClient {
             crate::audio::chunk_audio(path, chunk_seconds).context("Failed to chunk audio")?;
         let chunk_count = chunks.len();
         log::info!(
-            "[chunked] split into {} chunks via ffmpeg (segment_time={}s, copy codec)",
+            "[chunked] split into {} chunks via ffmpeg (segment_time={}s, re-encoded to mp3 128k 16kHz mono)",
             chunk_count,
             chunk_seconds
         );
