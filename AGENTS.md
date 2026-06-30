@@ -64,6 +64,24 @@ When writing large plan files, documentation, or any file that may approach toke
 
 This approach prevents hitting context limits during plan file creation and ensures all content is preserved.
 
+## Documentation Sync Rule (mandatory)
+
+Whenever a change affects user-facing configuration, features, build,
+deployment, or usage, update **both** `README.md` and `.env.example` in the
+same commit:
+
+- **README.md**: add/update sections covering new features, binaries, Docker
+  images, download/install steps, CLI commands, env var tables, or deployment
+  instructions touched by the change.
+- **`.env.example`**: add any new env vars (with sensible defaults + a
+  comment pointing at docs/download URLs for model files or secrets). Keep
+  it a complete, copy-pasteable template — never let it drift from the
+  actual env vars read by the code.
+
+If a change touches neither user-facing config nor usage (e.g. internal
+refactor, test-only, pure code move), this rule does not apply. When in
+doubt, update.
+
 ## Internship Track
 
 **Two-repo structure:**

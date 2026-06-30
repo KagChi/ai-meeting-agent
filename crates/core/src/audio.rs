@@ -22,16 +22,22 @@ pub fn convert_to_mp3(input_path: &Path) -> Result<PathBuf> {
     let output_path = temp_dir.join(format!("meeting-agent-{}.mp3", uuid::Uuid::new_v4()));
 
     // Convert using ffmpeg-sidecar
-    FfmpegCommand::new()
+    let status = FfmpegCommand::new()
         .input(input_path.to_str().context("Invalid input path")?)
+        .args(["-ac", "1"])
+        .args(["-ar", "16000"])
         .args(["-codec:a", "libmp3lame"])
-        .args(["-qscale:a", "2"]) // VBR quality 2 (~190kbps)
-        .overwrite() // -y flag
+        .args(["-b:a", "64k"])
+        .overwrite()
         .output(output_path.to_str().context("Invalid output path")?)
         .spawn()
         .context("Failed to spawn FFmpeg process")?
         .wait()
-        .context("FFmpeg conversion failed")?;
+        .context("FFmpeg process execution failed")?;
+
+    if !status.success() {
+        anyhow::bail!("FFmpeg conversion failed with status: {}", status);
+    }
 
     Ok(output_path)
 }

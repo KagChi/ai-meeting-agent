@@ -12,11 +12,12 @@ A standalone meeting agent API & CLI for transcribing and summarizing meeting re
 
 ## Architecture
 
-The project uses a workspace structure with three crates:
+The project uses a workspace structure with four crates:
 
 - **`meeting-agent-core`**: Shared business logic, models, and file system operations
 - **`meeting-agent-server`**: Axum-based HTTP API server
 - **`meeting-agent-cli`**: Command-line interface and API client
+- **`meeting-agent-diarize`**: Standalone speaker diarization microservice (sherpa-onnx)
 
 ## Installation
 
@@ -168,6 +169,71 @@ cargo fmt
 # Lint
 cargo clippy
 ```
+
+## Diarization Service
+
+`meeting-agent-diarize` is a standalone HTTP microservice that performs
+speaker diarization on an audio file using a Whisper transcript. It wraps
+`sherpa-onnx`'s `OfflineSpeakerDiarization` (pyannote segmentation +
+3D-Speaker embedding models) and merges speaker labels into the transcript
+via max-timestamp-overlap.
+
+### API
+
+```
+POST /v1/diarize   multipart: file (mp3/wav), transcript (Whisper JSON), [num_speakers]
+                  → 200 {"num_speakers": N, "segments": [{"start","end","speaker","text"}]}
+GET  /health       → 200 {"status":"ok"}
+```
+
+### Run via Docker (recommended)
+
+Prebuilt multi-arch image (linux/amd64, linux/arm64) with models baked in:
+
+```bash
+docker pull ghcr.io/bmw-ece-ntust/ai-meeting-agent/diarize-server:latest
+docker run --rm -p 8002:8002 ghcr.io/bmw-ece-ntust/ai-meeting-agent/diarize-server:latest
+```
+
+The image ships the segmentation + embedding ONNX models at `/models/` and
+sets the `DIARIZE_*` env defaults — no volume mounts required.
+
+### Run via binary tarball
+
+Download `diarize-server-linux-{amd64,arm64}.tar.gz` from the latest
+[release](https://github.com/bmw-ece-ntust/ai-meeting-agent/releases),
+extract, and run:
+
+```bash
+tar xzf diarize-server-linux-amd64.tar.gz
+cd diarize-server-linux-amd64
+./run.sh
+```
+
+The tarball ships the binary + a `run.sh` wrapper that sets
+`LD_LIBRARY_PATH`. Models are **not** bundled — download them and point
+the `DIARIZE_*_MODEL` env vars at them:
+
+```bash
+# Segmentation model (extracts to sherpa-onnx-pyannote-segmentation-3-0/)
+curl -SL -o seg.tar.bz2 https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-segmentation-models/sherpa-onnx-pyannote-segmentation-3-0.tar.bz2
+tar xjf seg.tar.bz2
+
+# Embedding model (bare .onnx)
+curl -SL -o 3dspeaker_speech_eres2net_base_sv_zh-cn_3dspeaker_16k.onnx \
+  https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-recongition-models/3dspeaker_speech_eres2net_base_sv_zh-cn_3dspeaker_16k.onnx
+```
+
+### Environment variables
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `DIARIZE_HOST` | `0.0.0.0` | Bind address |
+| `DIARIZE_PORT` | `8002` | Listen port |
+| `DIARIZE_SEGMENTATION_MODEL` | (required) | Path to pyannote-segmentation-3.0 `model.onnx` |
+| `DIARIZE_EMBEDDING_MODEL` | (required) | Path to 3D-Speaker ERes2Net `.onnx` |
+| `DIARIZE_NUM_SPEAKERS` | `0` | Override speaker count (`0` = auto-detect) |
+| `DIARIZE_CLUSTERING_THRESHOLD` | `0.5` | Agglomerative clustering threshold |
 
 ## License
 
