@@ -8,24 +8,60 @@ pub fn merge(
     transcript: Vec<WhisperSegment>,
     speakers: Vec<SpeakerSegment>,
 ) -> Vec<CleanedSegment> {
-    transcript
+    log::debug!(
+        "[merge] merging {} transcript segments with {} speaker segments",
+        transcript.len(),
+        speakers.len()
+    );
+
+    let mut assigned_count = 0;
+    let mut unassigned_count = 0;
+
+    let result: Vec<CleanedSegment> = transcript
         .iter()
-        .map(|t| {
+        .enumerate()
+        .map(|(idx, t)| {
             let speaker = speakers
                 .iter()
                 .map(|s| (overlap(t.start, t.end, s.start, s.end), s.speaker))
                 .filter(|(o, _)| *o > 0.0)
                 .max_by(|a, b| a.0.partial_cmp(&b.0).unwrap())
-                .map(|(_, spk)| spk)
-                .unwrap_or(-1);
+                .map(|(overlap_dur, spk)| {
+                    log::debug!(
+                        "[merge] segment {}: assigned speaker {} (overlap {:.2}s)",
+                        idx,
+                        spk,
+                        overlap_dur
+                    );
+                    spk
+                });
+
+            if speaker.is_some() {
+                assigned_count += 1;
+            } else {
+                unassigned_count += 1;
+                log::debug!(
+                    "[merge] segment {}: no overlapping speaker, assigned -1",
+                    idx
+                );
+            }
+
             CleanedSegment {
                 start: t.start,
                 end: t.end,
-                speaker,
+                speaker: speaker.unwrap_or(-1),
                 text: t.text.clone(),
             }
         })
-        .collect()
+        .collect();
+
+    log::debug!(
+        "[merge] complete: {} assigned, {} unassigned",
+        assigned_count,
+        unassigned_count
+    );
+
+    result
 }
 
 #[cfg(test)]

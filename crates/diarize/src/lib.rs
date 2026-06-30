@@ -50,10 +50,18 @@ impl SpeakerDiarizer {
     }
 
     pub fn process(&self, samples: &[f32]) -> Result<(i32, Vec<SpeakerSegment>)> {
+        log::debug!(
+            "[diarizer] processing {} samples ({:.2}s of audio)",
+            samples.len(),
+            samples.len() as f64 / self.sample_rate() as f64
+        );
+
+        let process_start = std::time::Instant::now();
         let result = self
             .inner
             .process(samples)
             .ok_or_else(|| DiarizeError::DiarizationFailed("process() returned None".into()))?;
+        let process_time = process_start.elapsed();
 
         let num_speakers = result.num_speakers();
         let segments = result
@@ -64,7 +72,15 @@ impl SpeakerDiarizer {
                 end: s.end,
                 speaker: s.speaker,
             })
-            .collect();
+            .collect::<Vec<_>>();
+
+        log::debug!(
+            "[diarizer] sherpa-onnx processing complete: {} speakers detected, {} segments, took {:.2}s",
+            num_speakers,
+            segments.len(),
+            process_time.as_secs_f64()
+        );
+
         Ok((num_speakers, segments))
     }
 

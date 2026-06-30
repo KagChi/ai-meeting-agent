@@ -9,6 +9,8 @@ use crate::error::{DiarizeError, Result};
 const TARGET_SAMPLE_RATE: u32 = 16000;
 
 pub fn decode_audio_to_f32_mono_16k(bytes: &[u8]) -> Result<Vec<f32>> {
+    log::debug!("[audio] decoding {} bytes", bytes.len());
+
     let cursor = std::io::Cursor::new(bytes.to_vec());
     let mss = MediaSourceStream::new(Box::new(cursor), Default::default());
 
@@ -48,7 +50,15 @@ pub fn decode_audio_to_f32_mono_16k(bytes: &[u8]) -> Result<Vec<f32>> {
     }
     let chans = spec.channels.count();
 
+    log::debug!(
+        "[audio] detected: sample_rate={}Hz, channels={}, codec={:?}",
+        src_rate,
+        chans,
+        track.codec_params.codec
+    );
+
     let mut interleaved: Vec<f32> = Vec::new();
+    let mut packet_count = 0;
 
     loop {
         let packet = match format.next_packet() {
@@ -60,7 +70,7 @@ pub fn decode_audio_to_f32_mono_16k(bytes: &[u8]) -> Result<Vec<f32>> {
                 break;
             }
             Err(e) => {
-                log::debug!("decode loop end: {e}");
+                log::debug!("[audio] decode loop end: {e}");
                 break;
             }
         };
@@ -86,11 +96,31 @@ pub fn decode_audio_to_f32_mono_16k(bytes: &[u8]) -> Result<Vec<f32>> {
                 i += chans;
             }
         }
+        packet_count += 1;
     }
 
+    log::debug!(
+        "[audio] decoded {} packets → {} mono samples",
+        packet_count,
+        interleaved.len()
+    );
+
     if src_rate != TARGET_SAMPLE_RATE {
+        log::debug!(
+            "[audio] resampling {}Hz → {}Hz",
+            src_rate,
+            TARGET_SAMPLE_RATE
+        );
         interleaved = resample_linear(&interleaved, src_rate, TARGET_SAMPLE_RATE);
+        log::debug!("[audio] resampled to {} samples", interleaved.len());
     }
+
+    log::debug!(
+        "[audio] decode complete: {} samples ({:.2}s at {}Hz)",
+        interleaved.len(),
+        interleaved.len() as f64 / TARGET_SAMPLE_RATE as f64,
+        TARGET_SAMPLE_RATE
+    );
 
     Ok(interleaved)
 }

@@ -59,6 +59,11 @@ impl DiarizeClient {
         transcript: &TranscriptionResponse,
         num_speakers: Option<i32>,
     ) -> Result<DiarizeResponse> {
+        log::debug!(
+            "[diarize-client] preparing request for {}",
+            audio_path.display()
+        );
+
         let audio_bytes = tokio::fs::read(audio_path)
             .await
             .with_context(|| format!("Failed to read audio file: {}", audio_path.display()))?;
@@ -73,6 +78,13 @@ impl DiarizeClient {
         let transcript_bytes =
             serde_json::to_vec(transcript).context("Failed to serialize transcript")?;
         let transcript_len = transcript_bytes.len();
+
+        let segment_count = transcript.segments.as_ref().map(|s| s.len()).unwrap_or(0);
+        log::debug!(
+            "[diarize-client] transcript: {} segments, {} bytes JSON",
+            segment_count,
+            transcript_len
+        );
 
         let form = multipart::Form::new()
             .part(
@@ -91,6 +103,7 @@ impl DiarizeClient {
             );
 
         let form = if let Some(n) = num_speakers {
+            log::debug!("[diarize-client] num_speakers override: {}", n);
             form.text("num_speakers", n.to_string())
         } else {
             form
@@ -98,12 +111,13 @@ impl DiarizeClient {
 
         let url = format!("{}/v1/diarize", self.base_url);
         log::info!(
-            "[diarize] POST {} (audio={}, transcript bytes={})",
+            "[diarize-client] POST {} (audio={}, transcript bytes={})",
             url,
             filename,
             transcript_len
         );
 
+        let request_start = std::time::Instant::now();
         let resp = self
             .client
             .post(&url)
@@ -115,6 +129,7 @@ impl DiarizeClient {
         let status = resp.status();
         if !status.is_success() {
             let body = resp.text().await.unwrap_or_default();
+            log::warn!("[diarize-client] server returned {}: {}", status, body);
             anyhow::bail!("diarize-server returned {}: {}", status, body);
         }
 
@@ -122,11 +137,15 @@ impl DiarizeClient {
             .json()
             .await
             .context("Failed to parse diarize response")?;
+
+        let request_time = request_start.elapsed().as_secs_f64();
         log::info!(
-            "[diarize] done: {} speakers, {} segments",
+            "[diarize-client] response received: {} speakers, {} segments, took {:.2}s",
             parsed.num_speakers,
-            parsed.segments.len()
+            parsed.segments.len(),
+            request_time
         );
+
         Ok(parsed)
     }
 }
@@ -143,15 +162,42 @@ pub fn merge_speakers(
     mut transcript: TranscriptionResponse,
     diarize: DiarizeResponse,
 ) -> TranscriptionResponse {
+    log::debug!(
+        "[diarize-client] merging {} diarize segments into transcript",
+        diarize.segments.len()
+    );
+
+    let mut assigned = 0;
+    let mut unmatched = 0;
+
     if let Some(segs) = transcript.segments.as_mut() {
         for (i, seg) in segs.iter_mut().enumerate() {
             if let Some(dseg) = diarize.segments.get(i) {
                 // Sanity check: timestamps should match (within float slack).
                 // We assign regardless; the service guarantees alignment by index.
                 seg.speaker = Some(dseg.speaker);
+                assigned += 1;
+                log::debug!(
+                    "[diarize-client] segment {}: assigned speaker {}",
+                    i,
+                    dseg.speaker
+                );
+            } else {
+                unmatched += 1;
+                log::debug!(
+                    "[diarize-client] segment {}: no matching diarize segment",
+                    i
+                );
             }
         }
     }
+
+    log::debug!(
+        "[diarize-client] merge complete: {} assigned, {} unmatched",
+        assigned,
+        unmatched
+    );
+
     transcript
 }
 
