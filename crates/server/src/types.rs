@@ -130,6 +130,62 @@ pub struct CreateSummaryResponse {
     pub status: JobState,
 }
 
+// === Config Types ===
+
+#[derive(Debug, Serialize)]
+pub struct TranscriptionConfigResponse {
+    pub provider: String,
+    pub api_key: Option<String>,
+    pub base_url: String,
+    pub model: String,
+    pub chunk_seconds: f64,
+    pub chunk_concurrency: usize,
+}
+
+#[derive(Debug, Serialize)]
+pub struct SummaryConfigResponse {
+    pub provider: String,
+    pub api_key: Option<String>,
+    pub base_url: String,
+    pub model: String,
+    pub temperature: f32,
+    pub max_tokens: u32,
+    pub language: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ConfigResponse {
+    pub transcription: TranscriptionConfigResponse,
+    pub summary: SummaryConfigResponse,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateTranscriptionConfigRequest {
+    pub provider: String,
+    pub api_key: Option<String>,
+    pub base_url: String,
+    pub model: String,
+    pub chunk_seconds: f64,
+    pub chunk_concurrency: usize,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateSummaryConfigRequest {
+    pub provider: String,
+    pub api_key: Option<String>,
+    pub base_url: String,
+    pub model: String,
+    pub temperature: f32,
+    pub max_tokens: u32,
+    pub language: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateConfigRequest {
+    pub transcription: UpdateTranscriptionConfigRequest,
+    pub summary: UpdateSummaryConfigRequest,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

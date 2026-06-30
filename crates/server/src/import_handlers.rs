@@ -117,7 +117,7 @@ pub async fn create_import(
 
     // Spawn background task
     let job_id_clone = job_id.clone();
-    let config = state.config.clone();
+    let config = state.config.read().await.clone();
     let storage = state.storage.clone();
     let registry = state.jobs.clone();
     let cancel_token_clone = cancel_token.clone();

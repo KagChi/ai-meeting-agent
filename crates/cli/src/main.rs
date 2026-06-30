@@ -86,6 +86,8 @@ enum ConfigCommands {
         /// Configuration value
         value: String,
     },
+    /// Edit configuration interactively
+    Edit,
 }
 
 #[tokio::main]
@@ -109,6 +111,7 @@ async fn main() -> anyhow::Result<()> {
         Commands::Config { command } => match command {
             ConfigCommands::Show => commands::config::show(),
             ConfigCommands::Set { key, value } => commands::config::set(key, value),
+            ConfigCommands::Edit => commands::interactive::run(),
         },
     }
 }

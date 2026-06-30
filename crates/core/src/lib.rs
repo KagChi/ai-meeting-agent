@@ -5,6 +5,7 @@
 
 pub mod audio;
 pub mod config;
+pub mod config_validation;
 pub mod diarize;
 pub mod fs;
 pub mod jobs;

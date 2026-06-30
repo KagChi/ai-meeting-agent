@@ -3,6 +3,7 @@
 //! HTTP API server library for the meeting agent system.
 
 pub mod auth;
+pub mod config_handlers;
 pub mod error;
 pub mod handlers;
 pub mod import_handlers;
@@ -19,11 +20,28 @@ use tower_http::{cors::CorsLayer, trace::TraceLayer};
 
 /// Run the API server with the given configuration.
 pub async fn run(config: meeting_agent_core::Config) -> anyhow::Result<()> {
-    let state = AppState::new(config.clone());
+    // Extract server config values before moving config into AppState
+    let host_str = config.server.host.clone();
+    let port = config.server.port;
+
+    let state = AppState::new(config);
 
     let app = Router::new()
         .route("/health", get(handlers::health))
         .route("/version", get(handlers::version))
+        .route(
+            "/config",
+            get(config_handlers::get_config).put(config_handlers::update_config),
+        )
+        .route(
+            "/config/transcription",
+            get(config_handlers::get_transcription_config)
+                .put(config_handlers::update_transcription_config),
+        )
+        .route(
+            "/config/summary",
+            get(config_handlers::get_summary_config).put(config_handlers::update_summary_config),
+        )
         .route(
             "/meetings",
             get(handlers::list_meetings).post(handlers::create_meeting),
@@ -62,12 +80,10 @@ pub async fn run(config: meeting_agent_core::Config) -> anyhow::Result<()> {
         .layer(CorsLayer::permissive())
         .layer(TraceLayer::new_for_http());
 
-    let host: std::net::IpAddr = config
-        .server
-        .host
+    let host: std::net::IpAddr = host_str
         .parse()
         .unwrap_or(std::net::IpAddr::V4(std::net::Ipv4Addr::new(127, 0, 0, 1)));
-    let addr = SocketAddr::from((host, config.server.port));
+    let addr = SocketAddr::from((host, port));
 
     log::info!("Starting server on http://{}", addr);
 

@@ -30,9 +30,10 @@ pub async fn create_summary(
         )));
     }
 
-    let language = req
-        .language
-        .or_else(|| state.config.summary.language.clone());
+    let language = req.language.or_else(|| {
+        // Need to block on async read in sync context - use blocking_read
+        state.config.blocking_read().summary.language.clone()
+    });
 
     let job_id = state.jobs.create_job(JobType::Summary);
     state
@@ -45,7 +46,7 @@ pub async fn create_summary(
         .cancel_token(&job_id)
         .ok_or_else(|| ApiError::InternalServerError("Failed to get cancel token".to_string()))?;
 
-    let config = state.config.clone();
+    let config = state.config.read().await.clone();
     let storage = state.storage.clone();
     let registry = state.jobs.clone();
     let cancel_token_clone = cancel_token.clone();

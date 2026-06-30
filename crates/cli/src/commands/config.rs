@@ -11,13 +11,21 @@ pub fn show() -> Result<()> {
     println!("{} {}", "Path:".bold(), config_path.display());
 
     println!("\n{} Transcription", "▸".cyan());
-    println!("  provider:  {}", config.transcription.provider);
+    println!("  provider:          {}", config.transcription.provider);
     println!(
-        "  api_key:   {}",
+        "  api_key:           {}",
         mask_secret(config.transcription.api_key.as_deref().unwrap_or(""))
     );
-    println!("  base_url:  {}", config.transcription.base_url);
-    println!("  model:     {}", config.transcription.model);
+    println!("  base_url:          {}", config.transcription.base_url);
+    println!("  model:             {}", config.transcription.model);
+    println!(
+        "  chunk_seconds:     {}",
+        config.transcription.chunk_seconds
+    );
+    println!(
+        "  chunk_concurrency: {}",
+        config.transcription.chunk_concurrency
+    );
 
     println!("\n{} Summary", "▸".cyan());
     println!("  provider:    {}", config.summary.provider);
@@ -43,6 +51,19 @@ pub fn show() -> Result<()> {
         mask_secret(config.server.api_key.as_deref().unwrap_or(""))
     );
 
+    println!("\n{} Diarization", "▸".cyan());
+    println!("  enabled:       {}", config.diarize.enabled);
+    println!("  base_url:      {}", config.diarize.base_url);
+    println!(
+        "  num_speakers:  {}",
+        config
+            .diarize
+            .num_speakers
+            .map(|n| n.to_string())
+            .unwrap_or_else(|| "(auto)".to_string())
+    );
+    println!("  timeout_secs:  {}", config.diarize.timeout_secs);
+
     Ok(())
 }
 
@@ -55,6 +76,10 @@ pub fn set(key: String, value: String) -> Result<()> {
         "transcription.api_key" => config.transcription.api_key = Some(value.clone()),
         "transcription.base_url" => config.transcription.base_url = value.clone(),
         "transcription.model" => config.transcription.model = value.clone(),
+        "transcription.chunk_seconds" => config.transcription.chunk_seconds = value.parse()?,
+        "transcription.chunk_concurrency" => {
+            config.transcription.chunk_concurrency = value.parse::<usize>()?.max(1)
+        }
         "summary.provider" => config.summary.provider = value.clone(),
         "summary.api_key" => config.summary.api_key = Some(value.clone()),
         "summary.base_url" => config.summary.base_url = value.clone(),
@@ -65,6 +90,15 @@ pub fn set(key: String, value: String) -> Result<()> {
         "server.port" => config.server.port = value.parse()?,
         "server.host" => config.server.host = value.clone(),
         "server.api_key" => config.server.api_key = Some(value.clone()),
+        "diarize.enabled" => {
+            config.diarize.enabled = matches!(value.to_lowercase().as_str(), "1" | "true" | "yes")
+        }
+        "diarize.base_url" => config.diarize.base_url = value.clone(),
+        "diarize.num_speakers" => {
+            let n: i32 = value.parse()?;
+            config.diarize.num_speakers = if n <= 0 { None } else { Some(n) };
+        }
+        "diarize.timeout_secs" => config.diarize.timeout_secs = value.parse()?,
         other => anyhow::bail!("Unknown config key: {}", other),
     }
 

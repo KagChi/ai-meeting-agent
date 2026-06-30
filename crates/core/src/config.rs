@@ -160,6 +160,9 @@ impl Config {
     /// - DIARIZE_BASE_URL
     /// - DIARIZE_NUM_SPEAKERS (0 = auto-detect)
     /// - DIARIZE_TIMEOUT_SECS (client request timeout; default 900)
+    /// - MEETING_AGENT_PORT (server listen port)
+    /// - MEETING_AGENT_HOST (server bind host)
+    /// - MEETING_AGENT_API_KEY (server auth key; empty = open access)
     pub fn load(path: &PathBuf) -> anyhow::Result<Self> {
         let mut config = if path.exists() {
             let content = std::fs::read_to_string(path)?;
@@ -239,6 +242,19 @@ impl Config {
             }
         }
 
+        // Server overrides (MEETING_AGENT_* env vars documented in .env.example)
+        if let Ok(port) = std::env::var("MEETING_AGENT_PORT") {
+            if let Ok(p) = port.parse::<u16>() {
+                config.server.port = p;
+            }
+        }
+        if let Ok(host) = std::env::var("MEETING_AGENT_HOST") {
+            config.server.host = host;
+        }
+        if let Ok(api_key) = std::env::var("MEETING_AGENT_API_KEY") {
+            config.server.api_key = Some(api_key);
+        }
+
         Ok(config)
     }
 
@@ -249,6 +265,13 @@ impl Config {
         }
         let content = serde_json::to_string_pretty(self)?;
         std::fs::write(path, content)?;
+        // Restrict file permissions to owner-only on Unix (config may hold API keys).
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
+                .map_err(|e| anyhow::anyhow!("Failed to set config file permissions: {e}"))?;
+        }
         Ok(())
     }
 }

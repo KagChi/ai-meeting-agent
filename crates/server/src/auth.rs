@@ -21,7 +21,8 @@ pub async fn auth_middleware(
     next: Next,
 ) -> Result<Response, ApiError> {
     // Check if API key is configured
-    if let Some(expected_key) = &state.config.server.api_key {
+    let config = state.config.read().await;
+    if let Some(expected_key) = &config.server.api_key {
         // API key is set - require authentication
         let auth_header = request
             .headers()
