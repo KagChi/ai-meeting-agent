@@ -1,0 +1,24 @@
+{
+  "action_items": [
+    "Sarah will lead the dashboard redesign project.",
+    "John will handle the API integration module.",
+    "Mary will oversee testing and quality assurance for both projects."
+  ],
+  "content": "## Key Points\n- The Q3 planning meeting covered the product roadmap, budget allocation, and team assignments.\n- Two new features are planned for Q3: dashboard redesign and API integration module.\n- The Q3 development budget is set at fifty thousand dollars.\n- Weekly check-in meetings will be held every Monday at ten AM.\n\n## Action Items\n- Sarah will lead the dashboard redesign project.\n- John will handle the API integration module.\n- Mary will oversee testing and quality assurance for both projects.\n\n## Decisions\n- The dashboard redesign is scheduled for completion by August fifteenth.\n- The API integration module is scheduled to be ready by September first.\n- Budget allocation is: $30,000 for engineering, $15,000 for design, and $5,000 for testing.\n- The next milestone review is scheduled for July twenty-fifth.",
+  "decisions": [
+    "The dashboard redesign is scheduled for completion by August fifteenth.",
+    "The API integration module is scheduled to be ready by September first.",
+    "Budget allocation is: $30,000 for engineering, $15,000 for design, and $5,000 for testing.",
+    "The next milestone review is scheduled for July twenty-fifth."
+  ],
+  "key_points": [
+    "The Q3 planning meeting covered the product roadmap, budget allocation, and team assignments.",
+    "Two new features are planned for Q3: dashboard redesign and API integration module.",
+    "The Q3 development budget is set at fifty thousand dollars.",
+    "Weekly check-in meetings will be held every Monday at ten AM."
+  ],
+  "language": "en",
+  "model": "gemma-4",
+  "provider": "openai",
+  "template": "full"
+}

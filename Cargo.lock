@@ -1376,6 +1376,7 @@ dependencies = [
  "anyhow",
  "chrono",
  "dirs",
+ "env_logger",
  "ffmpeg-sidecar",
  "futures-util",
  "log",

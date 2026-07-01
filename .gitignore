@@ -18,6 +18,10 @@
 /coverage
 /dist
 
+# integration test audio assets (regenerate with macOS `say` + ffmpeg)
+/tests/assets/*.aiff
+/tests/assets/*.wav
+
 # next.js
 /.next/
 /out/

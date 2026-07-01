@@ -220,6 +220,40 @@ All data is stored in `~/.meeting-agent/`:
         └── full.json
 ```
 
+## Workspace Structure
+
+```
+ai-meeting-agent/
+├── Cargo.toml              # Workspace root
+├── crates/
+│   ├── core/               # meeting-agent-core: business logic, models, storage
+│   ├── server/             # meeting-agent-server: Axum HTTP API + OpenAPI
+│   ├── cli/                # meeting-agent-cli: command-line interface
+│   └── diarize/            # meeting-agent-diarize: speaker diarization microservice
+├── docs/
+│   └── API.md              # API specification document
+├── .env.example            # Configuration template
+└── README.md
+```
+
+### Crate Dependencies
+
+| Crate | Key Dependencies |
+|-------|-----------------|
+| `meeting-agent-core` | axum, tokio, serde, reqwest, uuid, chrono, anyhow, thiserror, dirs, ffmpeg-sidecar |
+| `meeting-agent-server` | axum, tower-http (cors, trace, compression-gzip), utoipa, utoipa-swagger-ui |
+| `meeting-agent-cli` | clap, colored, indicatif, comfy-table, dialoguer |
+| `meeting-agent-diarize` | axum, sherpa-onnx, symphonia |
+
+### Workspace Verification
+
+```bash
+$ cargo check --workspace
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.46s
+```
+
+All four crates compile cleanly with no warnings or errors.
+
 ## Development
 
 ```bash
@@ -227,7 +261,7 @@ All data is stored in `~/.meeting-agent/`:
 cargo test
 
 # Check code
-cargo check
+cargo check --workspace
 
 # Format code
 cargo fmt
