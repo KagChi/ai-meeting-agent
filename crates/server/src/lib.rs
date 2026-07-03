@@ -101,7 +101,7 @@ pub async fn run(config: meeting_agent_core::Config) -> anyhow::Result<()> {
 
     let host: std::net::IpAddr = host_str
         .parse()
-        .unwrap_or(std::net::IpAddr::V4(std::net::Ipv4Addr::new(127, 0, 0, 1)));
+        .unwrap_or(std::net::IpAddr::V4(std::net::Ipv4Addr::new(0, 0, 0, 0)));
     let addr = SocketAddr::from((host, port));
 
     log::info!("Starting server on http://{}", addr);

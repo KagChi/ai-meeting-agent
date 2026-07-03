@@ -127,7 +127,7 @@ impl Default for Config {
             },
             server: ServerConfig {
                 port: 8080,
-                host: "127.0.0.1".to_string(),
+                host: "0.0.0.0".to_string(),
                 api_key: None,
             },
             diarize: DiarizeConfig::default(),

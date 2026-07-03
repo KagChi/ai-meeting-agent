@@ -4,8 +4,9 @@
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    env_logger::init();
+    // Load .env first so RUST_LOG is available when env_logger initializes.
     dotenv::dotenv().ok();
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
     meeting_agent_core::fs::ensure_data_dir()?;
 
