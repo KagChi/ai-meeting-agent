@@ -5,7 +5,7 @@
 //! 2-minute test audio file using chunked parallel transcription.
 //!
 //! Run with:
-//!   cargo test --test whisper_integration_test -- --nocapture --test-threads=1
+//!   cargo test --test whisper_integration_test -- --nocapture --test-threads=1 --ignored
 //!
 //! Requires:
 //!   - FFmpeg on PATH
@@ -42,6 +42,7 @@ fn test_audio_path() -> PathBuf {
 }
 
 #[tokio::test]
+#[ignore = "requires self-hosted vLLM endpoint at 140.118.122.126:8080"]
 async fn whisper_vllm_connectivity() {
     let _ = env_logger::builder()
         .filter_level(log::LevelFilter::Info)

@@ -5,7 +5,7 @@
 //! transcript using template-based prompt construction and section parsing.
 //!
 //! Run with:
-//!   cargo test --test gemma4_integration_test -- --nocapture --test-threads=1
+//!   cargo test --test gemma4_integration_test -- --nocapture --test-threads=1 --ignored
 //!
 //! Requires:
 //!   - Network access to 140.118.122.126:8001
@@ -102,6 +102,7 @@ fn load_transcript() -> TranscriptionResponse {
 }
 
 #[tokio::test]
+#[ignore = "requires self-hosted vLLM endpoint at 140.118.122.126:8001"]
 async fn gemma4_vllm_summary_full() {
     let _ = env_logger::builder()
         .filter_level(log::LevelFilter::Info)
