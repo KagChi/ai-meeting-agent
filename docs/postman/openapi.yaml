@@ -1,0 +1,950 @@
+openapi: 3.0.3
+info:
+  title: Meeting Agent API
+  version: 0.1.0
+  description: >
+    REST API for meeting transcription, summarization, and management.
+
+    Base URL: http://127.0.0.1:8080 (default; configurable via config.server.host/port)
+
+    Auth: If server.api_key is configured, protected endpoints require an
+    `Authorization` or `X-API-Key` header matching the key (raw value, no
+    Bearer prefix). Public endpoints (/health, /version, /docs,
+    /api-docs/openapi.json) never require auth.
+
+    This spec mirrors the runtime utoipa-generated OpenAPI at
+    /api-docs/openapi.json and adds the SSE endpoint
+    /jobs/{job_id}/events (not in runtime spec).
+servers:
+  - url: http://127.0.0.1:8080
+    description: Default local server
+tags:
+  - name: meetings
+    description: Meeting CRUD operations
+  - name: transcripts
+    description: Transcript retrieval
+  - name: summaries
+    description: Summary generation and retrieval
+  - name: imports
+    description: Audio file import for transcription
+  - name: jobs
+    description: Async job tracking (import + summary)
+  - name: config
+    description: Live configuration management
+security:
+  - ApiKeyAuth: []
+paths:
+  /health:
+    get:
+      tags: []
+      summary: Health check
+      description: Returns server health status. Always public — no auth required.
+      security: []
+      responses:
+        '200':
+          description: Server is healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok
+  /version:
+    get:
+      tags: []
+      summary: Version info
+      description: Returns server version and name. Always public — no auth required.
+      security: []
+      responses:
+        '200':
+          description: Version information
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  version:
+                    type: string
+                    example: 0.1.0
+                  name:
+                    type: string
+                    example: meeting-agent-server
+  /meetings:
+    get:
+      tags: [meetings]
+      summary: List all meetings
+      description: Returns all meetings sorted by date descending.
+      responses:
+        '200':
+          description: List of meetings
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListMeetingsResponse'
+    post:
+      tags: [meetings]
+      summary: Create a meeting
+      description: >
+        Create a new meeting. Title is required (max 200 chars).
+        Date is optional (defaults to current time).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateMeetingRequest'
+      responses:
+        '201':
+          description: Meeting created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MeetingResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+  /meetings/{id}:
+    get:
+      tags: [meetings]
+      summary: Get a meeting
+      parameters:
+        - $ref: '#/components/parameters/MeetingId'
+      responses:
+        '200':
+          description: Meeting details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MeetingResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    patch:
+      tags: [meetings]
+      summary: Update a meeting
+      description: Update title and/or date. At least one field required.
+      parameters:
+        - $ref: '#/components/parameters/MeetingId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateMeetingRequest'
+      responses:
+        '200':
+          description: Updated meeting
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MeetingResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      tags: [meetings]
+      summary: Delete a meeting
+      description: Deletes meeting and all associated data (audio, transcript, summaries).
+      parameters:
+        - $ref: '#/components/parameters/MeetingId'
+      responses:
+        '204':
+          description: Deleted — no content
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /meetings/{id}/transcript:
+    get:
+      tags: [transcripts]
+      summary: Get transcript
+      description: >
+        Returns the transcript for a meeting. transcript is null if not yet
+        transcribed or if transcription failed.
+      parameters:
+        - $ref: '#/components/parameters/MeetingId'
+      responses:
+        '200':
+          description: Transcript data
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TranscriptResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /meetings/{id}/summary:
+    get:
+      tags: [summaries]
+      summary: List summaries
+      description: Returns all summaries for a meeting, sorted by created_at ascending.
+      parameters:
+        - $ref: '#/components/parameters/MeetingId'
+      responses:
+        '200':
+          description: List of summaries
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListSummariesResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    post:
+      tags: [summaries]
+      summary: Generate summary (async)
+      description: >
+        Triggers async summary generation. Meeting must be in 'ready' status.
+        Returns a job_id for tracking. Language is optional (defaults to
+        config.summary.language).
+      parameters:
+        - $ref: '#/components/parameters/MeetingId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateSummaryRequest'
+      responses:
+        '202':
+          description: Summary job queued
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreateSummaryResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /meetings/{id}/summary/{template}:
+    get:
+      tags: [summaries]
+      summary: Get summary by template
+      description: >
+        Get a specific summary by template.
+        Path param values: key_points, action_items, decisions, full.
+        Note: the 'template' field in JSON responses serializes without
+        underscores (keypoints, actionitems) due to serde rename_all, but
+        the path param accepts underscores.
+      parameters:
+        - $ref: '#/components/parameters/MeetingId'
+        - $ref: '#/components/parameters/Template'
+      responses:
+        '200':
+          description: Summary data
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SummaryResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /import:
+    post:
+      tags: [imports]
+      summary: Import audio file (async)
+      description: >
+        Upload an audio file for transcription. Returns a job_id for tracking.
+        Supported formats: mp3, wav, m4a, flac, webm, ogg, opus, aac, wma.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: Audio file (required)
+                title:
+                  type: string
+                  description: Meeting title (optional)
+              required: [file]
+      responses:
+        '202':
+          description: Import job queued
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ImportResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /import/validate:
+    post:
+      tags: [imports]
+      summary: Validate audio file
+      description: Validates an audio file without importing. Checks format and returns size.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: Audio file to validate (required)
+              required: [file]
+      responses:
+        '200':
+          description: Validation result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ImportValidationResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+  /jobs/{job_id}/status:
+    get:
+      tags: [jobs]
+      summary: Get job status
+      parameters:
+        - $ref: '#/components/parameters/JobId'
+      responses:
+        '200':
+          description: Job status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JobStatusResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /jobs/{job_id}/events:
+    get:
+      tags: [jobs]
+      summary: Stream job events (SSE)
+      description: >
+        Server-Sent Events stream of job progress. Replays past events then
+        sends live updates until terminal state. Keepalive comments on idle.
+        Each event is a JSON ProgressEvent in a data: line.
+        Not in runtime utoipa paths.
+      parameters:
+        - $ref: '#/components/parameters/JobId'
+      responses:
+        '200':
+          description: SSE stream
+          content:
+            text/event-stream:
+              schema:
+                type: string
+                description: >
+                  data: {"stage":"...","message":"...","timestamp":"2026-07-03T09:00:05Z","percent":45.0}
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /jobs/{job_id}/cancel:
+    post:
+      tags: [jobs]
+      summary: Cancel a job
+      description: >
+        Cancels a running job. Returns 409 if already in terminal state
+        (completed/failed/cancelled).
+      parameters:
+        - $ref: '#/components/parameters/JobId'
+      responses:
+        '200':
+          description: Cancellation result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CancelImportResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /config:
+    get:
+      tags: [config]
+      summary: Get full config
+      description: Returns transcription + summary config. API keys masked as "****" if set.
+      responses:
+        '200':
+          description: Current configuration
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConfigResponse'
+    put:
+      tags: [config]
+      summary: Update full config
+      description: >
+        Updates both transcription and summary config. Validates before saving.
+        api_key: null = clear, "****" = keep existing, other = replace.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateConfigRequest'
+      responses:
+        '200':
+          description: Config updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: Configuration updated successfully
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /config/transcription:
+    get:
+      tags: [config]
+      summary: Get transcription config
+      responses:
+        '200':
+          description: Transcription config
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TranscriptionConfigResponse'
+    put:
+      tags: [config]
+      summary: Update transcription config
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateTranscriptionConfigRequest'
+      responses:
+        '200':
+          description: Config updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: Transcription configuration updated successfully
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /config/summary:
+    get:
+      tags: [config]
+      summary: Get summary config
+      responses:
+        '200':
+          description: Summary config
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SummaryConfigResponse'
+    put:
+      tags: [config]
+      summary: Update summary config
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateSummaryConfigRequest'
+      responses:
+        '200':
+          description: Config updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: Summary configuration updated successfully
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/InternalError'
+components:
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: Authorization
+      description: >
+        Raw API key value (no Bearer prefix). Alternatively, X-API-Key
+        header with the same value. Only required when server.api_key is
+        configured.
+  parameters:
+    MeetingId:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+      description: Meeting UUID (full UUID required, no prefix resolution)
+    Template:
+      name: template
+      in: path
+      required: true
+      schema:
+        type: string
+        enum: [key_points, action_items, decisions, full]
+      description: Summary template type
+    JobId:
+      name: job_id
+      in: path
+      required: true
+      schema:
+        type: string
+      description: Job ID (string, returned by import/summary endpoints)
+  responses:
+    BadRequest:
+      description: Invalid request
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    Conflict:
+      description: Conflict with current state
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    Unauthorized:
+      description: Missing or invalid API key
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    InternalError:
+      description: Internal server error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+  schemas:
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+        details:
+          type: string
+      required: [error]
+    Meeting:
+      type: object
+      properties:
+        id:
+          type: string
+        title:
+          type: string
+        date:
+          type: string
+          format: date-time
+        duration_seconds:
+          type: integer
+          format: int64
+          nullable: true
+        status:
+          $ref: '#/components/schemas/MeetingStatus'
+        transcription:
+          allOf:
+            - $ref: '#/components/schemas/TranscriptionInfo'
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+      required: [id, title, date, status, created_at, updated_at]
+    MeetingStatus:
+      type: string
+      enum: [importing, ready, failed]
+    TranscriptionInfo:
+      type: object
+      properties:
+        provider:
+          type: string
+        model:
+          type: string
+        completed_at:
+          type: string
+          format: date-time
+      required: [provider, model, completed_at]
+    MeetingResponse:
+      type: object
+      description: Meeting object (flattened)
+      allOf:
+        - $ref: '#/components/schemas/Meeting'
+    ListMeetingsResponse:
+      type: object
+      properties:
+        meetings:
+          type: array
+          items:
+            $ref: '#/components/schemas/Meeting'
+      required: [meetings]
+    CreateMeetingRequest:
+      type: object
+      properties:
+        title:
+          type: string
+          maxLength: 200
+        date:
+          type: string
+          format: date-time
+      required: [title]
+    UpdateMeetingRequest:
+      type: object
+      properties:
+        title:
+          type: string
+          maxLength: 200
+          nullable: true
+        date:
+          type: string
+          format: date-time
+          nullable: true
+      description: At least one field required
+    TranscriptResponse:
+      type: object
+      properties:
+        meeting_id:
+          type: string
+        status:
+          $ref: '#/components/schemas/MeetingStatus'
+        transcript:
+          allOf:
+            - $ref: '#/components/schemas/TranscriptionResponse'
+          nullable: true
+      required: [meeting_id, status]
+    TranscriptionResponse:
+      type: object
+      properties:
+        text:
+          type: string
+        language:
+          type: string
+          nullable: true
+        duration:
+          type: number
+          format: double
+          nullable: true
+        segments:
+          type: array
+          nullable: true
+          items:
+            $ref: '#/components/schemas/TranscriptSegment'
+      required: [text]
+    TranscriptSegment:
+      type: object
+      properties:
+        id:
+          type: integer
+        start:
+          type: number
+          format: double
+        end:
+          type: number
+          format: double
+        text:
+          type: string
+        tokens:
+          type: array
+          items:
+            type: integer
+          nullable: true
+        temperature:
+          type: number
+          format: float
+          nullable: true
+        avg_logprob:
+          type: number
+          format: float
+          nullable: true
+        compression_ratio:
+          type: number
+          format: float
+          nullable: true
+        no_speech_prob:
+          type: number
+          format: float
+          nullable: true
+        speaker:
+          type: string
+          nullable: true
+      required: [start, end, text]
+    Summary:
+      type: object
+      properties:
+        id:
+          type: string
+        meeting_id:
+          type: string
+        template:
+          $ref: '#/components/schemas/SummaryTemplate'
+        language:
+          type: string
+          nullable: true
+        status:
+          $ref: '#/components/schemas/SummaryStatus'
+        content:
+          type: string
+          description: Markdown content
+        key_points:
+          type: array
+          items:
+            type: string
+        action_items:
+          type: array
+          items:
+            type: string
+        decisions:
+          type: array
+          items:
+            type: string
+        provider:
+          type: string
+        model:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+      required: [id, meeting_id, template, status, content, key_points, action_items, decisions, provider, model, created_at, updated_at]
+    SummaryTemplate:
+      type: string
+      description: >
+        Serialized without underscores (serde rename_all lowercase):
+        keypoints, actionitems, decisions, full.
+        Path param input accepts underscores: key_points, action_items, etc.
+      enum: [keypoints, actionitems, decisions, full]
+    SummaryStatus:
+      type: string
+      enum: [pending, processing, completed, failed]
+    SummaryResponse:
+      type: object
+      description: Summary object (flattened)
+      allOf:
+        - $ref: '#/components/schemas/Summary'
+    ListSummariesResponse:
+      type: object
+      properties:
+        meeting_id:
+          type: string
+        summaries:
+          type: array
+          items:
+            $ref: '#/components/schemas/Summary'
+      required: [meeting_id, summaries]
+    CreateSummaryRequest:
+      type: object
+      properties:
+        template:
+          $ref: '#/components/schemas/SummaryTemplate'
+        language:
+          type: string
+          nullable: true
+      required: [template]
+    CreateSummaryResponse:
+      type: object
+      properties:
+        job_id:
+          type: string
+        status:
+          $ref: '#/components/schemas/JobState'
+      required: [job_id, status]
+    ImportResponse:
+      type: object
+      properties:
+        job_id:
+          type: string
+        status:
+          $ref: '#/components/schemas/JobState'
+      required: [job_id, status]
+    ImportValidationResponse:
+      type: object
+      properties:
+        valid:
+          type: boolean
+        format:
+          type: string
+        size:
+          type: integer
+          format: int64
+      required: [valid, format, size]
+    JobStatusResponse:
+      type: object
+      properties:
+        job_id:
+          type: string
+        job_type:
+          $ref: '#/components/schemas/JobType'
+        state:
+          $ref: '#/components/schemas/JobState'
+        progress:
+          type: array
+          items:
+            $ref: '#/components/schemas/ProgressEvent'
+        meeting_id:
+          type: string
+          nullable: true
+        template:
+          type: string
+          nullable: true
+          description: Debug-formatted template (e.g. KeyPoints, ActionItems)
+        error:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+      required: [job_id, job_type, state, progress, created_at, updated_at]
+    JobType:
+      type: string
+      enum: [import, summary]
+    JobState:
+      type: string
+      enum: [pending, processing, completed, failed, cancelled]
+    ProgressEvent:
+      type: object
+      properties:
+        stage:
+          type: string
+        message:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+        percent:
+          type: number
+          format: double
+          nullable: true
+      required: [stage, message, timestamp]
+    CancelImportResponse:
+      type: object
+      properties:
+        job_id:
+          type: string
+        cancelled:
+          type: boolean
+      required: [job_id, cancelled]
+    TranscriptionConfigResponse:
+      type: object
+      properties:
+        provider:
+          type: string
+        api_key:
+          type: string
+          nullable: true
+          description: '"****" if set, null if unset'
+        base_url:
+          type: string
+        model:
+          type: string
+        chunk_seconds:
+          type: number
+          format: double
+        chunk_concurrency:
+          type: integer
+      required: [provider, base_url, model, chunk_seconds, chunk_concurrency]
+    SummaryConfigResponse:
+      type: object
+      properties:
+        provider:
+          type: string
+        api_key:
+          type: string
+          nullable: true
+          description: '"****" if set, null if unset'
+        base_url:
+          type: string
+        model:
+          type: string
+        temperature:
+          type: number
+          format: float
+        max_tokens:
+          type: integer
+        language:
+          type: string
+          nullable: true
+      required: [provider, base_url, model, temperature, max_tokens]
+    ConfigResponse:
+      type: object
+      properties:
+        transcription:
+          $ref: '#/components/schemas/TranscriptionConfigResponse'
+        summary:
+          $ref: '#/components/schemas/SummaryConfigResponse'
+      required: [transcription, summary]
+    UpdateTranscriptionConfigRequest:
+      type: object
+      properties:
+        provider:
+          type: string
+        api_key:
+          type: string
+          nullable: true
+          description: 'null = clear, "****" = keep existing, other = replace'
+        base_url:
+          type: string
+        model:
+          type: string
+        chunk_seconds:
+          type: number
+          format: double
+        chunk_concurrency:
+          type: integer
+      required: [provider, base_url, model, chunk_seconds, chunk_concurrency]
+    UpdateSummaryConfigRequest:
+      type: object
+      properties:
+        provider:
+          type: string
+        api_key:
+          type: string
+          nullable: true
+          description: 'null = clear, "****" = keep existing, other = replace'
+        base_url:
+          type: string
+        model:
+          type: string
+        temperature:
+          type: number
+          format: float
+        max_tokens:
+          type: integer
+        language:
+          type: string
+          nullable: true
+      required: [provider, base_url, model, temperature, max_tokens]
+    UpdateConfigRequest:
+      type: object
+      properties:
+        transcription:
+          $ref: '#/components/schemas/UpdateTranscriptionConfigRequest'
+        summary:
+          $ref: '#/components/schemas/UpdateSummaryConfigRequest'
+      required: [transcription, summary]

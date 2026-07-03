@@ -161,7 +161,7 @@ curl -X PUT -H "X-API-Key: your-key" -H "Content-Type: application/json" \
 
 ### API Endpoints
 
-#### Health & Info
+#### Health & Info (public — no auth required)
 - `GET /health` - Health check
 - `GET /version` - Version info
 

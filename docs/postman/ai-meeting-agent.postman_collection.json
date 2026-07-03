@@ -1,0 +1,726 @@
+{
+  "info": {
+    "name": "ai-meeting-agent",
+    "_postman_id": "a1b2c3d4-0001-4000-8000-000000000001",
+    "description": "Meeting Agent REST API — transcription, summarization, and management.\n\nBase URL default: http://127.0.0.1:8080\n\nAuth: If server.api_key is configured, all endpoints except /health, /version, /docs, /api-docs/openapi.json require an `Authorization` or `X-API-Key` header matching the key (raw value, no Bearer prefix).\n\nGenerated from source at crates/server/src/.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "http://127.0.0.1:8080",
+      "description": "Server base URL (host:port from config)"
+    },
+    {
+      "key": "api_key",
+      "value": "",
+      "description": "API key for auth. Leave empty if server runs in open-access mode. When set, sent as both Authorization and X-API-Key headers."
+    },
+    {
+      "key": "meeting_id",
+      "value": "00000000-0000-0000-0000-000000000000",
+      "description": "Meeting UUID — set after creating a meeting or importing audio"
+    },
+    {
+      "key": "template",
+      "value": "key_points",
+      "description": "Summary template: key_points | action_items | decisions | full"
+    },
+    {
+      "key": "job_id",
+      "value": "",
+      "description": "Job ID — set after POST /import or POST /meetings/:id/summary"
+    }
+  ],
+  "auth": {
+    "type": "apikey",
+    "apikey": [
+      { "key": "key", "value": "Authorization", "type": "string" },
+      { "key": "value", "value": "{{api_key}}", "type": "string" },
+      { "key": "in", "value": "header", "type": "string" }
+    ]
+  },
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "// If api_key is empty, remove auth header so public endpoints work cleanly",
+          "if (pm.collectionVariables.get('api_key') === '') {",
+          "  pm.request.headers.remove('Authorization');",
+          "  pm.request.headers.remove('X-API-Key');",
+          "} else {",
+          "  pm.request.headers.add({key: 'X-API-Key', value: pm.collectionVariables.get('api_key')});",
+          "}"
+        ]
+      }
+    }
+  ],
+  "item": [
+    {
+      "name": "System",
+      "description": "Health and version endpoints — public, no auth required.",
+      "item": [
+        {
+          "name": "Health Check",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/health",
+              "host": ["{{base_url}}"],
+              "path": ["health"]
+            },
+            "description": "Returns server health status. Always public — no auth required even when API key is configured."
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "originalRequest": { "method": "GET", "url": "{{base_url}}/health" },
+              "status": "OK",
+              "code": 200,
+              "body": "{\n  \"status\": \"ok\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "Version Info",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/version",
+              "host": ["{{base_url}}"],
+              "path": ["version"]
+            },
+            "description": "Returns server version and name. Always public — no auth required."
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "originalRequest": { "method": "GET", "url": "{{base_url}}/version" },
+              "status": "OK",
+              "code": 200,
+              "body": "{\n  \"version\": \"0.1.0\",\n  \"name\": \"meeting-agent-server\"\n}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Meetings",
+      "description": "CRUD operations for meetings.",
+      "item": [
+        {
+          "name": "List Meetings",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{base_url}}/meetings", "host": ["{{base_url}}"], "path": ["meetings"] },
+            "description": "List all meetings sorted by date descending."
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "originalRequest": { "method": "GET", "url": "{{base_url}}/meetings" },
+              "status": "OK",
+              "code": 200,
+              "body": "{\n  \"meetings\": [\n    {\n      \"id\": \"550e8400-e29b-41d4-a716-446655440000\",\n      \"title\": \"Weekly Standup\",\n      \"date\": \"2026-07-03T09:00:00Z\",\n      \"duration_seconds\": 3600,\n      \"status\": \"ready\",\n      \"transcription\": {\n        \"provider\": \"openai\",\n        \"model\": \"whisper-1\",\n        \"completed_at\": \"2026-07-03T09:05:00Z\"\n      },\n      \"created_at\": \"2026-07-03T09:00:00Z\",\n      \"updated_at\": \"2026-07-03T09:05:00Z\"\n    }\n  ]\n}"
+            }
+          ]
+        },
+        {
+          "name": "Create Meeting",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Project Kickoff Meeting\",\n  \"date\": \"2026-07-03T14:00:00Z\"\n}"
+            },
+            "url": { "raw": "{{base_url}}/meetings", "host": ["{{base_url}}"], "path": ["meetings"] },
+            "description": "Create a new meeting. Title is required (max 200 chars). Date is optional (defaults to now)."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 201', () => pm.response.to.have.status(201));",
+                  "var json = pm.response.json();",
+                  "if (json.id) { pm.collectionVariables.set('meeting_id', json.id); }"
+                ]
+              }
+            }
+          ],
+          "response": [
+            {
+              "name": "201 Created",
+              "originalRequest": { "method": "POST", "url": "{{base_url}}/meetings" },
+              "status": "Created",
+              "code": 201,
+              "body": "{\n  \"id\": \"550e8400-e29b-41d4-a716-446655440000\",\n  \"title\": \"Project Kickoff Meeting\",\n  \"date\": \"2026-07-03T14:00:00Z\",\n  \"duration_seconds\": null,\n  \"status\": \"importing\",\n  \"transcription\": null,\n  \"created_at\": \"2026-07-03T14:00:00Z\",\n  \"updated_at\": \"2026-07-03T14:00:00Z\"\n}"
+            },
+            {
+              "name": "400 Bad Request",
+              "originalRequest": { "method": "POST", "url": "{{base_url}}/meetings" },
+              "status": "Bad Request",
+              "code": 400,
+              "body": "{\n  \"error\": \"Bad Request\",\n  \"details\": \"Title cannot be empty\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "Get Meeting",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/meetings/{{meeting_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["meetings", "{{meeting_id}}"]
+            },
+            "description": "Get a single meeting by UUID."
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "originalRequest": { "method": "GET", "url": "{{base_url}}/meetings/{{meeting_id}}" },
+              "status": "OK",
+              "code": 200,
+              "body": "{\n  \"id\": \"550e8400-e29b-41d4-a716-446655440000\",\n  \"title\": \"Weekly Standup\",\n  \"date\": \"2026-07-03T09:00:00Z\",\n  \"duration_seconds\": 3600,\n  \"status\": \"ready\",\n  \"transcription\": {\n    \"provider\": \"openai\",\n    \"model\": \"whisper-1\",\n    \"completed_at\": \"2026-07-03T09:05:00Z\"\n  },\n  \"created_at\": \"2026-07-03T09:00:00Z\",\n  \"updated_at\": \"2026-07-03T09:05:00Z\"\n}"
+            },
+            {
+              "name": "400 Bad Request (invalid UUID)",
+              "originalRequest": { "method": "GET", "url": "{{base_url}}/meetings/not-a-uuid" },
+              "status": "Bad Request",
+              "code": 400,
+              "body": "{\n  \"error\": \"Bad Request\",\n  \"details\": \"Invalid UUID format: not-a-uuid\"\n}"
+            },
+            {
+              "name": "404 Not Found",
+              "originalRequest": { "method": "GET", "url": "{{base_url}}/meetings/{{meeting_id}}" },
+              "status": "Not Found",
+              "code": 404,
+              "body": "{\n  \"error\": \"Not Found\",\n  \"details\": \"Meeting not found: 550e8400-e29b-41d4-a716-446655440000\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "Update Meeting",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Updated Meeting Title\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/meetings/{{meeting_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["meetings", "{{meeting_id}}"]
+            },
+            "description": "Update meeting title and/or date. At least one field required. Title max 200 chars."
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "originalRequest": { "method": "PATCH", "url": "{{base_url}}/meetings/{{meeting_id}}" },
+              "status": "OK",
+              "code": 200,
+              "body": "{\n  \"id\": \"550e8400-e29b-41d4-a716-446655440000\",\n  \"title\": \"Updated Meeting Title\",\n  \"date\": \"2026-07-03T14:00:00Z\",\n  \"duration_seconds\": null,\n  \"status\": \"importing\",\n  \"transcription\": null,\n  \"created_at\": \"2026-07-03T14:00:00Z\",\n  \"updated_at\": \"2026-07-03T14:05:00Z\"\n}"
+            },
+            {
+              "name": "400 Bad Request (no fields)",
+              "status": "Bad Request",
+              "code": 400,
+              "body": "{\n  \"error\": \"Bad Request\",\n  \"details\": \"At least one field (title or date) must be provided\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "Delete Meeting",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/meetings/{{meeting_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["meetings", "{{meeting_id}}"]
+            },
+            "description": "Delete a meeting and all associated data (audio, transcript, summaries)."
+          },
+          "response": [
+            {
+              "name": "204 No Content",
+              "originalRequest": { "method": "DELETE", "url": "{{base_url}}/meetings/{{meeting_id}}" },
+              "status": "No Content",
+              "code": 204,
+              "body": ""
+            },
+            {
+              "name": "404 Not Found",
+              "status": "Not Found",
+              "code": 404,
+              "body": "{\n  \"error\": \"Not Found\",\n  \"details\": \"Meeting not found: 550e8400-e29b-41d4-a716-446655440000\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "Get Transcript",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/meetings/{{meeting_id}}/transcript",
+              "host": ["{{base_url}}"],
+              "path": ["meetings", "{{meeting_id}}", "transcript"]
+            },
+            "description": "Get the transcript for a meeting. Returns transcript: null if not yet transcribed."
+          },
+          "response": [
+            {
+              "name": "200 OK (with transcript)",
+              "originalRequest": { "method": "GET", "url": "{{base_url}}/meetings/{{meeting_id}}/transcript" },
+              "status": "OK",
+              "code": 200,
+              "body": "{\n  \"meeting_id\": \"550e8400-e29b-41d4-a716-446655440000\",\n  \"status\": \"ready\",\n  \"transcript\": {\n    \"text\": \"Good morning everyone, let's start the standup...\",\n    \"language\": \"en\",\n    \"duration\": 3600.0,\n    \"segments\": [\n      {\n        \"id\": 0,\n        \"start\": 0.0,\n        \"end\": 5.2,\n        \"text\": \"Good morning everyone, let's start the standup.\",\n        \"speaker\": \"SPEAKER_00\"\n      }\n    ]\n  }\n}"
+            },
+            {
+              "name": "200 OK (no transcript yet)",
+              "status": "OK",
+              "code": 200,
+              "body": "{\n  \"meeting_id\": \"550e8400-e29b-41d4-a716-446655440000\",\n  \"status\": \"importing\",\n  \"transcript\": null\n}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Summaries",
+      "description": "Generate and retrieve meeting summaries.\n\nNote: Summary template path param accepts: key_points, action_items, decisions, full.",
+      "item": [
+        {
+          "name": "Create Summary (async)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"template\": \"key_points\",\n  \"language\": \"en\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/meetings/{{meeting_id}}/summary",
+              "host": ["{{base_url}}"],
+              "path": ["meetings", "{{meeting_id}}", "summary"]
+            },
+            "description": "Trigger async summary generation. Meeting must be in 'ready' status. Returns job_id for tracking.\n\nTemplates: key_points, action_items, decisions, full.\nLanguage is optional (defaults to config.summary.language)."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 202', () => pm.response.to.have.status(202));",
+                  "var json = pm.response.json();",
+                  "if (json.job_id) { pm.collectionVariables.set('job_id', json.job_id); }"
+                ]
+              }
+            }
+          ],
+          "response": [
+            {
+              "name": "202 Accepted",
+              "originalRequest": { "method": "POST", "url": "{{base_url}}/meetings/{{meeting_id}}/summary" },
+              "status": "Accepted",
+              "code": 202,
+              "body": "{\n  \"job_id\": \"abc123-def456\",\n  \"status\": \"pending\"\n}"
+            },
+            {
+              "name": "409 Conflict (not ready)",
+              "status": "Conflict",
+              "code": 409,
+              "body": "{\n  \"error\": \"Conflict\",\n  \"details\": \"Meeting 550e8400-... is not ready for summary (status: Importing). Wait for import to complete.\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "List Summaries",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/meetings/{{meeting_id}}/summary",
+              "host": ["{{base_url}}"],
+              "path": ["meetings", "{{meeting_id}}", "summary"]
+            },
+            "description": "List all summaries for a meeting, sorted by created_at ascending."
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "originalRequest": { "method": "GET", "url": "{{base_url}}/meetings/{{meeting_id}}/summary" },
+              "status": "OK",
+              "code": 200,
+              "body": "{\n  \"meeting_id\": \"550e8400-e29b-41d4-a716-446655440000\",\n  \"summaries\": [\n    {\n      \"id\": \"summary-001\",\n      \"meeting_id\": \"550e8400-e29b-41d4-a716-446655440000\",\n      \"template\": \"keypoints\",\n      \"language\": \"en\",\n      \"status\": \"completed\",\n      \"content\": \"## Key Points\\n- Discussed Q3 roadmap\\n- Approved budget increase\",\n      \"key_points\": [\"Discussed Q3 roadmap\", \"Approved budget increase\"],\n      \"action_items\": [],\n      \"decisions\": [],\n      \"provider\": \"openai\",\n      \"model\": \"gpt-4o-mini\",\n      \"created_at\": \"2026-07-03T09:10:00Z\",\n      \"updated_at\": \"2026-07-03T09:10:30Z\"\n    }\n  ]\n}"
+            }
+          ]
+        },
+        {
+          "name": "Get Summary by Template",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/meetings/{{meeting_id}}/summary/{{template}}",
+              "host": ["{{base_url}}"],
+              "path": ["meetings", "{{meeting_id}}", "summary", "{{template}}"]
+            },
+            "description": "Get a specific summary by template.\n\nPath param values: key_points, action_items, decisions, full\n\nNote: The 'template' field in JSON responses serializes without underscores (keypoints, actionitems) due to serde rename_all, but the path param accepts underscores."
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "originalRequest": { "method": "GET", "url": "{{base_url}}/meetings/{{meeting_id}}/summary/{{template}}" },
+              "status": "OK",
+              "code": 200,
+              "body": "{\n  \"id\": \"summary-001\",\n  \"meeting_id\": \"550e8400-e29b-41d4-a716-446655440000\",\n  \"template\": \"keypoints\",\n  \"language\": \"en\",\n  \"status\": \"completed\",\n  \"content\": \"## Key Points\\n- Discussed Q3 roadmap\\n- Approved budget increase\",\n  \"key_points\": [\"Discussed Q3 roadmap\", \"Approved budget increase\"],\n  \"action_items\": [],\n  \"decisions\": [],\n  \"provider\": \"openai\",\n  \"model\": \"gpt-4o-mini\",\n  \"created_at\": \"2026-07-03T09:10:00Z\",\n  \"updated_at\": \"2026-07-03T09:10:30Z\"\n}"
+            },
+            {
+              "name": "400 Bad Request (invalid template)",
+              "status": "Bad Request",
+              "code": 400,
+              "body": "{\n  \"error\": \"Bad Request\",\n  \"details\": \"Invalid summary template 'invalid'. Valid: key_points, action_items, decisions, full\"\n}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Imports",
+      "description": "Import audio files for transcription. Multipart form-data.\n\nSupported formats: mp3, wav, m4a, flac, webm, ogg, opus, aac, wma",
+      "item": [
+        {
+          "name": "Import Audio (async)",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": "",
+                  "description": "Audio file (required). Supported: mp3, wav, m4a, flac, webm, ogg, opus, aac, wma"
+                },
+                {
+                  "key": "title",
+                  "type": "text",
+                  "value": "Weekly Standup",
+                  "description": "Meeting title (optional). Defaults to filename without extension."
+                }
+              ]
+            },
+            "url": { "raw": "{{base_url}}/import", "host": ["{{base_url}}"], "path": ["import"] },
+            "description": "Upload an audio file for transcription. Returns a job_id for tracking progress. Audio is saved and transcribed asynchronously."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 202', () => pm.response.to.have.status(202));",
+                  "var json = pm.response.json();",
+                  "if (json.job_id) { pm.collectionVariables.set('job_id', json.job_id); }"
+                ]
+              }
+            }
+          ],
+          "response": [
+            {
+              "name": "202 Accepted",
+              "originalRequest": { "method": "POST", "url": "{{base_url}}/import" },
+              "status": "Accepted",
+              "code": 202,
+              "body": "{\n  \"job_id\": \"abc123-def456\",\n  \"status\": \"pending\"\n}"
+            },
+            {
+              "name": "400 Bad Request (no file)",
+              "status": "Bad Request",
+              "code": 400,
+              "body": "{\n  \"error\": \"Bad Request\",\n  \"details\": \"Missing 'file' field\"\n}"
+            },
+            {
+              "name": "400 Bad Request (unsupported format)",
+              "status": "Bad Request",
+              "code": 400,
+              "body": "{\n  \"error\": \"Bad Request\",\n  \"details\": \"Unsupported audio format: 'xyz'. Supported: mp3, wav, m4a, flac, webm, ogg, opus, aac, wma\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "Validate Audio File",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": "",
+                  "description": "Audio file to validate (required)"
+                }
+              ]
+            },
+            "url": { "raw": "{{base_url}}/import/validate", "host": ["{{base_url}}"], "path": ["import", "validate"] },
+            "description": "Validate an audio file without importing it. Checks format and returns file size."
+          },
+          "response": [
+            {
+              "name": "200 OK (valid)",
+              "originalRequest": { "method": "POST", "url": "{{base_url}}/import/validate" },
+              "status": "OK",
+              "code": 200,
+              "body": "{\n  \"valid\": true,\n  \"format\": \"mp3\",\n  \"size\": 5242880\n}"
+            },
+            {
+              "name": "200 OK (invalid format)",
+              "status": "OK",
+              "code": 200,
+              "body": "{\n  \"valid\": false,\n  \"format\": \"xyz\",\n  \"size\": 1024\n}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Jobs",
+      "description": "Track and manage async import/summary jobs.",
+      "item": [
+        {
+          "name": "Get Job Status",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/jobs/{{job_id}}/status",
+              "host": ["{{base_url}}"],
+              "path": ["jobs", "{{job_id}}", "status"]
+            },
+            "description": "Get the current status and progress of a job."
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "originalRequest": { "method": "GET", "url": "{{base_url}}/jobs/{{job_id}}/status" },
+              "status": "OK",
+              "code": 200,
+              "body": "{\n  \"job_id\": \"abc123-def456\",\n  \"job_type\": \"import\",\n  \"state\": \"processing\",\n  \"progress\": [\n    {\n      \"stage\": \"upload\",\n      \"message\": \"File received\",\n      \"timestamp\": \"2026-07-03T09:00:00Z\"\n    },\n    {\n      \"stage\": \"transcription\",\n      \"message\": \"Transcribing audio...\",\n      \"timestamp\": \"2026-07-03T09:00:05Z\",\n      \"percent\": 45.0\n    }\n  ],\n  \"meeting_id\": \"550e8400-e29b-41d4-a716-446655440000\",\n  \"created_at\": \"2026-07-03T09:00:00Z\",\n  \"updated_at\": \"2026-07-03T09:00:05Z\"\n}"
+            },
+            {
+              "name": "404 Not Found",
+              "status": "Not Found",
+              "code": 404,
+              "body": "{\n  \"error\": \"Not Found\",\n  \"details\": \"Import job not found: abc123-def456\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "Stream Job Events (SSE)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Accept", "value": "text/event-stream" }],
+            "url": {
+              "raw": "{{base_url}}/jobs/{{job_id}}/events",
+              "host": ["{{base_url}}"],
+              "path": ["jobs", "{{job_id}}", "events"]
+            },
+            "description": "Server-Sent Events stream of job progress. Each event is a JSON ProgressEvent in a data: line.\n\nEvent format:\ndata: {\"stage\":\"...\",\"message\":\"...\",\"timestamp\":\"2026-07-03T09:00:05Z\",\"percent\":45.0}\n\nStream replays past events then sends live updates until terminal state (completed/failed/cancelled). Keepalive comments sent on idle.\n\nNote: Not documented in runtime OpenAPI spec (utoipa paths)."
+          },
+          "response": [
+            {
+              "name": "200 OK (SSE stream)",
+              "originalRequest": { "method": "GET", "url": "{{base_url}}/jobs/{{job_id}}/events" },
+              "status": "OK",
+              "code": 200,
+              "body": "data: {\"stage\":\"upload\",\"message\":\"File received\",\"timestamp\":\"2026-07-03T09:00:00Z\"}\n\ndata: {\"stage\":\"transcription\",\"message\":\"Transcribing audio...\",\"timestamp\":\"2026-07-03T09:00:05Z\",\"percent\":45.0}\n\ndata: {\"stage\":\"done\",\"message\":\"Import completed\",\"timestamp\":\"2026-07-03T09:01:00Z\",\"percent\":100.0}\n\n"
+            }
+          ]
+        },
+        {
+          "name": "Cancel Job",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/jobs/{{job_id}}/cancel",
+              "host": ["{{base_url}}"],
+              "path": ["jobs", "{{job_id}}", "cancel"]
+            },
+            "description": "Cancel a running job. Returns 409 if job already in terminal state (completed/failed/cancelled)."
+          },
+          "response": [
+            {
+              "name": "200 OK (cancelled)",
+              "originalRequest": { "method": "POST", "url": "{{base_url}}/jobs/{{job_id}}/cancel" },
+              "status": "OK",
+              "code": 200,
+              "body": "{\n  \"job_id\": \"abc123-def456\",\n  \"cancelled\": true\n}"
+            },
+            {
+              "name": "409 Conflict (terminal)",
+              "status": "Conflict",
+              "code": 409,
+              "body": "{\n  \"error\": \"Conflict\",\n  \"details\": \"Job abc123-def456 is already in terminal state: Completed\"\n}"
+            },
+            {
+              "name": "404 Not Found",
+              "status": "Not Found",
+              "code": 404,
+              "body": "{\n  \"error\": \"Not Found\",\n  \"details\": \"Import job not found: abc123-def456\"\n}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Config",
+      "description": "Live configuration management. API keys are masked as \"****\" in GET responses. Send \"****\" in PUT to keep existing key, or a new value to replace.",
+      "item": [
+        {
+          "name": "Get Full Config",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{base_url}}/config", "host": ["{{base_url}}"], "path": ["config"] },
+            "description": "Get current transcription + summary config. API keys masked as \"****\" if set, null if unset."
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "originalRequest": { "method": "GET", "url": "{{base_url}}/config" },
+              "status": "OK",
+              "code": 200,
+              "body": "{\n  \"transcription\": {\n    \"provider\": \"openai\",\n    \"api_key\": \"****\",\n    \"base_url\": \"https://api.openai.com/v1\",\n    \"model\": \"whisper-1\",\n    \"chunk_seconds\": 600.0,\n    \"chunk_concurrency\": 2\n  },\n  \"summary\": {\n    \"provider\": \"openai\",\n    \"api_key\": \"****\",\n    \"base_url\": \"https://api.openai.com/v1\",\n    \"model\": \"gpt-4o-mini\",\n    \"temperature\": 0.3,\n    \"max_tokens\": 1024,\n    \"language\": null\n  }\n}"
+            }
+          ]
+        },
+        {
+          "name": "Update Full Config",
+          "request": {
+            "method": "PUT",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"transcription\": {\n    \"provider\": \"groq\",\n    \"api_key\": \"****\",\n    \"base_url\": \"https://api.groq.com/openai/v1\",\n    \"model\": \"whisper-large-v3\",\n    \"chunk_seconds\": 600.0,\n    \"chunk_concurrency\": 2\n  },\n  \"summary\": {\n    \"provider\": \"openai\",\n    \"api_key\": \"****\",\n    \"base_url\": \"https://api.openai.com/v1\",\n    \"model\": \"gpt-4o-mini\",\n    \"temperature\": 0.3,\n    \"max_tokens\": 1024,\n    \"language\": \"en\"\n  }\n}"
+            },
+            "url": { "raw": "{{base_url}}/config", "host": ["{{base_url}}"], "path": ["config"] },
+            "description": "Update both transcription and summary config. Validates before saving.\n\napi_key: null = clear, \"****\" = keep existing, any other value = replace.\n\nValidation: provider non-empty, base_url valid http/https, model non-empty, chunk_seconds >= 0, chunk_concurrency >= 1, temperature 0.0-2.0, max_tokens 32-8192."
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "originalRequest": { "method": "PUT", "url": "{{base_url}}/config" },
+              "status": "OK",
+              "code": 200,
+              "body": "{\n  \"message\": \"Configuration updated successfully\"\n}"
+            },
+            {
+              "name": "400 Bad Request (validation)",
+              "status": "Bad Request",
+              "code": 400,
+              "body": "{\n  \"error\": \"Bad Request\",\n  \"details\": \"Configuration validation failed: summary.temperature must be between 0.0 and 2.0\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "Get Transcription Config",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{base_url}}/config/transcription", "host": ["{{base_url}}"], "path": ["config", "transcription"] },
+            "description": "Get transcription config only."
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "originalRequest": { "method": "GET", "url": "{{base_url}}/config/transcription" },
+              "status": "OK",
+              "code": 200,
+              "body": "{\n  \"provider\": \"openai\",\n  \"api_key\": \"****\",\n  \"base_url\": \"https://api.openai.com/v1\",\n  \"model\": \"whisper-1\",\n  \"chunk_seconds\": 600.0,\n  \"chunk_concurrency\": 2\n}"
+            }
+          ]
+        },
+        {
+          "name": "Update Transcription Config",
+          "request": {
+            "method": "PUT",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"provider\": \"groq\",\n  \"api_key\": \"****\",\n  \"base_url\": \"https://api.groq.com/openai/v1\",\n  \"model\": \"whisper-large-v3\",\n  \"chunk_seconds\": 600.0,\n  \"chunk_concurrency\": 2\n}"
+            },
+            "url": { "raw": "{{base_url}}/config/transcription", "host": ["{{base_url}}"], "path": ["config", "transcription"] },
+            "description": "Update transcription config only. Same validation rules as full config update."
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "originalRequest": { "method": "PUT", "url": "{{base_url}}/config/transcription" },
+              "status": "OK",
+              "code": 200,
+              "body": "{\n  \"message\": \"Transcription configuration updated successfully\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "Get Summary Config",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{base_url}}/config/summary", "host": ["{{base_url}}"], "path": ["config", "summary"] },
+            "description": "Get summary config only."
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "originalRequest": { "method": "GET", "url": "{{base_url}}/config/summary" },
+              "status": "OK",
+              "code": 200,
+              "body": "{\n  \"provider\": \"openai\",\n  \"api_key\": \"****\",\n  \"base_url\": \"https://api.openai.com/v1\",\n  \"model\": \"gpt-4o-mini\",\n  \"temperature\": 0.3,\n  \"max_tokens\": 1024,\n  \"language\": null\n}"
+            }
+          ]
+        },
+        {
+          "name": "Update Summary Config",
+          "request": {
+            "method": "PUT",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"provider\": \"openai\",\n  \"api_key\": \"****\",\n  \"base_url\": \"https://api.openai.com/v1\",\n  \"model\": \"gpt-4o-mini\",\n  \"temperature\": 0.3,\n  \"max_tokens\": 1024,\n  \"language\": \"en\"\n}"
+            },
+            "url": { "raw": "{{base_url}}/config/summary", "host": ["{{base_url}}"], "path": ["config", "summary"] },
+            "description": "Update summary config only. Validation: temperature 0.0-2.0, max_tokens 32-8192."
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "originalRequest": { "method": "PUT", "url": "{{base_url}}/config/summary" },
+              "status": "OK",
+              "code": 200,
+              "body": "{\n  \"message\": \"Summary configuration updated successfully\"\n}"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

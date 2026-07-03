@@ -23,11 +23,17 @@ use utoipa_swagger_ui::SwaggerUi;
 
 /// Build the router with all routes configured. Exposed for testing.
 pub fn build_router(state: AppState) -> Router {
-    Router::new()
+    // Public routes — no auth middleware.
+    // Health and version must be reachable by load balancers, monitoring,
+    // Docker healthchecks, and k8s liveness/readiness probes without credentials.
+    let public_routes = Router::new()
         // Swagger UI - publicly accessible (no auth)
         .merge(SwaggerUi::new("/docs").url("/api-docs/openapi.json", openapi::ApiDoc::openapi()))
         .route("/health", get(handlers::health))
-        .route("/version", get(handlers::version))
+        .route("/version", get(handlers::version));
+
+    // Protected routes — auth middleware applies to all of these.
+    let protected_routes = Router::new()
         .route(
             "/config",
             get(config_handlers::get_config).put(config_handlers::update_config),
@@ -74,7 +80,11 @@ pub fn build_router(state: AppState) -> Router {
         .route_layer(middleware::from_fn_with_state(
             state.clone(),
             auth::auth_middleware,
-        ))
+        ));
+
+    Router::new()
+        .merge(public_routes)
+        .merge(protected_routes)
         .with_state(state)
         .layer(CorsLayer::permissive())
         .layer(TraceLayer::new_for_http())
