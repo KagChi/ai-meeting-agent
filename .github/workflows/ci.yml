@@ -8,13 +8,6 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
-  # ort-sys (speakrs dependency) downloads prebuilt ONNX Runtime from
-  # cdn.pyke.io at build time, which 403s in GitHub Actions. Instead, we
-  # download the matching official release from microsoft/onnxruntime and
-  # point ort-sys at it via ORT_LIB_LOCATION + ORT_PREFER_DYNAMIC_LINK.
-  # When upgrading speakrs/ort-sys, update the version here to match
-  # dist.txt: see AGENTS.md "ONNX Runtime Version Sync".
-  ORT_VERSION: "1.24.2"
 
 jobs:
   test:
@@ -25,13 +18,6 @@ jobs:
       
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
-        
-      - name: Install ONNX Runtime
-        run: |
-          curl -sL "https://github.com/microsoft/onnxruntime/releases/download/v${ORT_VERSION}/onnxruntime-linux-x64-${ORT_VERSION}.tgz" | tar xz -C /tmp
-          echo "ORT_LIB_LOCATION=/tmp/onnxruntime-linux-x64-${ORT_VERSION}/lib" >> "$GITHUB_ENV"
-          echo "ORT_PREFER_DYNAMIC_LINK=1" >> "$GITHUB_ENV"
-          echo "LD_LIBRARY_PATH=/tmp/onnxruntime-linux-x64-${ORT_VERSION}/lib:${LD_LIBRARY_PATH:-}" >> "$GITHUB_ENV"
         
       - name: Cache cargo registry
         uses: actions/cache@v4
@@ -62,13 +48,6 @@ jobs:
       
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
-        
-      - name: Install ONNX Runtime
-        run: |
-          curl -sL "https://github.com/microsoft/onnxruntime/releases/download/v${ORT_VERSION}/onnxruntime-linux-x64-${ORT_VERSION}.tgz" | tar xz -C /tmp
-          echo "ORT_LIB_LOCATION=/tmp/onnxruntime-linux-x64-${ORT_VERSION}/lib" >> "$GITHUB_ENV"
-          echo "ORT_PREFER_DYNAMIC_LINK=1" >> "$GITHUB_ENV"
-          echo "LD_LIBRARY_PATH=/tmp/onnxruntime-linux-x64-${ORT_VERSION}/lib:${LD_LIBRARY_PATH:-}" >> "$GITHUB_ENV"
         
       - name: Cache cargo registry
         uses: actions/cache@v4
@@ -116,13 +95,6 @@ jobs:
         with:
           components: clippy
           
-      - name: Install ONNX Runtime
-        run: |
-          curl -sL "https://github.com/microsoft/onnxruntime/releases/download/v${ORT_VERSION}/onnxruntime-linux-x64-${ORT_VERSION}.tgz" | tar xz -C /tmp
-          echo "ORT_LIB_LOCATION=/tmp/onnxruntime-linux-x64-${ORT_VERSION}/lib" >> "$GITHUB_ENV"
-          echo "ORT_PREFER_DYNAMIC_LINK=1" >> "$GITHUB_ENV"
-          echo "LD_LIBRARY_PATH=/tmp/onnxruntime-linux-x64-${ORT_VERSION}/lib:${LD_LIBRARY_PATH:-}" >> "$GITHUB_ENV"
-        
       - name: Cache cargo registry
         uses: actions/cache@v4
         with:

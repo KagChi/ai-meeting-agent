@@ -43,37 +43,6 @@ Before every commit, run the following checks in order:
 - "commit & push" in one user message = permission for both actions in sequence
 - **If you commit without permission, immediately undo with `git reset --soft HEAD~1`**
 
-## ONNX Runtime Version Sync (mandatory)
-
-`ort-sys` (transitive dependency of `speakrs`) pins a specific ONNX Runtime
-version in its build-time `dist.txt` as `ms@<version>`. By default, `ort-sys`
-downloads prebuilt binaries from `cdn.pyke.io` at build time — but that CDN
-returns 403 in GitHub Actions. To work around this, CI workflows download the
-matching official release from `github.com/microsoft/onnxruntime/releases` and
-point `ort-sys` at it via `ORT_LIB_LOCATION` + `ORT_PREFER_DYNAMIC_LINK`.
-
-The CI download version **must exactly match** what `ort-sys` expects. A
-mismatch will cause link errors or runtime ABI crashes.
-
-**When upgrading `speakrs` or `ort-sys`:**
-
-1. Find the expected ONNX Runtime version:
-   ```bash
-   grep -oP 'ms@\K[0-9.]+' ~/.cargo/registry/src/*/ort-sys-*/build/download/dist.txt | head -1
-   ```
-2. Update `ORT_VERSION` in `.github/workflows/ci.yml` and
-   `.github/workflows/release.yml` to match.
-3. Verify the Linux x64 asset exists at that version:
-   ```bash
-   gh release view v<version> --repo microsoft/onnxruntime \
-     --json assets --jq '.assets[].name' | grep linux-x64
-   ```
-4. Run `cargo check --all` locally to confirm the build still works.
-
-**Files that reference `ORT_VERSION`:**
-- `.github/workflows/ci.yml` — `env.ORT_VERSION` (test, check, clippy jobs)
-- `.github/workflows/release.yml` — `env.ORT_VERSION` (Linux build job only)
-
 ## Large File Writing Strategy (mandatory)
 
 When writing large plan files, documentation, or any file that may approach token limits:

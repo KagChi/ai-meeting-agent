@@ -8,8 +8,6 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
-  # See ci.yml + AGENTS.md "ONNX Runtime Version Sync" for rationale.
-  ORT_VERSION: "1.24.2"
 
 jobs:
   build:
@@ -42,14 +40,6 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
-
-      - name: Install ONNX Runtime (Linux only)
-        if: runner.os == 'Linux'
-        run: |
-          curl -sL "https://github.com/microsoft/onnxruntime/releases/download/v${ORT_VERSION}/onnxruntime-linux-x64-${ORT_VERSION}.tgz" | tar xz -C /tmp
-          echo "ORT_LIB_LOCATION=/tmp/onnxruntime-linux-x64-${ORT_VERSION}/lib" >> "$GITHUB_ENV"
-          echo "ORT_PREFER_DYNAMIC_LINK=1" >> "$GITHUB_ENV"
-          echo "LD_LIBRARY_PATH=/tmp/onnxruntime-linux-x64-${ORT_VERSION}/lib:${LD_LIBRARY_PATH:-}" >> "$GITHUB_ENV"
 
       - name: Build
         run: cargo build --release --target ${{ matrix.target }} --bin meeting-agent
