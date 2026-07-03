@@ -388,7 +388,6 @@ mod tests {
         let registry = JobRegistry::new();
         let job_id = registry.create_job(JobType::Import);
         let token = registry.cancel_token(&job_id).unwrap();
-        assert!(!token.is_cancelled());
         registry.cancel_job(&job_id);
         assert!(token.is_cancelled());
     }

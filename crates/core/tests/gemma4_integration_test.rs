@@ -59,7 +59,11 @@ fn load_transcript() -> TranscriptionResponse {
                 })
                 .collect();
 
-            let text = segs.iter().map(|s| s.text.as_str()).collect::<Vec<_>>().join(" ");
+            let text = segs
+                .iter()
+                .map(|s| s.text.as_str())
+                .collect::<Vec<_>>()
+                .join(" ");
 
             // Only use the Whisper output if it has substantial content
             // (vLLM Whisper verbose_json may return empty segments for some chunks)
@@ -118,7 +122,10 @@ async fn gemma4_vllm_summary_full() {
     println!("Max tokens: {}", config.max_tokens);
     println!("Template:  full");
     println!("========================================");
-    println!("Transcript text (first 120 chars): {:?}", &transcript.text[..transcript.text.len().min(120)]);
+    println!(
+        "Transcript text (first 120 chars): {:?}",
+        &transcript.text[..transcript.text.len().min(120)]
+    );
     println!("========================================");
 
     let options = SummarizeOptions {
@@ -130,13 +137,22 @@ async fn gemma4_vllm_summary_full() {
     let result = client.summarize(&transcript, &options).await;
     let elapsed = started.elapsed();
 
-    println!("\n--- Summary completed in {:.2}s ---\n", elapsed.as_secs_f64());
+    println!(
+        "\n--- Summary completed in {:.2}s ---\n",
+        elapsed.as_secs_f64()
+    );
 
     let summary = result.expect("Summary generation failed");
 
     // --- Assertions ---
-    assert!(!summary.content.is_empty(), "Summary content should not be empty");
-    println!("Raw LLM output (first 500 chars):\n{}\n", &summary.content[..summary.content.len().min(500)]);
+    assert!(
+        !summary.content.is_empty(),
+        "Summary content should not be empty"
+    );
+    println!(
+        "Raw LLM output (first 500 chars):\n{}\n",
+        &summary.content[..summary.content.len().min(500)]
+    );
 
     println!("Parsed sections:");
     println!("  key_points ({}):", summary.key_points.len());
@@ -155,8 +171,12 @@ async fn gemma4_vllm_summary_full() {
     }
 
     // Full template should populate at least one section
-    let total_parsed = summary.key_points.len() + summary.action_items.len() + summary.decisions.len();
-    assert!(total_parsed > 0, "Full template should parse at least one section (key_points, action_items, or decisions)");
+    let total_parsed =
+        summary.key_points.len() + summary.action_items.len() + summary.decisions.len();
+    assert!(
+        total_parsed > 0,
+        "Full template should parse at least one section (key_points, action_items, or decisions)"
+    );
 
     // --- Save summary JSON ---
     let summary_json = serde_json::json!({
@@ -171,19 +191,28 @@ async fn gemma4_vllm_summary_full() {
     });
 
     let output_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .parent().unwrap()
-        .parent().unwrap()
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap()
         .join("tests/output");
     std::fs::create_dir_all(&output_dir).expect("Failed to create output dir");
 
     let output_path = output_dir.join("summary.json");
-    std::fs::write(&output_path, serde_json::to_string_pretty(&summary_json).unwrap())
-        .expect("Failed to write summary.json");
+    std::fs::write(
+        &output_path,
+        serde_json::to_string_pretty(&summary_json).unwrap(),
+    )
+    .expect("Failed to write summary.json");
 
     println!("\nSummary saved to: {}", output_path.display());
     println!("Content length: {} chars", summary.content.len());
-    println!("Parsed: {} key points, {} action items, {} decisions",
-        summary.key_points.len(), summary.action_items.len(), summary.decisions.len());
+    println!(
+        "Parsed: {} key points, {} action items, {} decisions",
+        summary.key_points.len(),
+        summary.action_items.len(),
+        summary.decisions.len()
+    );
     println!("========================================");
     println!("PASS: Gemma 4 integration test");
     println!("========================================");

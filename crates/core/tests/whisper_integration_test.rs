@@ -49,8 +49,8 @@ async fn whisper_vllm_connectivity() {
         .try_init();
 
     let config = vllm_config();
-    let client = TranscriptionClient::new(config.clone())
-        .expect("Failed to create transcription client");
+    let client =
+        TranscriptionClient::new(config.clone()).expect("Failed to create transcription client");
 
     let audio_path = test_audio_path();
 
@@ -60,7 +60,10 @@ async fn whisper_vllm_connectivity() {
     println!("Endpoint:  {}", config.base_url);
     println!("Model:     {}", config.model);
     println!("Audio:     {}", audio_path.display());
-    println!("Chunk:     {}s (concurrency={})", config.chunk_seconds, config.chunk_concurrency);
+    println!(
+        "Chunk:     {}s (concurrency={})",
+        config.chunk_seconds, config.chunk_concurrency
+    );
     println!("========================================");
 
     let request = TranscriptionRequest {
@@ -77,15 +80,26 @@ async fn whisper_vllm_connectivity() {
         .await;
     let elapsed = started.elapsed();
 
-    println!("\n--- Transcription completed in {:.2}s ---\n", elapsed.as_secs_f64());
+    println!(
+        "\n--- Transcription completed in {:.2}s ---\n",
+        elapsed.as_secs_f64()
+    );
 
     let response = result.expect("Transcription failed");
 
     // --- Assertions ---
-    assert!(!response.text.is_empty(), "Transcript text should not be empty");
-    println!("Transcript text (first 200 chars): {:?}", &response.text[..response.text.len().min(200)]);
+    assert!(
+        !response.text.is_empty(),
+        "Transcript text should not be empty"
+    );
+    println!(
+        "Transcript text (first 200 chars): {:?}",
+        &response.text[..response.text.len().min(200)]
+    );
 
-    let segments = response.segments.expect("verbose_json should return segments");
+    let segments = response
+        .segments
+        .expect("verbose_json should return segments");
     assert!(!segments.is_empty(), "Should have at least one segment");
     println!("Segment count: {}", segments.len());
 
@@ -93,7 +107,9 @@ async fn whisper_vllm_connectivity() {
     for (i, seg) in segments.iter().take(5).enumerate() {
         println!(
             "  Segment {}: [{:.2}s - {:.2}s] {:?}",
-            i, seg.start, seg.end,
+            i,
+            seg.start,
+            seg.end,
             &seg.text[..seg.text.len().min(80)]
         );
     }
@@ -119,14 +135,19 @@ async fn whisper_vllm_connectivity() {
     });
 
     let output_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .parent().unwrap()
-        .parent().unwrap()
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap()
         .join("tests/output");
     std::fs::create_dir_all(&output_dir).expect("Failed to create output dir");
 
     let output_path = output_dir.join("transcript.json");
-    std::fs::write(&output_path, serde_json::to_string_pretty(&transcript_json).unwrap())
-        .expect("Failed to write transcript.json");
+    std::fs::write(
+        &output_path,
+        serde_json::to_string_pretty(&transcript_json).unwrap(),
+    )
+    .expect("Failed to write transcript.json");
 
     println!("\nTranscript saved to: {}", output_path.display());
     println!("Full transcript text length: {} chars", response.text.len());
