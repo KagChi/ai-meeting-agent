@@ -1,12 +1,25 @@
-use crate::models::{CleanedSegment, SpeakerSegment, WhisperSegment};
+use crate::diarize::models::WhisperSegment;
 
-fn overlap(a0: f64, a1: f64, b0: f32, b1: f32) -> f64 {
-    (a1.min(b1 as f64) - a0.max(b0 as f64)).max(0.0)
+/// A transcript segment with an assigned speaker label.
+/// `speaker = None` means no overlapping speaker segment was found.
+#[derive(Debug, Clone)]
+pub struct CleanedSegment {
+    pub start: f64,
+    pub end: f64,
+    pub speaker: Option<String>,
+    pub text: String,
 }
 
+fn overlap(a0: f64, a1: f64, b0: f64, b1: f64) -> f64 {
+    (a1.min(b1) - a0.max(b0)).max(0.0)
+}
+
+/// Assign each Whisper transcript segment the speaker label of the
+/// speakrs segment with the maximum time overlap. Returns one
+/// `CleanedSegment` per input Whisper segment, preserving order.
 pub fn merge(
     transcript: Vec<WhisperSegment>,
-    speakers: Vec<SpeakerSegment>,
+    speakers: &[speakrs::Segment],
 ) -> Vec<CleanedSegment> {
     log::debug!(
         "[merge] merging {} transcript segments with {} speaker segments",
@@ -23,7 +36,7 @@ pub fn merge(
         .map(|(idx, t)| {
             let speaker = speakers
                 .iter()
-                .map(|s| (overlap(t.start, t.end, s.start, s.end), s.speaker))
+                .map(|s| (overlap(t.start, t.end, s.start, s.end), &s.speaker))
                 .filter(|(o, _)| *o > 0.0)
                 .max_by(|a, b| a.0.partial_cmp(&b.0).unwrap())
                 .map(|(overlap_dur, spk)| {
@@ -33,23 +46,20 @@ pub fn merge(
                         spk,
                         overlap_dur
                     );
-                    spk
+                    spk.clone()
                 });
 
             if speaker.is_some() {
                 assigned_count += 1;
             } else {
                 unassigned_count += 1;
-                log::debug!(
-                    "[merge] segment {}: no overlapping speaker, assigned -1",
-                    idx
-                );
+                log::debug!("[merge] segment {}: no overlapping speaker", idx);
             }
 
             CleanedSegment {
                 start: t.start,
                 end: t.end,
-                speaker: speaker.unwrap_or(-1),
+                speaker,
                 text: t.text.clone(),
             }
         })
@@ -76,45 +86,41 @@ mod tests {
         }
     }
 
-    fn ss(start: f32, end: f32, speaker: i32) -> SpeakerSegment {
-        SpeakerSegment {
-            start,
-            end,
-            speaker,
-        }
+    fn seg(start: f64, end: f64, speaker: &str) -> speakrs::Segment {
+        speakrs::Segment::new(start, end, speaker)
     }
 
     #[test]
     fn assigns_max_overlap_speaker() {
         let transcript = vec![ws(0.0, 5.0, "hello")];
         let speakers = vec![
-            ss(0.0, 1.0, 0), // overlap 1.0
-            ss(1.0, 4.0, 1), // overlap 3.0  <- max
-            ss(4.0, 5.0, 2), // overlap 1.0
+            seg(0.0, 1.0, "SPEAKER_00"), // overlap 1.0
+            seg(1.0, 4.0, "SPEAKER_01"), // overlap 3.0  <- max
+            seg(4.0, 5.0, "SPEAKER_02"), // overlap 1.0
         ];
-        let out = merge(transcript, speakers);
+        let out = merge(transcript, &speakers);
         assert_eq!(out.len(), 1);
-        assert_eq!(out[0].speaker, 1);
+        assert_eq!(out[0].speaker.as_deref(), Some("SPEAKER_01"));
         assert_eq!(out[0].text, "hello");
     }
 
     #[test]
-    fn no_overlap_yields_unknown_sentinel() {
+    fn no_overlap_yields_none() {
         let transcript = vec![ws(0.0, 1.0, "hi")];
-        let speakers = vec![ss(2.0, 3.0, 0)];
-        let out = merge(transcript, speakers);
-        assert_eq!(out[0].speaker, -1);
+        let speakers = vec![seg(2.0, 3.0, "SPEAKER_00")];
+        let out = merge(transcript, &speakers);
+        assert_eq!(out[0].speaker, None);
     }
 
     #[test]
     fn preserves_segment_order_and_text() {
         let transcript = vec![ws(0.0, 1.0, "a"), ws(1.0, 2.0, "b")];
-        let speakers = vec![ss(0.0, 2.0, 0)];
-        let out = merge(transcript, speakers);
+        let speakers = vec![seg(0.0, 2.0, "SPEAKER_00")];
+        let out = merge(transcript, &speakers);
         assert_eq!(out.len(), 2);
         assert_eq!(out[0].text, "a");
         assert_eq!(out[1].text, "b");
-        assert_eq!(out[0].speaker, 0);
-        assert_eq!(out[1].speaker, 0);
+        assert_eq!(out[0].speaker.as_deref(), Some("SPEAKER_00"));
+        assert_eq!(out[1].speaker.as_deref(), Some("SPEAKER_00"));
     }
 }

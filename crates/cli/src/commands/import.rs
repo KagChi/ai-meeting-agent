@@ -112,21 +112,22 @@ pub async fn run(file: String, title: Option<String>) -> Result<()> {
         pb2.set_message("Diarizing speakers...");
         pb2.enable_steady_tick(std::time::Duration::from_millis(100));
 
-        let diarize_client = meeting_agent_core::diarize::DiarizeClient::new(
-            config.diarize.base_url.clone(),
-            std::time::Duration::from_secs(config.diarize.timeout_secs),
-        )?;
-        match diarize_client
-            .diarize(
-                &audio_file_to_transcribe,
-                &response,
-                config.diarize.num_speakers,
-            )
-            .await
+        let diarizer_cfg = meeting_agent_core::diarize::DiarizerConfig {
+            execution_mode: meeting_agent_core::diarize::parse_execution_mode(
+                &config.diarize.execution_mode,
+            ),
+            model_dir: config.diarize.model_dir.clone(),
+        };
+        match meeting_agent_core::diarize::Diarizer::diarize(
+            &audio_file_to_transcribe,
+            &response,
+            &diarizer_cfg,
+        )
+        .await
         {
-            Ok(resp) => {
+            Ok(labeled) => {
                 pb2.finish_with_message("Diarization complete!".green().to_string());
-                meeting_agent_core::diarize::merge_speakers(response, resp)
+                labeled
             }
             Err(e) => {
                 pb2.finish_with_message(format!("Diarization failed: {e:#}").yellow().to_string());

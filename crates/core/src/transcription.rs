@@ -69,10 +69,10 @@ pub struct TranscriptSegment {
     pub compression_ratio: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub no_speech_prob: Option<f32>,
-    /// Speaker index from diarization (None when diarization is disabled
-    /// or no overlap was found; -1 = unknown sentinel from diarize service).
+    /// Speaker label from diarization (None when diarization is disabled
+    /// or no overlap was found). speakrs emits labels like "SPEAKER_00".
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub speaker: Option<i32>,
+    pub speaker: Option<String>,
 }
 
 /// Deserialize `Option<f64>` tolerating number, numeric string, or null/missing.
@@ -566,7 +566,7 @@ fn merge_chunk_responses(
                     avg_logprob: seg.avg_logprob,
                     compression_ratio: seg.compression_ratio,
                     no_speech_prob: seg.no_speech_prob,
-                    speaker: seg.speaker,
+                    speaker: seg.speaker.clone(),
                 });
                 global_id += 1;
             }

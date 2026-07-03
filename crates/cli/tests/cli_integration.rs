@@ -114,5 +114,5 @@ fn config_set_diarize_enabled() {
     cmd.arg("config").arg("show");
     cmd.assert()
         .success()
-        .stdout(predicate::str::contains("enabled:       true"));
+        .stdout(predicate::str::contains("enabled:        true"));
 }

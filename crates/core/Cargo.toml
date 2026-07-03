@@ -23,6 +23,10 @@ tokio-util = { workspace = true }
 tempfile = { workspace = true }
 futures-util = { workspace = true }
 
+# Speaker diarization (in-process, speakrs)
+speakrs = { workspace = true }
+symphonia = { workspace = true }
+
 # OpenAPI (optional, enabled by server)
 utoipa = { version = "4", optional = true, features = ["chrono", "uuid"] }
 

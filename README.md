@@ -12,17 +12,16 @@ A standalone meeting agent API & CLI for transcribing and summarizing meeting re
 - **File-Based Storage**: Simple, portable storage using `~/.meeting-agent/` directory
 - **OpenAI-Compatible Transcription**: Works with OpenAI or any OpenAI-compatible STT API
 - **Chunked Transcription**: Automatically splits long audio into chunks for parallel transcription
-- **Speaker Diarization**: Optional speaker labeling via standalone sherpa-onnx microservice
+- **Speaker Diarization**: Optional in-process speaker labeling via speakrs (pyannote pipeline)
 - **AI-Powered Summaries**: Generate meeting summaries with key points, action items, and decisions
 
 ## Architecture
 
-The project uses a workspace structure with four crates:
+The project uses a workspace structure with three crates:
 
 - **`meeting-agent-core`**: Shared business logic, models, and file system operations
 - **`meeting-agent-server`**: Axum-based HTTP API server
 - **`meeting-agent-cli`**: Command-line interface and API client
-- **`meeting-agent-diarize`**: Standalone speaker diarization microservice (sherpa-onnx)
 
 ## Installation
 
@@ -226,10 +225,9 @@ All data is stored in `~/.meeting-agent/`:
 ai-meeting-agent/
 ├── Cargo.toml              # Workspace root
 ├── crates/
-│   ├── core/               # meeting-agent-core: business logic, models, storage
+│   ├── core/               # meeting-agent-core: business logic, models, storage, diarization
 │   ├── server/             # meeting-agent-server: Axum HTTP API + OpenAPI
-│   ├── cli/                # meeting-agent-cli: command-line interface
-│   └── diarize/            # meeting-agent-diarize: speaker diarization microservice
+│   └── cli/                # meeting-agent-cli: command-line interface
 ├── docs/
 │   └── API.md              # API specification document
 ├── .env.example            # Configuration template
@@ -240,10 +238,9 @@ ai-meeting-agent/
 
 | Crate | Key Dependencies |
 |-------|-----------------|
-| `meeting-agent-core` | axum, tokio, serde, reqwest, uuid, chrono, anyhow, thiserror, dirs, ffmpeg-sidecar |
+| `meeting-agent-core` | axum, tokio, serde, reqwest, uuid, chrono, anyhow, thiserror, dirs, ffmpeg-sidecar, speakrs, symphonia |
 | `meeting-agent-server` | axum, tower-http (cors, trace, compression-gzip), utoipa, utoipa-swagger-ui |
 | `meeting-agent-cli` | clap, colored, indicatif, comfy-table, dialoguer |
-| `meeting-agent-diarize` | axum, sherpa-onnx, symphonia |
 
 ### Workspace Verification
 
@@ -270,72 +267,53 @@ cargo fmt
 cargo clippy
 ```
 
-## Diarization Service
+## Diarization
 
-`meeting-agent-diarize` is a standalone HTTP microservice that performs
-speaker diarization on an audio file using a Whisper transcript. It wraps
-`sherpa-onnx`'s `OfflineSpeakerDiarization` (pyannote segmentation +
-3D-Speaker embedding models) and merges speaker labels into the transcript
-via max-timestamp-overlap.
+Speaker diarization runs **in-process** via [`speakrs`](https://crates.io/crates/speakrs),
+a Rust-native pyannote `community-1` style pipeline (segmentation + embedding +
+VBx clustering). No separate server or Python runtime is required — the first
+import with `diarize.enabled=true` loads the model once and caches it for the
+process lifetime.
 
-### API
-
-```
-POST /v1/diarize   multipart: file (mp3/wav), transcript (Whisper JSON), [num_speakers]
-                  → 200 {"num_speakers": N, "segments": [{"start","end","speaker","text"}]}
-GET  /health       → 200 {"status":"ok"}
-```
-
-### Run via Docker (recommended)
-
-Prebuilt multi-arch image (linux/amd64, linux/arm64) with models baked in:
+### Enable
 
 ```bash
-docker pull ghcr.io/bmw-ece-ntust/ai-meeting-agent/diarize-server:latest
-docker run --rm -p 8002:8002 ghcr.io/bmw-ece-ntust/ai-meeting-agent/diarize-server:latest
+meeting-agent config set diarize.enabled true
 ```
 
-The image ships the segmentation + embedding ONNX models at `/models/` and
-sets the `DIARIZE_*` env defaults — no volume mounts required.
+### Execution modes
 
-### Run via binary tarball
-
-Download `diarize-server-linux-{amd64,arm64}.tar.gz` from the latest
-[release](https://github.com/bmw-ece-ntust/ai-meeting-agent/releases),
-extract, and run:
+| Mode | Backend | Use it for |
+| --- | --- | --- |
+| `cpu` (default) | ONNX Runtime CPU | Portable, widest compatibility |
+| `coreml` | Native CoreML | macOS with CoreML acceleration |
+| `coreml-fast` | Native CoreML (2s step) | macOS, faster on long meetings |
+| `cuda` | ONNX Runtime CUDA | NVIDIA GPU |
+| `cuda-fast` | ONNX Runtime CUDA (2s step) | NVIDIA GPU, faster on long meetings |
+| `migraphx` | ONNX Runtime MIGraphX | AMD GPU |
 
 ```bash
-tar xzf diarize-server-linux-amd64.tar.gz
-cd diarize-server-linux-amd64
-./run.sh
+meeting-agent config set diarize.execution_mode coreml
 ```
 
-The tarball ships the binary + a `run.sh` wrapper that sets
-`LD_LIBRARY_PATH`. Models are **not** bundled — download them and point
-the `DIARIZE_*_MODEL` env vars at them:
+### Models
+
+With the default `online` feature, `speakrs` downloads models on first use
+from [avencera/speakrs-models](https://huggingface.co/avencera/speakrs-models)
+to a local cache. Set `DIARIZE_MODEL_DIR` to point at a pre-bundled model
+directory for offline/airgapped setups:
 
 ```bash
-# Segmentation model (extracts to sherpa-onnx-pyannote-segmentation-3-0/)
-curl -SL -o seg.tar.bz2 https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-segmentation-models/sherpa-onnx-pyannote-segmentation-3-0.tar.bz2
-tar xjf seg.tar.bz2
-
-# Embedding model (bare .onnx)
-curl -SL -o 3dspeaker_speech_eres2net_base_sv_zh-cn_3dspeaker_16k.onnx \
-  https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-recongition-models/3dspeaker_speech_eres2net_base_sv_zh-cn_3dspeaker_16k.onnx
+meeting-agent config set diarize.model_dir /opt/speakrs-models
 ```
 
 ### Environment variables
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `DIARIZE_HOST` | `0.0.0.0` | Bind address |
-| `DIARIZE_PORT` | `8002` | Listen port |
-| `DIARIZE_SEGMENTATION_MODEL` | (required) | Path to pyannote-segmentation-3.0 `model.onnx` |
-| `DIARIZE_EMBEDDING_MODEL` | (required) | Path to 3D-Speaker ERes2Net `.onnx` |
-| `DIARIZE_NUM_SPEAKERS` | `0` | Override speaker count (`0` = auto-detect) |
-| `DIARIZE_CLUSTERING_THRESHOLD` | `0.5` | Agglomerative clustering threshold |
-| `DIARIZE_MAX_BODY_MB` | `512` | Max request body size accepted by diarize-server (MB) |
-| `DIARIZE_TIMEOUT_SECS` | `900` | Client request timeout for diarize calls (seconds) |
+| `DIARIZE_ENABLED` | `false` | Enable speaker diarization during import |
+| `DIARIZE_EXECUTION_MODE` | `cpu` | `cpu` \| `coreml` \| `coreml-fast` \| `cuda` \| `cuda-fast` \| `migraphx` |
+| `DIARIZE_MODEL_DIR` | (blank) | Local model dir; blank = download on first use |
 
 ## Troubleshooting
 
@@ -371,18 +349,18 @@ meeting-agent config set transcription.chunk_concurrency 4
 
 ### Diarization not working
 
-Ensure the diarize microservice is running and `diarize.enabled` is `true`:
+Ensure `diarize.enabled` is `true` and the execution mode is valid for
+your platform:
 
 ```bash
 meeting-agent config set diarize.enabled true
-meeting-agent config set diarize.base_url http://localhost:8002
+meeting-agent config show
 ```
 
-Verify the service is up:
-
-```bash
-curl http://localhost:8002/health
-```
+The first import with diarization enabled downloads the speakrs models
+(~hundreds of MB) on first use; subsequent imports reuse the cached
+pipeline. For offline setups, point `diarize.model_dir` at a pre-bundled
+model directory.
 
 ### Config file permissions
 

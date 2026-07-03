@@ -69,43 +69,38 @@ pub struct ServerConfig {
     pub api_key: Option<String>,
 }
 
-/// Configuration for the optional speaker-diarization step.
+/// Configuration for the optional in-process speaker-diarization step.
 ///
 /// When `enabled` is false (the default), the import pipeline skips
 /// diarization entirely and `TranscriptionResponse.segments` carry no
-/// `speaker` field. When true, the pipeline POSTs the audio + Whisper
-/// transcript to a running `diarize-server` instance at `base_url`.
+/// `speaker` field. When true, the pipeline runs `speakrs`
+/// in-process (no separate server) and assigns speaker labels to each
+/// Whisper segment by max-timestamp-overlap.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DiarizeConfig {
-    /// Whether to invoke the diarize service during import. Default false.
+    /// Whether to run diarization during import. Default false.
     #[serde(default)]
     pub enabled: bool,
-    /// Base URL of the diarize-server (e.g. "http://localhost:8002").
-    #[serde(default = "default_diarize_base_url")]
-    pub base_url: String,
-    /// Optional fixed speaker count hint. None = auto-detect.
+    /// speakrs execution backend: `cpu`, `coreml`, `coreml-fast`, `cuda`,
+    /// `cuda-fast`, or `migraphx`. Default `cpu` (portable).
+    #[serde(default = "default_diarize_execution_mode")]
+    pub execution_mode: String,
+    /// Optional local model directory. `None` = download models on first
+    /// use via speakrs `online` feature.
     #[serde(default)]
-    pub num_speakers: Option<i32>,
-    /// HTTP request timeout for diarize calls, in seconds. Default 900.
-    #[serde(default = "default_diarize_timeout_secs")]
-    pub timeout_secs: u64,
+    pub model_dir: Option<PathBuf>,
 }
 
-fn default_diarize_base_url() -> String {
-    "http://localhost:8002".to_string()
-}
-
-fn default_diarize_timeout_secs() -> u64 {
-    900
+fn default_diarize_execution_mode() -> String {
+    "cpu".to_string()
 }
 
 impl Default for DiarizeConfig {
     fn default() -> Self {
         Self {
             enabled: false,
-            base_url: default_diarize_base_url(),
-            num_speakers: None,
-            timeout_secs: default_diarize_timeout_secs(),
+            execution_mode: default_diarize_execution_mode(),
+            model_dir: None,
         }
     }
 }
@@ -157,9 +152,8 @@ impl Config {
     /// - SUMMARY_MAX_TOKENS
     /// - SUMMARY_LANGUAGE
     /// - DIARIZE_ENABLED (1/true/yes to enable speaker diarization)
-    /// - DIARIZE_BASE_URL
-    /// - DIARIZE_NUM_SPEAKERS (0 = auto-detect)
-    /// - DIARIZE_TIMEOUT_SECS (client request timeout; default 900)
+    /// - DIARIZE_EXECUTION_MODE (cpu|coreml|coreml-fast|cuda|cuda-fast|migraphx; default cpu)
+    /// - DIARIZE_MODEL_DIR (path to local speakrs model dir; blank = download on first use)
     /// - MEETING_AGENT_PORT (server listen port)
     /// - MEETING_AGENT_HOST (server bind host)
     /// - MEETING_AGENT_API_KEY (server auth key; empty = open access)
@@ -228,17 +222,12 @@ impl Config {
             config.diarize.enabled =
                 matches!(enabled.to_lowercase().as_str(), "1" | "true" | "yes");
         }
-        if let Ok(base_url) = std::env::var("DIARIZE_BASE_URL") {
-            config.diarize.base_url = base_url;
+        if let Ok(mode) = std::env::var("DIARIZE_EXECUTION_MODE") {
+            config.diarize.execution_mode = mode;
         }
-        if let Ok(num_speakers) = std::env::var("DIARIZE_NUM_SPEAKERS") {
-            if let Ok(n) = num_speakers.parse::<i32>() {
-                config.diarize.num_speakers = Some(n);
-            }
-        }
-        if let Ok(t) = std::env::var("DIARIZE_TIMEOUT_SECS") {
-            if let Ok(n) = t.parse::<u64>() {
-                config.diarize.timeout_secs = n;
+        if let Ok(dir) = std::env::var("DIARIZE_MODEL_DIR") {
+            if !dir.trim().is_empty() {
+                config.diarize.model_dir = Some(PathBuf::from(dir));
             }
         }
 

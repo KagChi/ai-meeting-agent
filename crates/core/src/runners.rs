@@ -140,15 +140,12 @@ async fn run_import_inner(
             ProgressEvent::new("diarizing", "Speaker diarization").with_percent(70.0),
         );
         check_cancelled(cancel_token)?;
-        let client = crate::diarize::DiarizeClient::new(
-            config.diarize.base_url.clone(),
-            std::time::Duration::from_secs(config.diarize.timeout_secs),
-        )?;
-        match client
-            .diarize(final_audio, &transcription, config.diarize.num_speakers)
-            .await
-        {
-            Ok(resp) => crate::diarize::merge_speakers(transcription, resp),
+        let diarizer_cfg = crate::diarize::DiarizerConfig {
+            execution_mode: crate::diarize::parse_execution_mode(&config.diarize.execution_mode),
+            model_dir: config.diarize.model_dir.clone(),
+        };
+        match crate::diarize::Diarizer::diarize(final_audio, &transcription, &diarizer_cfg).await {
+            Ok(labeled) => labeled,
             Err(e) => {
                 log::warn!("[diarize] failed, proceeding without speaker labels: {e:#}");
                 transcription

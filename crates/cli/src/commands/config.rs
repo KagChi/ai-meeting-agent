@@ -52,17 +52,17 @@ pub fn show() -> Result<()> {
     );
 
     println!("\n{} Diarization", "▸".cyan());
-    println!("  enabled:       {}", config.diarize.enabled);
-    println!("  base_url:      {}", config.diarize.base_url);
+    println!("  enabled:        {}", config.diarize.enabled);
+    println!("  execution_mode: {}", config.diarize.execution_mode);
     println!(
-        "  num_speakers:  {}",
+        "  model_dir:      {}",
         config
             .diarize
-            .num_speakers
-            .map(|n| n.to_string())
-            .unwrap_or_else(|| "(auto)".to_string())
+            .model_dir
+            .as_ref()
+            .map(|d| d.display().to_string())
+            .unwrap_or_else(|| "(download)".to_string())
     );
-    println!("  timeout_secs:  {}", config.diarize.timeout_secs);
 
     Ok(())
 }
@@ -93,12 +93,14 @@ pub fn set(key: String, value: String) -> Result<()> {
         "diarize.enabled" => {
             config.diarize.enabled = matches!(value.to_lowercase().as_str(), "1" | "true" | "yes")
         }
-        "diarize.base_url" => config.diarize.base_url = value.clone(),
-        "diarize.num_speakers" => {
-            let n: i32 = value.parse()?;
-            config.diarize.num_speakers = if n <= 0 { None } else { Some(n) };
+        "diarize.execution_mode" => config.diarize.execution_mode = value.clone(),
+        "diarize.model_dir" => {
+            config.diarize.model_dir = if value.trim().is_empty() {
+                None
+            } else {
+                Some(std::path::PathBuf::from(value.trim()))
+            };
         }
-        "diarize.timeout_secs" => config.diarize.timeout_secs = value.parse()?,
         other => anyhow::bail!("Unknown config key: {}", other),
     }
 

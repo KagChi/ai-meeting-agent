@@ -95,16 +95,24 @@ pub fn validate_diarize(d: &DiarizeConfig) -> Result<(), Vec<String>> {
         return Ok(());
     }
     let mut errs = Vec::new();
-    if let Err(e) = validate_url(&d.base_url) {
-        errs.push(format!("diarize.base_url: {e}"));
+    let valid_modes = [
+        "cpu",
+        "coreml",
+        "coreml-fast",
+        "cuda",
+        "cuda-fast",
+        "migraphx",
+    ];
+    if !valid_modes.contains(&d.execution_mode.to_lowercase().as_str()) {
+        errs.push(format!(
+            "diarize.execution_mode must be one of {:?} (got {})",
+            valid_modes, d.execution_mode
+        ));
     }
-    if let Some(n) = d.num_speakers {
-        if n < 1 {
-            errs.push("diarize.num_speakers must be >= 1 if set".into());
+    if let Some(dir) = &d.model_dir {
+        if !dir.exists() {
+            errs.push(format!("diarize.model_dir not found: {}", dir.display()));
         }
-    }
-    if d.timeout_secs == 0 {
-        errs.push("diarize.timeout_secs must be >= 1".into());
     }
     if errs.is_empty() {
         Ok(())
@@ -181,9 +189,8 @@ mod tests {
     fn good_diarize() -> DiarizeConfig {
         DiarizeConfig {
             enabled: false,
-            base_url: "http://localhost:8002".into(),
-            num_speakers: None,
-            timeout_secs: 900,
+            execution_mode: "cpu".into(),
+            model_dir: None,
         }
     }
 
@@ -245,7 +252,7 @@ mod tests {
     #[test]
     fn diarize_disabled_skips_validation() {
         let mut d = good_diarize();
-        d.base_url = "garbage".into();
+        d.execution_mode = "garbage".into();
         d.enabled = false;
         assert!(validate_diarize(&d).is_ok());
     }
@@ -254,11 +261,10 @@ mod tests {
     fn diarize_enabled_validates() {
         let mut d = good_diarize();
         d.enabled = true;
-        d.base_url = "garbage".into();
+        d.execution_mode = "garbage".into();
         assert!(validate_diarize(&d).is_err());
-        d.base_url = "http://localhost:8002".into();
-        d.num_speakers = Some(0);
-        assert!(validate_diarize(&d).is_err());
+        d.execution_mode = "cpu".into();
+        assert!(validate_diarize(&d).is_ok());
     }
 
     #[test]

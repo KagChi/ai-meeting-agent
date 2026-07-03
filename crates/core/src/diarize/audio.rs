@@ -4,7 +4,7 @@ use symphonia::core::formats::FormatOptions;
 use symphonia::core::io::MediaSourceStream;
 use symphonia::core::meta::MetadataOptions;
 
-use crate::error::{DiarizeError, Result};
+use crate::diarize::error::{DiarizeError, Result};
 
 const TARGET_SAMPLE_RATE: u32 = 16000;
 

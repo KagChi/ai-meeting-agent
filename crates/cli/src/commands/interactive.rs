@@ -212,28 +212,28 @@ fn edit_diarize(config: &mut Config) -> Result<()> {
         return Ok(());
     }
 
-    config.diarize.base_url = Input::new()
-        .with_prompt("Diarize-server base URL")
-        .with_initial_text(&config.diarize.base_url)
+    config.diarize.execution_mode = Input::new()
+        .with_prompt("Execution mode (cpu|coreml|coreml-fast|cuda|cuda-fast|migraphx)")
+        .with_initial_text(&config.diarize.execution_mode)
         .interact_text()?;
 
-    let ns: String = Input::new()
-        .with_prompt("Number of speakers (blank = auto-detect)")
+    let dir: String = Input::new()
+        .with_prompt("Local model dir (blank = download on first use)")
         .with_initial_text(
             config
                 .diarize
-                .num_speakers
-                .map(|n| n.to_string())
+                .model_dir
+                .as_ref()
+                .map(|d| d.display().to_string())
                 .unwrap_or_default(),
         )
         .allow_empty(true)
         .interact_text()?;
-    config.diarize.num_speakers = ns.trim().parse::<i32>().ok();
-
-    config.diarize.timeout_secs = Input::new()
-        .with_prompt("Request timeout (seconds)")
-        .with_initial_text(config.diarize.timeout_secs.to_string())
-        .interact_text()?;
+    config.diarize.model_dir = if dir.trim().is_empty() {
+        None
+    } else {
+        Some(std::path::PathBuf::from(dir.trim()))
+    };
 
     Ok(())
 }
@@ -270,18 +270,18 @@ fn print_summary(config: &Config) {
     println!("  api_key: {}", mask(&config.server.api_key));
 
     println!("{} Diarization", "▸".cyan());
-    println!("  enabled: {}", config.diarize.enabled);
+    println!("  enabled:        {}", config.diarize.enabled);
     if config.diarize.enabled {
-        println!("  base_url:      {}", config.diarize.base_url);
+        println!("  execution_mode: {}", config.diarize.execution_mode);
         println!(
-            "  num_speakers:  {}",
+            "  model_dir:      {}",
             config
                 .diarize
-                .num_speakers
-                .map(|n| n.to_string())
-                .unwrap_or_else(|| "(auto)".to_string())
+                .model_dir
+                .as_ref()
+                .map(|d| d.display().to_string())
+                .unwrap_or_else(|| "(download)".to_string())
         );
-        println!("  timeout_secs:  {}", config.diarize.timeout_secs);
     }
 }
 
