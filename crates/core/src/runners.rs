@@ -153,7 +153,7 @@ async fn run_import_inner(
         );
         check_cancelled(cancel_token)?;
         let diarizer_cfg = crate::diarize::DiarizerConfig {
-            execution_mode: crate::diarize::parse_execution_mode(&config.diarize.execution_mode),
+            execution_mode: crate::diarize::resolve_execution_mode(&config.diarize.execution_mode),
             model_dir: config.diarize.model_dir.clone(),
         };
         match crate::diarize::Diarizer::diarize(final_audio, &transcription, &diarizer_cfg).await {
@@ -326,8 +326,7 @@ pub async fn run_import_memory(cfg: ImportMemoryConfig) {
         Err(e) => {
             if cfg.cancel_token.is_cancelled() {
                 log::info!("Import job {} was cancelled", cfg.job_id);
-                if cfg.registry.get_job_state(&cfg.job_id)
-                    != Some(crate::jobs::JobState::Cancelled)
+                if cfg.registry.get_job_state(&cfg.job_id) != Some(crate::jobs::JobState::Cancelled)
                 {
                     cfg.registry.cancel_job(&cfg.job_id);
                 }
@@ -439,7 +438,9 @@ async fn run_import_memory_inner(cfg: &ImportMemoryConfig) -> Result<()> {
         };
 
         let diarizer_cfg = crate::diarize::DiarizerConfig {
-            execution_mode: crate::diarize::parse_execution_mode(&cfg.config.diarize.execution_mode),
+            execution_mode: crate::diarize::resolve_execution_mode(
+                &cfg.config.diarize.execution_mode,
+            ),
             model_dir: cfg.config.diarize.model_dir.clone(),
         };
 
@@ -469,7 +470,8 @@ async fn run_import_memory_inner(cfg: &ImportMemoryConfig) -> Result<()> {
         ProgressEvent::new("saving", "Saving transcript and audio").with_percent(90.0),
     );
 
-    cfg.storage.save_audio_from_bytes(&meeting.id, &working_audio, &cfg.audio_filename)?;
+    cfg.storage
+        .save_audio_from_bytes(&meeting.id, &working_audio, &cfg.audio_filename)?;
     cfg.storage.save_transcript(&meeting.id, &transcription)?;
 
     let duration_seconds = transcription.duration.map(|d| d as u64);

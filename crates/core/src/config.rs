@@ -81,8 +81,9 @@ pub struct DiarizeConfig {
     /// Whether to run diarization during import. Default false.
     #[serde(default)]
     pub enabled: bool,
-    /// speakrs execution backend: `cpu`, `coreml`, `coreml-fast`, `cuda`,
-    /// `cuda-fast`, or `migraphx`. Default `cpu` (portable).
+    /// speakrs execution backend: `auto` (default, GPU priority with CPU
+    /// fallback), `cpu`, `coreml`, `coreml-fast`, `cuda`, `cuda-fast`,
+    /// or `migraphx`.
     #[serde(default = "default_diarize_execution_mode")]
     pub execution_mode: String,
     /// Optional local model directory. `None` = download models on first
@@ -92,7 +93,7 @@ pub struct DiarizeConfig {
 }
 
 fn default_diarize_execution_mode() -> String {
-    "cpu".to_string()
+    "auto".to_string()
 }
 
 impl Default for DiarizeConfig {

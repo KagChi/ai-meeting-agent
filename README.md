@@ -281,19 +281,34 @@ process lifetime.
 meeting-agent config set diarize.enabled true
 ```
 
+### Automatic GPU Detection
+
+By default, `meeting-agent` automatically detects and uses GPU acceleration for
+speaker diarization when available, with graceful fallback to CPU:
+
+- **macOS**: Tries CoreML (fast) → CoreML (standard) → CPU
+- **Linux/Windows**: Tries CUDA (NVIDIA) → MIGraphX (AMD) → CPU
+
+If GPU initialization fails (missing drivers, insufficient memory, etc.), the
+system logs a warning and automatically falls back to CPU mode. No manual
+configuration is required.
+
 ### Execution modes
 
 | Mode | Backend | Use it for |
 | --- | --- | --- |
-| `cpu` (default) | ONNX Runtime CPU | Portable, widest compatibility |
+| `auto` (default) | Platform-specific GPU priority | Automatic GPU detection with CPU fallback |
+| `cpu` | ONNX Runtime CPU | Portable, widest compatibility |
 | `coreml` | Native CoreML | macOS with CoreML acceleration |
 | `coreml-fast` | Native CoreML (2s step) | macOS, faster on long meetings |
 | `cuda` | ONNX Runtime CUDA | NVIDIA GPU |
 | `cuda-fast` | ONNX Runtime CUDA (2s step) | NVIDIA GPU, faster on long meetings |
 | `migraphx` | ONNX Runtime MIGraphX | AMD GPU |
 
+To override automatic detection and force a specific mode:
+
 ```bash
-meeting-agent config set diarize.execution_mode coreml
+meeting-agent config set diarize.execution_mode cpu
 ```
 
 ### Models
@@ -312,7 +327,7 @@ meeting-agent config set diarize.model_dir /opt/speakrs-models
 | Variable | Default | Description |
 | --- | --- | --- |
 | `DIARIZE_ENABLED` | `false` | Enable speaker diarization during import |
-| `DIARIZE_EXECUTION_MODE` | `cpu` | `cpu` \| `coreml` \| `coreml-fast` \| `cuda` \| `cuda-fast` \| `migraphx` |
+| `DIARIZE_EXECUTION_MODE` | `auto` | `auto` \| `cpu` \| `coreml` \| `coreml-fast` \| `cuda` \| `cuda-fast` \| `migraphx` |
 | `DIARIZE_MODEL_DIR` | (blank) | Local model dir; blank = download on first use |
 
 ## Troubleshooting

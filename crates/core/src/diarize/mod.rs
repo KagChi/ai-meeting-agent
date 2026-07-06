@@ -63,6 +63,42 @@ pub fn parse_execution_mode(s: &str) -> ExecutionMode {
     }
 }
 
+/// Detect the best execution mode for the current platform, prioritizing
+/// GPU acceleration when available.
+///
+/// Platform-specific priority order:
+/// - macOS: `CoreMlFast` → `CoreMl` → `Cpu`
+/// - Linux/Windows: `CudaFast` → `Cuda` → `MiGraphX` → `Cpu`
+///
+/// Returns the first mode in the priority list. Actual availability is
+/// validated during pipeline initialization in [`with_pipeline`], which
+/// will attempt CPU fallback if the GPU mode fails.
+fn detect_best_execution_mode() -> ExecutionMode {
+    #[cfg(target_os = "macos")]
+    {
+        log::info!("[diarize] auto-detecting execution mode (macOS): trying CoreML first");
+        ExecutionMode::CoreMlFast
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        log::info!("[diarize] auto-detecting execution mode (non-macOS): trying CUDA first");
+        ExecutionMode::CudaFast
+    }
+}
+
+/// Resolve the execution mode from a config string.
+///
+/// - `"auto"` → platform-specific GPU priority via [`detect_best_execution_mode`]
+/// - Explicit mode string → parsed directly via [`parse_execution_mode`]
+pub fn resolve_execution_mode(config_string: &str) -> ExecutionMode {
+    if config_string.to_lowercase() == "auto" {
+        detect_best_execution_mode()
+    } else {
+        parse_execution_mode(config_string)
+    }
+}
+
 impl Diarizer {
     /// Run diarization on an audio file + Whisper transcript, returning
     /// a clone of the transcript with `speaker` labels assigned to each
@@ -145,6 +181,47 @@ fn run_in_process(
     Ok(out)
 }
 
+/// Try to initialize the pipeline with the given mode, with optional CPU
+/// fallback if the mode is GPU-based and initialization fails.
+///
+/// - If `mode` is `Cpu`, attempts initialization and returns the result.
+/// - If `mode` is a GPU mode (CoreML, CUDA, MIGraphX) and initialization
+///   fails, logs a warning and retries with `Cpu`.
+fn try_init_pipeline_with_fallback(
+    model_dir: &Option<PathBuf>,
+    mode: ExecutionMode,
+) -> anyhow::Result<OwnedDiarizationPipeline> {
+    let is_gpu_mode = !matches!(mode, ExecutionMode::Cpu);
+
+    let init_result = match model_dir {
+        Some(dir) => OwnedDiarizationPipeline::from_dir(dir, mode)
+            .map_err(DiarizeError::from)
+            .context("Failed to load speakrs pipeline from local model dir"),
+        None => OwnedDiarizationPipeline::from_pretrained(mode)
+            .map_err(DiarizeError::from)
+            .context("Failed to load speakrs pipeline (pretrained download)"),
+    };
+
+    match init_result {
+        Ok(pipeline) => Ok(pipeline),
+        Err(e) if is_gpu_mode => {
+            log::warn!("[diarize] GPU initialization failed (mode={}): {}", mode, e);
+            log::warn!("[diarize] falling back to CPU mode");
+
+            // Retry with CPU
+            match model_dir {
+                Some(dir) => OwnedDiarizationPipeline::from_dir(dir, ExecutionMode::Cpu)
+                    .map_err(DiarizeError::from)
+                    .context("Failed to load speakrs pipeline from local model dir (CPU fallback)"),
+                None => OwnedDiarizationPipeline::from_pretrained(ExecutionMode::Cpu)
+                    .map_err(DiarizeError::from)
+                    .context("Failed to load speakrs pipeline (CPU fallback)"),
+            }
+        }
+        Err(e) => Err(e),
+    }
+}
+
 /// Run `f` against the process-wide pipeline, initializing it on first use.
 fn with_pipeline<T>(
     cfg: &DiarizerConfig,
@@ -162,14 +239,7 @@ fn with_pipeline<T>(
             cfg.model_dir
         );
         let init_start = std::time::Instant::now();
-        let pipeline = match &cfg.model_dir {
-            Some(dir) => OwnedDiarizationPipeline::from_dir(dir, cfg.execution_mode)
-                .map_err(DiarizeError::from)
-                .context("Failed to load speakrs pipeline from local model dir")?,
-            None => OwnedDiarizationPipeline::from_pretrained(cfg.execution_mode)
-                .map_err(DiarizeError::from)
-                .context("Failed to load speakrs pipeline (pretrained download)")?,
-        };
+        let pipeline = try_init_pipeline_with_fallback(&cfg.model_dir, cfg.execution_mode)?;
         log::info!(
             "[diarize] pipeline initialized in {:.2}s",
             init_start.elapsed().as_secs_f64()

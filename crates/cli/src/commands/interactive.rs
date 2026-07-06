@@ -213,7 +213,7 @@ fn edit_diarize(config: &mut Config) -> Result<()> {
     }
 
     config.diarize.execution_mode = Input::new()
-        .with_prompt("Execution mode (cpu|coreml|coreml-fast|cuda|cuda-fast|migraphx)")
+        .with_prompt("Execution mode (auto|cpu|coreml|coreml-fast|cuda|cuda-fast|migraphx)")
         .with_initial_text(&config.diarize.execution_mode)
         .interact_text()?;
 

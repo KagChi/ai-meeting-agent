@@ -113,7 +113,7 @@ pub async fn run(file: String, title: Option<String>) -> Result<()> {
         pb2.enable_steady_tick(std::time::Duration::from_millis(100));
 
         let diarizer_cfg = meeting_agent_core::diarize::DiarizerConfig {
-            execution_mode: meeting_agent_core::diarize::parse_execution_mode(
+            execution_mode: meeting_agent_core::diarize::resolve_execution_mode(
                 &config.diarize.execution_mode,
             ),
             model_dir: config.diarize.model_dir.clone(),
