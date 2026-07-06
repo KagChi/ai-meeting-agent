@@ -29,6 +29,23 @@ pub struct TranscriptionRequest {
     pub temperature: Option<f32>,
 }
 
+/// Configuration for chunked memory transcription
+#[derive(Debug, Clone)]
+pub struct ChunkedMemoryConfig {
+    /// Response format (json, verbose_json, text, srt, vtt)
+    pub response_format: Option<String>,
+    /// Language code (ISO-639-1, e.g., "en", "zh")
+    pub language: Option<String>,
+    /// Optional prompt for context/spelling guidance
+    pub prompt: Option<String>,
+    /// Temperature (0.0-1.0)
+    pub temperature: Option<f32>,
+    /// Chunk duration in seconds
+    pub chunk_seconds: f64,
+    /// Maximum concurrent transcription requests
+    pub concurrency: usize,
+}
+
 /// Response from transcription API (verbose_json format)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
@@ -406,6 +423,253 @@ impl TranscriptionClient {
         );
         Ok(merged)
     }
+
+    /// Transcribe audio bytes directly (in-memory, no temp files)
+    ///
+    /// Takes MP3-encoded audio bytes and a filename hint for the multipart request.
+    /// No temporary files are created.
+    pub async fn transcribe_bytes(
+        &self,
+        audio_bytes: &[u8],
+        file_name: &str,
+        response_format: Option<String>,
+        language: Option<String>,
+        prompt: Option<String>,
+        temperature: Option<f32>,
+    ) -> Result<TranscriptionResponse> {
+        let started = std::time::Instant::now();
+        log::info!(
+            "[transcribe_bytes] {} bytes, filename={}",
+            audio_bytes.len(),
+            file_name
+        );
+
+        // Build the API URL
+        let url = format!("{}/audio/transcriptions", self.config.base_url);
+
+        // Prepare authorization header
+        let api_key = self
+            .config
+            .api_key
+            .as_ref()
+            .context("TRANSCRIPTION_API_KEY is required but not set")?;
+
+        // Create a minimal request for send_with_retry
+        let request = TranscriptionRequest {
+            file_path: String::new(), // unused for byte-based transcription
+            response_format,
+            language,
+            prompt,
+            temperature,
+        };
+
+        // Send request with retry logic
+        let response = self
+            .send_with_retry(&url, api_key, audio_bytes, file_name, &request)
+            .await?;
+
+        // Parse response
+        let raw = response
+            .text()
+            .await
+            .context("Failed to read response body")?;
+        let transcription = parse_response(&raw)?;
+        log::info!(
+            "[transcribe_bytes] done in {:.1}s: {} segments, {} chars text",
+            started.elapsed().as_secs_f64(),
+            transcription.segments.as_ref().map_or(0, |s| s.len()),
+            transcription.text.chars().count(),
+        );
+        Ok(transcription)
+    }
+
+    /// Transcribe audio bytes with chunking (in-memory, no temp files)
+    ///
+    /// Takes MP3-encoded audio bytes, splits them into chunks in memory,
+    /// and transcribes each chunk in parallel. No temporary files are created.
+    pub async fn transcribe_chunked_memory(
+        &self,
+        audio_bytes: &[u8],
+        file_name: &str,
+        config: ChunkedMemoryConfig,
+    ) -> Result<TranscriptionResponse> {
+        let started = std::time::Instant::now();
+
+        // No chunking requested
+        if config.chunk_seconds <= 0.0 {
+            log::info!("[chunked_memory] chunk_seconds=0 → single request (chunking disabled)");
+            return self
+                .transcribe_bytes(
+                    audio_bytes,
+                    file_name,
+                    config.response_format,
+                    config.language,
+                    config.prompt,
+                    config.temperature,
+                )
+                .await;
+        }
+
+        // Probe source duration
+        let total_duration = crate::audio::probe_duration_from_bytes(audio_bytes)
+            .context("Failed to probe source audio duration")?;
+
+        // Within limit → single request
+        if total_duration <= config.chunk_seconds {
+            log::info!(
+                "[chunked_memory] audio={:.1}s limit={:.1}s → single request (under limit)",
+                total_duration,
+                config.chunk_seconds
+            );
+            return self
+                .transcribe_bytes(
+                    audio_bytes,
+                    file_name,
+                    config.response_format,
+                    config.language,
+                    config.prompt,
+                    config.temperature,
+                )
+                .await;
+        }
+
+        log::info!(
+            "[chunked_memory] audio={:.1}s limit={:.1}s → will chunk in memory",
+            total_duration,
+            config.chunk_seconds
+        );
+
+        // Chunk in memory using seek-based approach
+        let chunks = crate::audio::chunk_audio_memory(audio_bytes, config.chunk_seconds)
+            .context("Failed to chunk audio in memory")?;
+        let chunk_count = chunks.len();
+        log::info!(
+            "[chunked_memory] split into {} chunks in memory (segment_time={}s)",
+            chunk_count,
+            config.chunk_seconds
+        );
+
+        // Probe each chunk's actual duration upfront (deterministic offsets)
+        let mut chunk_durations: Vec<f64> = Vec::with_capacity(chunk_count);
+        for (i, chunk) in chunks.iter().enumerate() {
+            let d = crate::audio::probe_duration_from_bytes(chunk)
+                .with_context(|| format!("Failed to probe chunk {} duration", i))?;
+            chunk_durations.push(d);
+        }
+        log::info!(
+            "[chunked_memory] probed {} chunk durations: [{}] (total={:.1}s)",
+            chunk_count,
+            chunk_durations
+                .iter()
+                .map(|d| format!("{:.1}s", d))
+                .collect::<Vec<_>>()
+                .join(", "),
+            chunk_durations.iter().sum::<f64>(),
+        );
+
+        // Parallel transcription with concurrency cap
+        let concurrency = config.concurrency.max(1);
+        log::info!(
+            "[chunked_memory] transcribing {} chunks (parallel, max {} concurrent)",
+            chunk_count,
+            concurrency
+        );
+        let semaphore = std::sync::Arc::new(tokio::sync::Semaphore::new(concurrency));
+        let mut tasks = tokio::task::JoinSet::new();
+
+        for (i, chunk) in chunks.into_iter().enumerate() {
+            let permit = semaphore.clone();
+            let client = self.client.clone();
+            let cfg = self.config.clone();
+            let total = chunk_count;
+            let chunk_dur = chunk_durations[i];
+            let response_format = config.response_format.clone();
+            let language = config.language.clone();
+            let prompt = config.prompt.clone();
+            let temperature = config.temperature;
+            let chunk_name = format!("chunk-{:03}.mp3", i);
+
+            tasks.spawn(async move {
+                let _permit = permit.acquire().await.expect("semaphore closed");
+                let chunk_start = std::time::Instant::now();
+                log::info!(
+                    "[chunked_memory]   → chunk {}/{} ({:.1}s) starting",
+                    i + 1,
+                    total,
+                    chunk_dur
+                );
+                let tmp_client = TranscriptionClient {
+                    client,
+                    config: cfg,
+                };
+                match tmp_client
+                    .transcribe_bytes(
+                        &chunk,
+                        &chunk_name,
+                        response_format,
+                        language,
+                        prompt,
+                        temperature,
+                    )
+                    .await
+                {
+                    Ok(resp) => {
+                        log::info!(
+                            "[chunked_memory]   → chunk {}/{} ({:.1}s) done in {:.1}s ({} segments)",
+                            i + 1,
+                            total,
+                            chunk_dur,
+                            chunk_start.elapsed().as_secs_f64(),
+                            resp.segments.as_ref().map_or(0, |s| s.len()),
+                        );
+                        Ok::<(usize, TranscriptionResponse), anyhow::Error>((i, resp))
+                    }
+                    Err(e) => {
+                        log::error!(
+                            "[chunked_memory]   → chunk {}/{} ({:.1}s) FAILED in {:.1}s: {}",
+                            i + 1,
+                            total,
+                            chunk_dur,
+                            chunk_start.elapsed().as_secs_f64(),
+                            e
+                        );
+                        Err(e)
+                    }
+                }
+            });
+        }
+
+        // Collect (index, response) and restore chronological order
+        let mut results: Vec<(usize, TranscriptionResponse)> = Vec::with_capacity(chunk_count);
+        while let Some(res) = tasks.join_next().await {
+            match res {
+                Ok(Ok(pair)) => results.push(pair),
+                Ok(Err(e)) => return Err(e).context("Chunk transcription failed"),
+                Err(join_err) if join_err.is_cancelled() => continue,
+                Err(join_err) => return Err(anyhow::anyhow!("Chunk task panicked: {}", join_err)),
+            }
+        }
+        results.sort_by_key(|(i, _)| *i);
+        log::info!(
+            "[chunked_memory] all {} chunks transcribed (no temp files created)",
+            chunk_count
+        );
+
+        let responses: Vec<TranscriptionResponse> = results.into_iter().map(|(_, r)| r).collect();
+        let merged = merge_chunk_responses(responses, chunk_durations);
+        log::info!(
+            "[chunked_memory] merged: {} segments, {} chars text, {:.1}s total duration",
+            merged.segments.as_ref().map_or(0, |s| s.len()),
+            merged.text.chars().count(),
+            merged.duration.unwrap_or(0.0),
+        );
+        log::info!(
+            "[chunked_memory] total elapsed: {:.1}s",
+            started.elapsed().as_secs_f64()
+        );
+        Ok(merged)
+    }
+
     async fn send_with_retry(
         &self,
         url: &str,

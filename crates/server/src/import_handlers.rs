@@ -22,7 +22,6 @@ use axum::{
 };
 use futures_util::stream::Stream;
 use meeting_agent_core::jobs::ProgressEvent;
-use meeting_agent_core::runners::run_import;
 use std::convert::Infallible;
 use std::path::PathBuf;
 use tokio_stream::wrappers::BroadcastStream;
@@ -90,30 +89,8 @@ pub async fn create_import(
         audio_bytes.ok_or_else(|| ApiError::BadRequest("Missing 'file' field".to_string()))?;
     let audio_filename = audio_filename.unwrap_or_else(|| "audio.mp3".to_string());
 
-    // Save upload to a tempfile so the background task can read it
-    let mut temp_file = tempfile::Builder::new()
-        .suffix(
-            &PathBuf::from(&audio_filename)
-                .extension()
-                .map(|e| format!(".{}", e.to_string_lossy()))
-                .unwrap_or_default(),
-        )
-        .tempfile()
-        .map_err(|e| ApiError::InternalServerError(format!("Failed to create tempfile: {e}")))?;
-
-    use std::io::Write;
-    temp_file
-        .write_all(&audio_bytes)
-        .map_err(|e| ApiError::InternalServerError(format!("Failed to write upload: {e}")))?;
-    temp_file
-        .flush()
-        .map_err(|e| ApiError::InternalServerError(format!("Failed to flush upload: {e}")))?;
-
-    // Persist the tempfile so it survives after the handler returns
-    let persisted_path = temp_file
-        .into_temp_path()
-        .keep()
-        .map_err(|e| ApiError::InternalServerError(format!("Failed to persist upload: {e}")))?;
+    // Keep audio bytes in memory (no tempfile created)
+    let audio_vec = audio_bytes.to_vec();
 
     // Create job
     let job_id = state
@@ -124,7 +101,7 @@ pub async fn create_import(
         .cancel_token(&job_id)
         .ok_or_else(|| ApiError::InternalServerError("Failed to get cancel token".to_string()))?;
 
-    // Spawn background task
+    // Spawn background task with in-memory processing
     let job_id_clone = job_id.clone();
     let config = state.config.read().await.clone();
     let storage = state.storage.clone();
@@ -132,14 +109,17 @@ pub async fn create_import(
     let cancel_token_clone = cancel_token.clone();
 
     tokio::spawn(async move {
-        run_import(
-            job_id_clone,
-            persisted_path,
-            title,
-            config,
-            storage,
-            registry,
-            cancel_token_clone,
+        meeting_agent_core::runners::run_import_memory(
+            meeting_agent_core::runners::ImportMemoryConfig {
+                job_id: job_id_clone,
+                audio_bytes: audio_vec,
+                audio_filename,
+                title,
+                config,
+                storage,
+                registry,
+                cancel_token: cancel_token_clone,
+            },
         )
         .await;
     });

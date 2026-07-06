@@ -238,6 +238,31 @@ impl MeetingStorage {
         Ok(dest_path)
     }
 
+    /// Save audio bytes to meeting directory (in-memory variant)
+    pub fn save_audio_from_bytes(
+        &self,
+        meeting_id: &str,
+        audio_bytes: &[u8],
+        file_name: &str,
+    ) -> Result<PathBuf> {
+        let meeting_path = self.meeting_dir(meeting_id);
+
+        if !meeting_path.exists() {
+            anyhow::bail!("Meeting not found: {}", meeting_id);
+        }
+
+        let dest_path = meeting_path.join("audio").join(file_name);
+
+        // Create audio subdirectory
+        std::fs::create_dir_all(dest_path.parent().unwrap())
+            .context("Failed to create audio directory")?;
+
+        // Write audio bytes
+        std::fs::write(&dest_path, audio_bytes).context("Failed to write audio file")?;
+
+        Ok(dest_path)
+    }
+
     /// Mark meeting as completed with transcription info
     pub fn mark_transcription_complete(
         &self,
