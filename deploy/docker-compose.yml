@@ -1,0 +1,171 @@
+# ============================================================================
+# AI Meeting Agent — lab-intelligence stack (self-hosted, DGX Spark)
+# ----------------------------------------------------------------------------
+# This compose file defines OUR services. It is designed to run ALONGSIDE the
+# Vexa stack (the meeting-bot spine), which is deployed from its own repo with
+# `make all`. Both stacks share Docker network `vexa` (declared external here),
+# so our services can reach Vexa's api-gateway and vice-versa.
+#
+# Bring-up order (see deploy/README.md for the full runbook):
+#   1. Clone + start Vexa   (creates the `vexa` network + api-gateway :8056)
+#      - override Vexa's TRANSCRIPTION_SERVICE_URL -> http://whisperx:8000/v1/audio/transcriptions
+#        so Vexa's realtime transcription runs on OUR DGX WhisperX.
+#   2. docker compose -f deploy/docker-compose.yml --env-file deploy/.env up -d
+#
+# GPU: whisperx and minutes-llm request the DGX Spark GPU. On a non-GPU host,
+# drop the `deploy.resources.reservations.devices` blocks (models fall back to CPU,
+# slowly). DGX Spark is aarch64 — pin arm64-capable images / build multi-arch.
+# ============================================================================
+
+name: meeting-agent
+
+services:
+  # -------------------------------------------------------------------------
+  # DGX model service 1 — WhisperX ASR (OpenAI-compatible)
+  # Serves /v1/audio/transcriptions. Used by BOTH:
+  #   - Vexa (realtime, via TRANSCRIPTION_SERVICE_URL override), and
+  #   - our orchestrator (canonical re-transcription pass).
+  # Recommended image: OpenAI-compatible faster-whisper/whisperx server.
+  # `speaches` (formerly faster-whisper-server) exposes the OpenAI STT API.
+  # -------------------------------------------------------------------------
+  whisperx:
+    image: ${WHISPERX_IMAGE:-ghcr.io/speaches-ai/speaches:latest-cuda}
+    environment:
+      - WHISPER__MODEL=${ASR_MODEL:-Systran/faster-whisper-large-v3}
+      - WHISPER__COMPUTE_TYPE=${ASR_COMPUTE_TYPE:-float16}
+      # Multilingual: leave language auto-detect on; per-segment LID handled upstream.
+      - WHISPER__INFERENCE_DEVICE=cuda
+    ports:
+      - "${WHISPERX_HOST_PORT:-8010}:8000"
+    volumes:
+      - whisperx-models:/home/ubuntu/.cache/huggingface
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    networks: [vexa, meeting-agent]
+    restart: unless-stopped
+
+  # -------------------------------------------------------------------------
+  # DGX model service 2 — Minutes / action-item LLM (OpenAI-compatible)
+  # Serves /v1/chat/completions. Ollama is simplest on aarch64; swap for vLLM
+  # if you need higher throughput. Pull the model on first run (see README).
+  # -------------------------------------------------------------------------
+  minutes-llm:
+    image: ${LLM_IMAGE:-ollama/ollama:latest}
+    environment:
+      - OLLAMA_KEEP_ALIVE=${LLM_KEEP_ALIVE:-30m}
+    ports:
+      - "${LLM_HOST_PORT:-11434}:11434"
+    volumes:
+      - llm-models:/root/.ollama
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    networks: [meeting-agent]
+    restart: unless-stopped
+
+  # -------------------------------------------------------------------------
+  # Our diarization + speaker-IDENTIFICATION microservice (Rust, this repo).
+  # Extends the existing diarize crate: /v1/diarize (turns) + /v1/identify
+  # (voiceprint match) + /v1/voiceprints (enroll/list/delete).
+  # Built from Dockerfile.diarize. Models baked in the image (see repo README).
+  # NOTE: /v1/identify + /v1/voiceprints are the net-new endpoints tracked in
+  #       TODO.md Phase 2 — the image must be rebuilt once they land.
+  # -------------------------------------------------------------------------
+  diarize-identify:
+    build:
+      context: ..
+      dockerfile: Dockerfile.diarize
+    image: ${DIARIZE_IMAGE:-ghcr.io/bmw-ece-ntust/ai-meeting-agent/diarize-server:latest}
+    environment:
+      - DIARIZE_HOST=0.0.0.0
+      - DIARIZE_PORT=8002
+      - DIARIZE_NUM_SPEAKERS=${DIARIZE_NUM_SPEAKERS:-0}
+      - DIARIZE_CLUSTERING_THRESHOLD=${DIARIZE_CLUSTERING_THRESHOLD:-0.5}
+      # voiceprint store (Phase 2)
+      - VOICEPRINT_DIR=/data/voiceprints
+      - IDENTIFY_THRESHOLD=${IDENTIFY_THRESHOLD:-0.35}
+    ports:
+      - "${DIARIZE_HOST_PORT:-8002}:8002"
+    volumes:
+      - voiceprints-data:/data/voiceprints
+    networks: [meeting-agent]
+    restart: unless-stopped
+
+  # -------------------------------------------------------------------------
+  # Existing meeting-agent HTTP API + storage (Rust, this repo).
+  # Owns meeting metadata, transcript/summary storage, file-import path,
+  # and serves the OpenAPI/Swagger UI. Points its transcription + summary
+  # providers at the DGX services above (OpenAI-compatible).
+  # -------------------------------------------------------------------------
+  meeting-agent-server:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.server
+    image: ${SERVER_IMAGE:-ghcr.io/bmw-ece-ntust/ai-meeting-agent/meeting-agent-server:latest}
+    environment:
+      - MEETING_AGENT_HOST=0.0.0.0
+      - MEETING_AGENT_PORT=8080
+      - TRANSCRIPTION_PROVIDER=openai
+      - TRANSCRIPTION_BASE_URL=http://whisperx:8000/v1
+      - TRANSCRIPTION_MODEL=${ASR_MODEL:-Systran/faster-whisper-large-v3}
+      - TRANSCRIPTION_API_KEY=${TRANSCRIPTION_API_KEY:-not-needed-local}
+      - SUMMARY_PROVIDER=openai
+      - SUMMARY_BASE_URL=http://minutes-llm:11434/v1
+      - SUMMARY_MODEL=${LLM_MODEL:-qwen2.5:32b}
+      - SUMMARY_API_KEY=${SUMMARY_API_KEY:-not-needed-local}
+      - DIARIZE_ENABLED=true
+      - DIARIZE_BASE_URL=http://diarize-identify:8002
+    ports:
+      - "${SERVER_HOST_PORT:-8080}:8080"
+    volumes:
+      - meeting-data:/root/.meeting-agent
+    networks: [meeting-agent]
+    depends_on: [whisperx, minutes-llm, diarize-identify]
+    restart: unless-stopped
+
+  # -------------------------------------------------------------------------
+  # Orchestrator — the post-meeting glue (Phase 3-4, NOT YET IMPLEMENTED).
+  # Responsibilities:
+  #   - dispatch bots to Vexa (POST vexa/bots) and track meetings
+  #   - on meeting end (Vexa webhook / poll GET vexa/transcripts/...), pull
+  #     the transcript + per-speaker audio (MinIO), run identify + SOP minutes,
+  #     then update the daily-log and Google Calendar (attach minutes link).
+  # Left commented until the service exists so `up` doesn't fail on a missing
+  # build. Track: TODO.md Phase 3-4. Language TBD (see README "Open decision").
+  # -------------------------------------------------------------------------
+  # orchestrator:
+  #   build:
+  #     context: ..
+  #     dockerfile: services/orchestrator/Dockerfile
+  #   environment:
+  #     - VEXA_API_BASE=http://api-gateway:8000
+  #     - VEXA_API_KEY=${VEXA_API_KEY}
+  #     - MEETING_AGENT_URL=http://meeting-agent-server:8080
+  #     - DIARIZE_URL=http://diarize-identify:8002
+  #     - GOOGLE_CALENDAR_CREDENTIALS=/secrets/gcal.json
+  #     - DAILY_LOG_TARGET=${DAILY_LOG_TARGET}
+  #   networks: [vexa, meeting-agent]
+  #   depends_on: [meeting-agent-server, diarize-identify]
+  #   restart: unless-stopped
+
+networks:
+  # Vexa creates this network via its own compose. Start Vexa first.
+  vexa:
+    external: true
+  meeting-agent:
+    driver: bridge
+
+volumes:
+  whisperx-models:
+  llm-models:
+  voiceprints-data:
+  meeting-data:

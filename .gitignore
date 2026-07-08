@@ -81,3 +81,8 @@ experiments/
 target/
 
 audio
+
+.claude/settings.local.json
+.claude/model-policy.state.json
+graphify-out/
+graphify-out-*/
