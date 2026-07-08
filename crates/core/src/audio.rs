@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 /// Whisper API supported formats
 const WHISPER_SUPPORTED_FORMATS: &[&str] = &["mp3", "wav"];
 
-/// Check if audio file needs conversion to MP3
+/// Check if audio file needs conversion to WAV
 pub fn needs_conversion(path: &Path) -> bool {
     match path.extension().and_then(|e| e.to_str()) {
         Some(ext) => !WHISPER_SUPPORTED_FORMATS.contains(&ext.to_lowercase().as_str()),
@@ -14,20 +14,20 @@ pub fn needs_conversion(path: &Path) -> bool {
     }
 }
 
-/// Convert audio file to MP3 format
-/// Returns path to MP3 file (temp file in system temp dir)
-pub fn convert_to_mp3(input_path: &Path) -> Result<PathBuf> {
+/// Convert audio file to WAV format
+/// Returns path to WAV file (temp file in system temp dir)
+pub fn convert_to_wav(input_path: &Path) -> Result<PathBuf> {
     // Create temp output path
     let temp_dir = std::env::temp_dir();
-    let output_path = temp_dir.join(format!("meeting-agent-{}.mp3", uuid::Uuid::new_v4()));
+    let output_path = temp_dir.join(format!("meeting-agent-{}.wav", uuid::Uuid::new_v4()));
 
     // Convert using ffmpeg-sidecar
     let status = FfmpegCommand::new()
         .input(input_path.to_str().context("Invalid input path")?)
         .args(["-ac", "1"])
         .args(["-ar", "16000"])
-        .args(["-codec:a", "libmp3lame"])
-        .args(["-b:a", "64k"])
+        .args(["-acodec", "pcm_s16le"])
+        .args(["-f", "wav"])
         .overwrite()
         .output(output_path.to_str().context("Invalid output path")?)
         .spawn()
@@ -103,14 +103,13 @@ pub fn probe_duration(path: &Path) -> Result<f64> {
 pub fn chunk_audio(path: &Path, segment_seconds: f64) -> Result<Vec<PathBuf>> {
     let temp_dir = std::env::temp_dir();
     let session_id = uuid::Uuid::new_v4();
-    let output_pattern = temp_dir.join(format!("meeting-agent-chunk-{}-%03d.mp3", session_id));
+    let output_pattern = temp_dir.join(format!("meeting-agent-chunk-{}-%03d.wav", session_id));
 
     FfmpegCommand::new()
         .input(path.to_str().context("Invalid input path")?)
         .args(["-f", "segment"])
         .args(["-segment_time", &segment_seconds.to_string()])
-        .args(["-c:a", "libmp3lame"])
-        .args(["-b:a", "128k"])
+        .args(["-c:a", "pcm_s16le"])
         .args(["-ar", "16000"])
         .args(["-ac", "1"])
         .overwrite()
@@ -129,7 +128,7 @@ pub fn chunk_audio(path: &Path, segment_seconds: f64) -> Result<Vec<PathBuf>> {
         .filter(|p| {
             p.file_name()
                 .and_then(|n| n.to_str())
-                .map(|n| n.starts_with(&prefix) && n.ends_with(".mp3"))
+                .map(|n| n.starts_with(&prefix) && n.ends_with(".wav"))
                 .unwrap_or(false)
         })
         .collect();
@@ -144,23 +143,26 @@ pub fn chunk_audio(path: &Path, segment_seconds: f64) -> Result<Vec<PathBuf>> {
     Ok(chunks)
 }
 
-/// Convert audio bytes to MP3 format in memory
+/// Convert audio bytes to WAV format in memory
 ///
-/// Takes raw audio bytes as input and returns MP3-encoded bytes.
+/// Takes raw audio bytes (audio or video file) as input and returns WAV-encoded bytes.
+/// For video files, only the audio track is extracted; video frames are discarded (-vn).
 /// Uses FFmpeg with pipe:0 (stdin) and pipe:1 (stdout) for in-memory processing.
 /// No temporary files are created.
-pub fn convert_to_mp3_memory(input_bytes: &[u8]) -> Result<Vec<u8>> {
+///
+/// Output format: 16 kHz mono WAV (PCM signed 16-bit little-endian)
+pub fn convert_to_wav_memory(input_bytes: &[u8]) -> Result<Vec<u8>> {
     use std::io::Write;
     use std::process::{Command, Stdio};
 
     let mut child = Command::new(ffmpeg_sidecar::paths::ffmpeg_path())
         .arg("-i")
         .arg("pipe:0") // stdin
-        .args(["-f", "mp3"]) // force MP3 detection
+        .args(["-vn"]) // explicitly disable video stream processing
+        .args(["-f", "wav"]) // force WAV output format
         .args(["-ac", "1"]) // mono
         .args(["-ar", "16000"]) // 16kHz sample rate
-        .args(["-codec:a", "libmp3lame"])
-        .args(["-b:a", "64k"])
+        .args(["-acodec", "pcm_s16le"])
         .arg("pipe:1") // stdout
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -190,14 +192,14 @@ pub fn convert_to_mp3_memory(input_bytes: &[u8]) -> Result<Vec<u8>> {
     Ok(output.stdout)
 }
 
-/// Convert audio file to MP3 format in memory (reads file, returns bytes)
+/// Convert audio file to WAV format in memory (reads file, returns bytes)
 ///
-/// Convenience wrapper that reads a file and calls convert_to_mp3_memory.
+/// Convenience wrapper that reads a file and calls convert_to_wav_memory.
 /// No temporary files are created.
-pub fn convert_file_to_mp3_memory(input_path: &Path) -> Result<Vec<u8>> {
+pub fn convert_file_to_wav_memory(input_path: &Path) -> Result<Vec<u8>> {
     let input_bytes = std::fs::read(input_path)
         .with_context(|| format!("Failed to read input file: {:?}", input_path))?;
-    convert_to_mp3_memory(&input_bytes)
+    convert_to_wav_memory(&input_bytes)
 }
 
 /// Probe duration from audio bytes in memory
@@ -251,7 +253,7 @@ pub fn probe_duration_from_bytes(audio_bytes: &[u8]) -> Result<f64> {
 /// Split audio bytes into N-second chunks in memory
 ///
 /// Uses a seek-based approach: invokes FFmpeg multiple times with -ss and -t flags.
-/// Each chunk is encoded as MP3 in memory. Returns a vector of MP3 byte chunks.
+/// Each chunk is encoded as WAV in memory. Returns a vector of WAV byte chunks.
 /// No temporary files are created.
 ///
 /// This approach is simpler than pipe-based chunking but requires multiple FFmpeg
@@ -293,9 +295,8 @@ fn chunk_audio_at_offset(audio_bytes: &[u8], start: f64, duration: f64) -> Resul
         .arg(duration.to_string())
         .arg("-i")
         .arg("pipe:0") // stdin
-        .args(["-f", "mp3"])
-        .args(["-c:a", "libmp3lame"])
-        .args(["-b:a", "128k"])
+        .args(["-f", "wav"])
+        .args(["-c:a", "pcm_s16le"])
         .args(["-ar", "16000"])
         .args(["-ac", "1"])
         .arg("pipe:1") // stdout

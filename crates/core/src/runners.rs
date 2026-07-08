@@ -89,7 +89,7 @@ async fn run_import_inner(
         check_cancelled(cancel_token)?;
         let converted = tokio::task::spawn_blocking({
             let path = audio_path.clone();
-            move || audio::convert_to_mp3(&path)
+            move || audio::convert_to_wav(&path)
         })
         .await??;
         Some(converted)
@@ -348,12 +348,12 @@ async fn run_import_memory_inner(cfg: &ImportMemoryConfig) -> Result<()> {
     let working_audio = if audio::needs_conversion_by_filename(&cfg.audio_filename) {
         check_cancelled(&cfg.cancel_token)?;
         log::info!(
-            "[import_memory] converting {} bytes to MP3 in memory",
+            "[import_memory] converting {} bytes to WAV in memory",
             cfg.audio_bytes.len()
         );
         let converted = tokio::task::spawn_blocking({
             let bytes = cfg.audio_bytes.clone();
-            move || audio::convert_to_mp3_memory(&bytes)
+            move || audio::convert_to_wav_memory(&bytes)
         })
         .await??;
         log::info!(
@@ -430,7 +430,7 @@ async fn run_import_memory_inner(cfg: &ImportMemoryConfig) -> Result<()> {
         let temp_audio = {
             let temp_dir = std::env::temp_dir();
             let temp_path = temp_dir.join(format!(
-                "meeting-agent-diarize-{}.mp3",
+                "meeting-agent-diarize-{}.wav",
                 uuid::Uuid::new_v4()
             ));
             tokio::fs::write(&temp_path, &working_audio).await?;

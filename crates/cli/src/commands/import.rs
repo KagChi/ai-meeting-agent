@@ -56,7 +56,7 @@ pub async fn run(file: String, title: Option<String>) -> Result<()> {
             pb.set_message("Converting audio format...");
             pb.enable_steady_tick(std::time::Duration::from_millis(100));
 
-            let converted = meeting_agent_core::audio::convert_to_mp3(&file_path)?;
+            let converted = meeting_agent_core::audio::convert_to_wav(&file_path)?;
 
             pb.finish_with_message("Conversion complete".green().to_string());
             (converted, true)
