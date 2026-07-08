@@ -216,7 +216,7 @@ graph TB
 
     subgraph DGX ["DGX Spark (GB10, 128 GB unified) — all models local"]
         asr["WhisperX large-v3<br/>EN/ZH/ID + per-segment LID"]
-        diar["Diarization + identification<br/>(diarize crate: sherpa-onnx,<br/>3D-Speaker embeddings, cosine match)"]
+        diar["Diarization + identification<br/>(speakrs via crates/core/diarize,<br/>pyannote community-1, auto GPU detection)"]
         llm["Minutes LLM<br/>Qwen2.5-72B / GPT-OSS-120B (vLLM)"]
     end
 
@@ -247,7 +247,7 @@ graph TB
 | Ingest/API | `crates/server` (Axum) + `crates/core` | this repo | Upload + normalize + metadata + job queue; OpenAPI at `/docs` | `deploy/README.md` |
 | Operator CLI | `crates/cli` | this repo | import, enroll, dispatch, re-run | `README.md` |
 | ASR | WhisperX (Whisper large-v3) | large-v3 | Canonical word-aligned multilingual transcription | `deploy/` compose |
-| Diarization | `crates/diarize` (sherpa-onnx, pyannote 3.1 seg) | this repo | Speaker turns | `docs/` |
+| Diarization | `crates/core/diarize` (speakrs, pyannote community-1) | this repo | Speaker turns; auto GPU detection (CPU fallback) | `docs/` |
 | Speaker ID | 3D-Speaker embeddings + voiceprint store | ERes2NetV2 | Turn → person (voice persona) | `docs/` |
 | Minutes LLM | Qwen2.5-72B *(alt: GPT-OSS-120B)* | MXFP4/AWQ build | SOP minutes + action-item extraction | `deploy/` compose |
 | Publisher | Orchestrator (Phase 4) | — | daily-log + Calendar link-back | TBD |
@@ -668,7 +668,7 @@ Everything below is licensed for self-hosted use and modification. Each row's **
 | 1 | **Vexa** — `Vexa-ai/vexa`, v0.10.6 (Apache-2.0) | Bot spine: join, capture, realtime ASR, webhooks | **Adopt, don't fork.** (a) `make all` self-host (Docker Compose, needs Postgres/Redis/MinIO — bundled). (b) Set env `TRANSCRIPTION_SERVICE_URL` → our WhisperX `:8010` so realtime ASR runs on the DGX. (c) Register a webhook pointing at our orchestrator for meeting-end. (d) Read recordings + per-speaker audio from its MinIO bucket. (e) Optional: reuse its bundled `calendar-service` and `mcp` server instead of writing ours — evaluate in Phase 4 before building FR-13 from scratch. |
 | 2 | **Attendee** — `attendee-labs/attendee` (OSS) | Fallback bot spine | **Hold in reserve.** Only if Vexa gaps on a platform (most likely Teams): stand it up with the same webhook contract; the orchestrator is source-agnostic from stage B onward, so no pipeline change. |
 | 3 | **WhisperX / faster-whisper** (BSD/MIT) | Canonical ASR | (a) Serve large-v3 behind an OpenAI-compatible endpoint on `:8010` (see `deploy/`). (b) Enable VAD segmentation + word alignment. (c) Add per-segment language re-detection restricted to {en, zh, id}. (d) Add lab hotword list (Appendix B #6). |
-| 4 | **pyannote 3.1 / sherpa-onnx** (MIT/Apache) | Diarization | Already integrated in `crates/diarize`. Benchmark **NeMo Sortformer** on the DGX (aarch64) as a drop-in; keep whichever wins DER on the lab eval set. |
+| 4 | **speakrs** (MIT) | Diarization | Integrated in `crates/core/diarize` using pyannote community-1 pipeline. In-process execution via `OwnedDiarizationPipeline` with lazy initialization (`OnceLock`). Automatic GPU detection (`ExecutionMode::auto`) with CPU fallback. Models auto-download from HuggingFace (`avencera/speakrs-models`) on first use; optional offline mode via `DIARIZE_MODEL_DIR`. Graceful degradation: logs warning and proceeds without speaker labels on failure. |
 | 5 | **3D-Speaker / WeSpeaker / TitaNet** (Apache/MIT) | Voiceprint embeddings | Extend `crates/diarize`: (a) expose standalone embedding extraction from an audio span; (b) add `POST/GET/DELETE /v1/voiceprints` persisting `person.json` + centroid to `VOICEPRINT_DIR`; (c) add `POST /v1/identify` = cosine(turn embedding, centroids) with `IDENTIFY_THRESHOLD`, returning person or `Guest-N`. (Matches TODO Phase 2 items.) |
 | 6 | **Qwen2.5-72B / GPT-OSS-120B via vLLM** (Apache/MIT) | Minutes LLM | (a) Serve on `:11434`, OpenAI-compatible. (b) Prompt = Appendix A verbatim with the slot-mapping table. (c) Add a JSON-mode side-call to emit structured `action_items[]` for FR-12. (d) A/B the two models on 3 real lab transcripts; pick by reviewer preference. |
 | 7 | **Meetily** — `Zackriya-Solutions/meetily` (MIT) | Reference only | **Do not integrate.** Borrow Rust patterns for local ASR orchestration if useful; it has no bot and no identification. |
