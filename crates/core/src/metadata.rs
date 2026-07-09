@@ -204,9 +204,114 @@ pub fn parse_filename(filename: &str) -> Option<ParsedFilename> {
 }
 
 /// Resolve metadata from multiple sources using precedence logic
-pub fn resolve_metadata(_sources: MetadataSources) -> ResolvedMetadata {
-    // Placeholder for commit 4
-    todo!("resolve_metadata implementation")
+///
+/// Precedence per PRD: UserProvided > CalendarBot > Filename > FFprobe > Default
+pub fn resolve_metadata(sources: MetadataSources) -> ResolvedMetadata {
+    // Title resolution
+    let (title, title_source) = sources
+        .user_provided
+        .as_ref()
+        .and_then(|u| u.title.as_ref())
+        .map(|t| (t.clone(), MetadataSource::UserProvided))
+        .or_else(|| {
+            sources
+                .calendar_bot
+                .as_ref()
+                .and_then(|c| c.title.as_ref())
+                .map(|t| (t.clone(), MetadataSource::CalendarBot))
+        })
+        .or_else(|| {
+            sources
+                .filename
+                .as_ref()
+                .and_then(|f| f.title.as_ref())
+                .map(|t| (t.clone(), MetadataSource::Filename))
+        })
+        .unwrap_or_else(|| ("Untitled Meeting".to_string(), MetadataSource::Default));
+
+    // Date resolution (combines date + time from filename if available)
+    let (date, date_source) = sources
+        .user_provided
+        .as_ref()
+        .and_then(|u| u.date.as_ref())
+        .map(|d| (Some(*d), MetadataSource::UserProvided))
+        .or_else(|| {
+            sources
+                .calendar_bot
+                .as_ref()
+                .and_then(|c| c.date.as_ref())
+                .map(|d| (Some(*d), MetadataSource::CalendarBot))
+        })
+        .or_else(|| {
+            sources.filename.as_ref().and_then(|f| {
+                f.date.map(|date| {
+                    let time = f.time.unwrap_or_else(|| NaiveTime::from_hms_opt(0, 0, 0).unwrap());
+                    (
+                        Some(NaiveDateTime::new(date, time)),
+                        MetadataSource::Filename,
+                    )
+                })
+            })
+        })
+        .unwrap_or((None, MetadataSource::Default));
+
+    // Participants resolution
+    let (participants, participants_source) = sources
+        .user_provided
+        .as_ref()
+        .and_then(|u| u.participants.as_ref())
+        .map(|p| (Some(p.clone()), MetadataSource::UserProvided))
+        .or_else(|| {
+            sources
+                .calendar_bot
+                .as_ref()
+                .and_then(|c| c.participants.as_ref())
+                .map(|p| (Some(p.clone()), MetadataSource::CalendarBot))
+        })
+        .unwrap_or((None, MetadataSource::Default));
+
+    // Location resolution
+    let (location, location_source) = sources
+        .user_provided
+        .as_ref()
+        .and_then(|u| u.location.as_ref())
+        .map(|l| (Some(l.clone()), MetadataSource::UserProvided))
+        .or_else(|| {
+            sources
+                .calendar_bot
+                .as_ref()
+                .and_then(|c| c.location.as_ref())
+                .map(|l| (Some(l.clone()), MetadataSource::CalendarBot))
+        })
+        .unwrap_or((None, MetadataSource::Default));
+
+    // Organizer resolution
+    let (organizer, organizer_source) = sources
+        .user_provided
+        .as_ref()
+        .and_then(|u| u.organizer.as_ref())
+        .map(|o| (Some(o.clone()), MetadataSource::UserProvided))
+        .or_else(|| {
+            sources
+                .calendar_bot
+                .as_ref()
+                .and_then(|c| c.organizer.as_ref())
+                .map(|o| (Some(o.clone()), MetadataSource::CalendarBot))
+        })
+        .unwrap_or((None, MetadataSource::Default));
+
+    ResolvedMetadata {
+        title,
+        title_source,
+        date,
+        date_source,
+        participants,
+        participants_source,
+        location,
+        location_source,
+        organizer,
+        organizer_source,
+    }
 }
 
 /// Enrich Meeting with metadata from file and user input
