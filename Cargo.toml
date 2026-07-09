@@ -63,6 +63,4 @@ dotenv = "0.15"
 # FFmpeg wrapper
 ffmpeg-sidecar = "2.5"
 
-# Speaker diarization (in-process, speakrs)
-speakrs = "0.4"
-symphonia = { version = "0.5", features = ["mp3", "wav"] }
+

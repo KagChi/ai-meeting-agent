@@ -150,6 +150,7 @@ async fn run_import_inner(
 
     // Optional speaker diarization. Resilient: on failure, log and proceed
     // without speaker labels rather than failing the whole import.
+    #[cfg(feature = "diarization")]
     let transcription = if config.diarize.enabled {
         registry.update_progress(
             job_id,
@@ -168,6 +169,14 @@ async fn run_import_inner(
             }
         }
     } else {
+        transcription
+    };
+
+    #[cfg(not(feature = "diarization"))]
+    let transcription = {
+        if config.diarize.enabled {
+            log::warn!("[diarize] feature not enabled, skipping speaker diarization");
+        }
         transcription
     };
 
@@ -434,6 +443,7 @@ async fn run_import_memory_inner(cfg: &ImportMemoryConfig) -> Result<()> {
 
     // Optional speaker diarization. Resilient: on failure, log and proceed
     // without speaker labels rather than failing the whole import.
+    #[cfg(feature = "diarization")]
     let transcription = if cfg.config.diarize.enabled {
         cfg.registry.update_progress(
             &cfg.job_id,
@@ -480,6 +490,14 @@ async fn run_import_memory_inner(cfg: &ImportMemoryConfig) -> Result<()> {
 
         result
     } else {
+        transcription
+    };
+
+    #[cfg(not(feature = "diarization"))]
+    let transcription = {
+        if cfg.config.diarize.enabled {
+            log::warn!("[diarize] feature not enabled, skipping speaker diarization");
+        }
         transcription
     };
 

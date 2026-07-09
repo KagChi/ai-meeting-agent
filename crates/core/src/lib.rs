@@ -6,6 +6,7 @@
 pub mod audio;
 pub mod config;
 pub mod config_validation;
+#[cfg(feature = "diarization")]
 pub mod diarize;
 pub mod fs;
 pub mod jobs;

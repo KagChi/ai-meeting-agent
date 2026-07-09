@@ -32,6 +32,9 @@ chrono = { workspace = true }
 uuid = { workspace = true }
 dialoguer = { version = "0.11", default-features = false, features = ["password"] }
 
+[features]
+diarization = ["meeting-agent-core/diarization"]
+
 [dev-dependencies]
 tempfile = { workspace = true }
 assert_cmd = "2"

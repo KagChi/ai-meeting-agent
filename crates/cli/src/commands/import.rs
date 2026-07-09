@@ -110,6 +110,7 @@ pub async fn run(
     pb.finish_with_message("Transcription complete!".green().to_string());
 
     // Optional speaker diarization (must run before temp audio deletion).
+    #[cfg(feature = "diarization")]
     let response = if config.diarize.enabled {
         let pb2 = ProgressBar::new_spinner();
         pb2.set_style(
@@ -143,6 +144,14 @@ pub async fn run(
             }
         }
     } else {
+        response
+    };
+
+    #[cfg(not(feature = "diarization"))]
+    let response = {
+        if config.diarize.enabled {
+            println!("{}", "Warning: diarization feature not enabled, skipping speaker diarization".yellow());
+        }
         response
     };
 
