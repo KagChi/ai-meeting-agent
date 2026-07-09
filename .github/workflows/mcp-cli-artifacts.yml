@@ -1,0 +1,57 @@
+name: MCP CLI Artifacts
+
+on:
+  push:
+    branches:
+      - '**'
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: Build MCP CLI
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            suffix: linux-amd64
+            ext: ''
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            suffix: macos-amd64
+            ext: ''
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            suffix: macos-arm64
+            ext: ''
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            suffix: windows-amd64
+            ext: '.exe'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Build MCP CLI
+        run: cargo build --release --target ${{ matrix.target }} --bin meeting-agent-mcp
+
+      - name: Package artifact
+        shell: bash
+        run: |
+          mkdir -p dist
+          cp "target/${{ matrix.target }}/release/meeting-agent-mcp${{ matrix.ext }}" "dist/meeting-agent-mcp-${{ matrix.suffix }}${{ matrix.ext }}"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: meeting-agent-mcp-${{ matrix.suffix }}
+          path: dist/*

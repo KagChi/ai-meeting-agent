@@ -12,7 +12,11 @@ path = "src/lib.rs"
 
 [[bin]]
 name = "meeting-agent-mcp"
-path = "src/main.rs"
+path = "src/bin/cli.rs"
+
+[[bin]]
+name = "meeting-agent-mcp-server"
+path = "src/bin/server.rs"
 
 [dependencies]
 tokio = { workspace = true }
