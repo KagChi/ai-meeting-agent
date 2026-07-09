@@ -2,6 +2,9 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Deserialize, JsonSchema)]
+pub struct EmptyParams {}
+
+#[derive(Debug, Deserialize, JsonSchema)]
 pub struct ImportMeetingAudioRequest {
     /// Local path to audio/video file accessible by MCP server process.
     pub file_path: String,
