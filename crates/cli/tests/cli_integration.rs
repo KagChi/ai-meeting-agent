@@ -116,3 +116,131 @@ fn config_set_diarize_enabled() {
         .success()
         .stdout(predicate::str::contains("enabled:        true"));
 }
+
+#[test]
+fn import_help_shows_metadata_flags() {
+    let (mut cmd, _tmp) = cli();
+    cmd.arg("import").arg("--help");
+    cmd.assert()
+        .success()
+        .stdout(predicate::str::contains("--title"))
+        .stdout(predicate::str::contains("--participants"))
+        .stdout(predicate::str::contains("--location"))
+        .stdout(predicate::str::contains("--organizer"))
+        .stdout(predicate::str::contains("--recording-date"))
+        .stdout(predicate::str::contains(
+            "Metadata can be provided via CLI flags",
+        ))
+        .stdout(predicate::str::contains(
+            "Precedence: User-provided flags > Filename parsing > Default values",
+        ));
+}
+
+#[test]
+fn import_with_metadata_flags_parses_correctly() {
+    // This test verifies that the CLI accepts all metadata flags without errors
+    // (even though the import will fail without a real transcription API key)
+    let (mut cmd, tmp) = cli();
+
+    // Create a dummy audio file
+    let audio_path = tmp.path().join("test_meeting.mp3");
+    std::fs::write(&audio_path, b"dummy audio data").unwrap();
+
+    cmd.arg("import")
+        .arg(audio_path.to_str().unwrap())
+        .arg("--title")
+        .arg("Sprint Review")
+        .arg("--participants")
+        .arg("Alice,Bob,Charlie")
+        .arg("--location")
+        .arg("Conference Room A")
+        .arg("--organizer")
+        .arg("Alice")
+        .arg("--recording-date")
+        .arg("2026-07-09 14:30:00");
+
+    // The command will fail due to missing API key or FFmpeg, but it should parse the args correctly
+    // We're just testing that the CLI accepts these flags without argument parsing errors
+    let output = cmd.output().unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    // Should not contain clap parsing errors like "unexpected argument" or "invalid value"
+    assert!(
+        !stderr.contains("unexpected argument") && !stdout.contains("unexpected argument"),
+        "CLI should accept metadata flags without parsing errors"
+    );
+    assert!(
+        !stderr.contains("invalid value") && !stdout.contains("invalid value"),
+        "CLI should accept metadata flag values without parsing errors"
+    );
+}
+
+#[test]
+fn import_with_comma_separated_participants() {
+    let (mut cmd, tmp) = cli();
+
+    let audio_path = tmp.path().join("meeting.mp3");
+    std::fs::write(&audio_path, b"dummy").unwrap();
+
+    cmd.arg("import")
+        .arg(audio_path.to_str().unwrap())
+        .arg("--participants")
+        .arg("Alice,Bob,Charlie");
+
+    let output = cmd.output().unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    // Should parse participants correctly without errors
+    assert!(
+        !stderr.contains("unexpected argument") && !stdout.contains("unexpected argument"),
+        "CLI should parse comma-separated participants correctly"
+    );
+}
+
+#[test]
+fn import_with_date_only_format() {
+    let (mut cmd, tmp) = cli();
+
+    let audio_path = tmp.path().join("meeting.mp3");
+    std::fs::write(&audio_path, b"dummy").unwrap();
+
+    cmd.arg("import")
+        .arg(audio_path.to_str().unwrap())
+        .arg("--recording-date")
+        .arg("2026-07-09");
+
+    let output = cmd.output().unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    // Should accept date-only format
+    assert!(
+        !stderr.contains("unexpected argument") && !stdout.contains("unexpected argument"),
+        "CLI should accept YYYY-MM-DD date format"
+    );
+}
+
+#[test]
+fn import_with_datetime_format() {
+    let (mut cmd, tmp) = cli();
+
+    let audio_path = tmp.path().join("meeting.mp3");
+    std::fs::write(&audio_path, b"dummy").unwrap();
+
+    cmd.arg("import")
+        .arg(audio_path.to_str().unwrap())
+        .arg("--recording-date")
+        .arg("2026-07-09 14:30:00");
+
+    let output = cmd.output().unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    // Should accept datetime format
+    assert!(
+        !stderr.contains("unexpected argument") && !stdout.contains("unexpected argument"),
+        "CLI should accept YYYY-MM-DD HH:MM:SS datetime format"
+    );
+}

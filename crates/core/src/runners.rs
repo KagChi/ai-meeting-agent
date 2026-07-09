@@ -24,6 +24,10 @@ pub struct ImportMemoryConfig {
     pub audio_bytes: Vec<u8>,
     pub audio_filename: String,
     pub title: Option<String>,
+    pub participants: Option<Vec<String>>,
+    pub location: Option<String>,
+    pub organizer: Option<String>,
+    pub recording_date: Option<chrono::NaiveDateTime>,
     pub config: Config,
     pub storage: Arc<MeetingStorage>,
     pub registry: Arc<JobRegistry>,
@@ -376,15 +380,29 @@ async fn run_import_memory_inner(cfg: &ImportMemoryConfig) -> Result<()> {
         ProgressEvent::new("processing", "Creating meeting record"),
     );
 
-    let meeting_title = cfg.title.clone().unwrap_or_else(|| {
-        std::path::Path::new(&cfg.audio_filename)
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .unwrap_or("Untitled Meeting")
-            .to_string()
-    });
+    // Build user metadata from config
+    let user_metadata = if cfg.title.is_some()
+        || cfg.participants.is_some()
+        || cfg.location.is_some()
+        || cfg.organizer.is_some()
+        || cfg.recording_date.is_some()
+    {
+        Some(crate::metadata::UserMetadata {
+            title: cfg.title.clone(),
+            date: cfg.recording_date,
+            participants: cfg.participants.clone(),
+            location: cfg.location.clone(),
+            organizer: cfg.organizer.clone(),
+        })
+    } else {
+        None
+    };
 
-    let meeting = Meeting::new(meeting_title);
+    // Create meeting and enrich with metadata
+    let mut meeting = Meeting::new("Temporary Title".to_string());
+    let filename_path = std::path::Path::new(&cfg.audio_filename);
+    crate::metadata::enrich_meeting_with_metadata(&mut meeting, filename_path, user_metadata)?;
+
     cfg.storage.create_meeting(&meeting)?;
     cfg.registry.set_meeting_id(&cfg.job_id, meeting.id.clone());
 
