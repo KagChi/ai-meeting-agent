@@ -1,0 +1,44 @@
+# Rust build artifacts
+target/
+**/*.rs.bk
+*.pdb
+
+# Git
+.git/
+.gitignore
+.gitattributes
+
+# IDE / Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Logs
+*.log
+
+# Documentation (not needed in image)
+*.md
+docs/
+
+# CI/CD
+.github/
+.gitlab-ci.yml
+
+# Docker
+Dockerfile*
+docker-compose*.yml
+.dockerignore
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Test fixtures
+tests/fixtures/
+
+# Deployment scripts
+deploy/

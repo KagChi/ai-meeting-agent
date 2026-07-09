@@ -72,6 +72,9 @@ pub struct Meeting {
     /// Path to video file
     #[serde(skip_serializing_if = "Option::is_none")]
     pub video_file: Option<String>,
+    /// Platform source (e.g., "Upload", "Teams", "Zoom", "Meet")
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub platform: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -111,6 +114,7 @@ impl Meeting {
             recording_date: None,
             audio_file: None,
             video_file: None,
+            platform: None,
         }
     }
 }

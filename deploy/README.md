@@ -38,15 +38,20 @@ We already keep the **voiceprint** models in this repo's `Dockerfile.diarize`
                                    │  realtime transcription  ▲ per-speaker audio + transcript
                                    ▼  (TRANSCRIPTION_SERVICE_URL override)
                               ┌──────────────── this stack (network: vexa + meeting-agent) ─────────────┐
-                              │ whisperx :8010  (DGX, OpenAI STT)   diarize-identify :8002 (turns + ID) │
-                              │ minutes-llm :11434 (DGX, Qwen)      meeting-agent-server :8080          │
-                              │ orchestrator (Phase 3-4): Vexa→identify→SOP minutes→daily-log→GCal      │
+                              │ whisperx :8010  (DGX, OpenAI STT)                                        │
+                              │ minutes-llm :11434 (DGX, Qwen)                                           │
+                              │ meeting-agent-server :8080 (in-process CPU diarization via speakrs)      │
+                              │ orchestrator (Phase 3-4): Vexa→SOP minutes→daily-log→GCal               │
                               └────────────────────────────────────────────────────────────────────────┘
 ```
 
 The key wiring: **Vexa's realtime transcription is pointed at our DGX WhisperX**
 via `TRANSCRIPTION_SERVICE_URL`, so no meeting audio and no transcription leaves
 the lab.
+
+**Diarization**: Runs in-process within meeting-agent-server using the `speakrs`
+crate (CPU mode). When `DIARIZE_ENABLED=true`, models (~200MB) are auto-downloaded
+from HuggingFace on first run.
 
 ---
 
@@ -69,19 +74,31 @@ make all            # starts the vexa stack + creates the `vexa` docker network
 Mint a self-hosted API key (via the admin-api with `ADMIN_TOKEN`) — see Vexa's
 `deploy/README.md`. Put it in our `deploy/.env` as `VEXA_API_KEY`.
 
-### 2. Start our stack
+### 2. Build and start our stack
 ```bash
 cd ~/Documents/GitHub/ai-meeting-agent
 cp deploy/.env.example deploy/.env      # then fill it in
+
+# Option A: Build locally using the helper script
+./deploy/docker-build.sh
+
+# Option B: Build with docker compose
 docker compose -f deploy/docker-compose.yml --env-file deploy/.env up -d --build
+
 # Pull the minutes LLM once:
 docker compose -f deploy/docker-compose.yml exec minutes-llm ollama pull qwen2.5:32b
 ```
 
+**To enable diarization**, edit `deploy/.env`:
+```bash
+DIARIZE_ENABLED=true
+DIARIZE_EXECUTION_MODE=cpu
+```
+Then restart the server: `docker compose -f deploy/docker-compose.yml restart meeting-agent-server`
+
 ### 3. Smoke test
 ```bash
 curl http://localhost:8080/health                          # meeting-agent-server
-curl http://localhost:8002/health                          # diarize-identify
 curl http://localhost:8010/v1/models                       # whisperx (OpenAI STT)
 # Send a bot to a live meeting (via Vexa):
 curl -X POST "http://localhost:8056/bots" -H "X-API-Key: $VEXA_API_KEY" \
@@ -92,10 +109,8 @@ curl -X POST "http://localhost:8056/bots" -H "X-API-Key: $VEXA_API_KEY" \
 ---
 
 ## What still needs building before this is "done" (see repo TODO.md)
-- **Phase 2** — `/v1/identify` + `/v1/voiceprints` on `diarize-identify` (voiceprint
-  enroll + cosine match). Rebuild the diarize image after.
 - **Phase 3** — SOP-format minutes generation wired to the DGX LLM.
-- **Phase 4** — the **orchestrator** service (Vexa webhook → identify → minutes →
+- **Phase 4** — the **orchestrator** service (Vexa webhook → minutes →
   daily-log → Google Calendar). Uncomment its block in `docker-compose.yml` once it exists.
 
 ### Open decision (orchestrator language)
