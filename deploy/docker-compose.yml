@@ -73,38 +73,12 @@ services:
     restart: unless-stopped
 
   # -------------------------------------------------------------------------
-  # Our diarization + speaker-IDENTIFICATION microservice (Rust, this repo).
-  # Extends the existing diarize crate: /v1/diarize (turns) + /v1/identify
-  # (voiceprint match) + /v1/voiceprints (enroll/list/delete).
-  # Built from Dockerfile.diarize. Models baked in the image (see repo README).
-  # NOTE: /v1/identify + /v1/voiceprints are the net-new endpoints tracked in
-  #       TODO.md Phase 2 — the image must be rebuilt once they land.
-  # -------------------------------------------------------------------------
-  diarize-identify:
-    build:
-      context: ..
-      dockerfile: Dockerfile.diarize
-    image: ${DIARIZE_IMAGE:-ghcr.io/bmw-ece-ntust/ai-meeting-agent/diarize-server:latest}
-    environment:
-      - DIARIZE_HOST=0.0.0.0
-      - DIARIZE_PORT=8002
-      - DIARIZE_NUM_SPEAKERS=${DIARIZE_NUM_SPEAKERS:-0}
-      - DIARIZE_CLUSTERING_THRESHOLD=${DIARIZE_CLUSTERING_THRESHOLD:-0.5}
-      # voiceprint store (Phase 2)
-      - VOICEPRINT_DIR=/data/voiceprints
-      - IDENTIFY_THRESHOLD=${IDENTIFY_THRESHOLD:-0.35}
-    ports:
-      - "${DIARIZE_HOST_PORT:-8002}:8002"
-    volumes:
-      - voiceprints-data:/data/voiceprints
-    networks: [meeting-agent]
-    restart: unless-stopped
-
-  # -------------------------------------------------------------------------
   # Existing meeting-agent HTTP API + storage (Rust, this repo).
   # Owns meeting metadata, transcript/summary storage, file-import path,
   # and serves the OpenAPI/Swagger UI. Points its transcription + summary
   # providers at the DGX services above (OpenAI-compatible).
+  # In-process diarization via speakrs crate (CPU mode, ~200MB models downloaded
+  # from HuggingFace on first run when DIARIZE_ENABLED=true).
   # -------------------------------------------------------------------------
   meeting-agent-server:
     build:
@@ -122,14 +96,14 @@ services:
       - SUMMARY_BASE_URL=http://minutes-llm:11434/v1
       - SUMMARY_MODEL=${LLM_MODEL:-qwen2.5:32b}
       - SUMMARY_API_KEY=${SUMMARY_API_KEY:-not-needed-local}
-      - DIARIZE_ENABLED=true
-      - DIARIZE_BASE_URL=http://diarize-identify:8002
+      - DIARIZE_ENABLED=${DIARIZE_ENABLED:-false}
+      - DIARIZE_EXECUTION_MODE=${DIARIZE_EXECUTION_MODE:-cpu}
     ports:
       - "${SERVER_HOST_PORT:-8080}:8080"
     volumes:
       - meeting-data:/root/.meeting-agent
     networks: [meeting-agent]
-    depends_on: [whisperx, minutes-llm, diarize-identify]
+    depends_on: [whisperx, minutes-llm]
     restart: unless-stopped
 
   # -------------------------------------------------------------------------
@@ -167,5 +141,4 @@ networks:
 volumes:
   whisperx-models:
   llm-models:
-  voiceprints-data:
   meeting-data:
