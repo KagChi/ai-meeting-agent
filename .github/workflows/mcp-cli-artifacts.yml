@@ -20,6 +20,10 @@ jobs:
             target: x86_64-unknown-linux-gnu
             suffix: linux-amd64
             ext: ''
+          - os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+            suffix: linux-arm64
+            ext: ''
           - os: macos-latest
             target: x86_64-apple-darwin
             suffix: macos-amd64
