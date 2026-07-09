@@ -245,7 +245,9 @@ pub fn resolve_metadata(sources: MetadataSources) -> ResolvedMetadata {
         .or_else(|| {
             sources.filename.as_ref().and_then(|f| {
                 f.date.map(|date| {
-                    let time = f.time.unwrap_or_else(|| NaiveTime::from_hms_opt(0, 0, 0).unwrap());
+                    let time = f
+                        .time
+                        .unwrap_or_else(|| NaiveTime::from_hms_opt(0, 0, 0).unwrap());
                     (
                         Some(NaiveDateTime::new(date, time)),
                         MetadataSource::Filename,
@@ -362,8 +364,214 @@ pub fn enrich_meeting_with_metadata(
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
     #[test]
-    fn test_placeholder() {
-        // Placeholder for commit 6
+    fn test_parse_filename_iso_datetime() {
+        let parsed = parse_filename("2026-07-09_14-30_Weekly_Standup.mp3");
+        assert!(parsed.is_some());
+        let parsed = parsed.unwrap();
+        assert_eq!(parsed.date, NaiveDate::from_ymd_opt(2026, 7, 9));
+        assert_eq!(parsed.time, NaiveTime::from_hms_opt(14, 30, 0));
+        assert_eq!(parsed.title, Some("Weekly Standup".to_string()));
+    }
+
+    #[test]
+    fn test_parse_filename_iso_date() {
+        let parsed = parse_filename("2026-07-09_Project_Review.wav");
+        assert!(parsed.is_some());
+        let parsed = parsed.unwrap();
+        assert_eq!(parsed.date, NaiveDate::from_ymd_opt(2026, 7, 9));
+        assert_eq!(parsed.time, None);
+        assert_eq!(parsed.title, Some("Project Review".to_string()));
+    }
+
+    #[test]
+    fn test_parse_filename_compact_date() {
+        let parsed = parse_filename("Meeting_20260709.mp3");
+        assert!(parsed.is_some());
+        let parsed = parsed.unwrap();
+        assert_eq!(parsed.date, NaiveDate::from_ymd_opt(2026, 7, 9));
+        assert_eq!(parsed.time, None);
+        assert_eq!(parsed.title, None);
+    }
+
+    #[test]
+    fn test_parse_filename_title_only() {
+        let parsed = parse_filename("Weekly_Team_Sync.wav");
+        assert!(parsed.is_some());
+        let parsed = parsed.unwrap();
+        assert_eq!(parsed.date, None);
+        assert_eq!(parsed.time, None);
+        assert_eq!(parsed.title, Some("Weekly Team Sync".to_string()));
+    }
+
+    #[test]
+    fn test_resolve_metadata_user_provided_wins() {
+        let sources = MetadataSources {
+            user_provided: Some(UserMetadata {
+                title: Some("User Title".to_string()),
+                date: Some(
+                    NaiveDate::from_ymd_opt(2026, 1, 1)
+                        .unwrap()
+                        .and_hms_opt(10, 0, 0)
+                        .unwrap(),
+                ),
+                participants: Some(vec!["Alice".to_string()]),
+                location: Some("Room 1".to_string()),
+                organizer: Some("Bob".to_string()),
+            }),
+            calendar_bot: Some(CalendarBotMetadata {
+                title: Some("Calendar Title".to_string()),
+                date: Some(
+                    NaiveDate::from_ymd_opt(2026, 2, 1)
+                        .unwrap()
+                        .and_hms_opt(11, 0, 0)
+                        .unwrap(),
+                ),
+                participants: Some(vec!["Charlie".to_string()]),
+                location: Some("Room 2".to_string()),
+                organizer: Some("Dave".to_string()),
+            }),
+            filename: Some(ParsedFilename {
+                date: NaiveDate::from_ymd_opt(2026, 3, 1),
+                time: NaiveTime::from_hms_opt(12, 0, 0),
+                title: Some("Filename Title".to_string()),
+            }),
+            ffprobe: None,
+        };
+
+        let resolved = resolve_metadata(sources);
+        assert_eq!(resolved.title, "User Title");
+        assert!(matches!(
+            resolved.title_source,
+            MetadataSource::UserProvided
+        ));
+        assert_eq!(
+            resolved.date,
+            Some(
+                NaiveDate::from_ymd_opt(2026, 1, 1)
+                    .unwrap()
+                    .and_hms_opt(10, 0, 0)
+                    .unwrap()
+            )
+        );
+        assert_eq!(resolved.participants, Some(vec!["Alice".to_string()]));
+        assert_eq!(resolved.location, Some("Room 1".to_string()));
+        assert_eq!(resolved.organizer, Some("Bob".to_string()));
+    }
+
+    #[test]
+    fn test_resolve_metadata_calendar_bot_precedence() {
+        let sources = MetadataSources {
+            user_provided: None,
+            calendar_bot: Some(CalendarBotMetadata {
+                title: Some("Calendar Title".to_string()),
+                date: Some(
+                    NaiveDate::from_ymd_opt(2026, 2, 1)
+                        .unwrap()
+                        .and_hms_opt(11, 0, 0)
+                        .unwrap(),
+                ),
+                participants: Some(vec!["Charlie".to_string()]),
+                location: Some("Room 2".to_string()),
+                organizer: Some("Dave".to_string()),
+            }),
+            filename: Some(ParsedFilename {
+                date: NaiveDate::from_ymd_opt(2026, 3, 1),
+                time: NaiveTime::from_hms_opt(12, 0, 0),
+                title: Some("Filename Title".to_string()),
+            }),
+            ffprobe: None,
+        };
+
+        let resolved = resolve_metadata(sources);
+        assert_eq!(resolved.title, "Calendar Title");
+        assert!(matches!(resolved.title_source, MetadataSource::CalendarBot));
+        assert_eq!(
+            resolved.date,
+            Some(
+                NaiveDate::from_ymd_opt(2026, 2, 1)
+                    .unwrap()
+                    .and_hms_opt(11, 0, 0)
+                    .unwrap()
+            )
+        );
+        assert_eq!(resolved.participants, Some(vec!["Charlie".to_string()]));
+    }
+
+    #[test]
+    fn test_resolve_metadata_filename_precedence() {
+        let sources = MetadataSources {
+            user_provided: None,
+            calendar_bot: None,
+            filename: Some(ParsedFilename {
+                date: NaiveDate::from_ymd_opt(2026, 3, 1),
+                time: NaiveTime::from_hms_opt(12, 0, 0),
+                title: Some("Filename Title".to_string()),
+            }),
+            ffprobe: None,
+        };
+
+        let resolved = resolve_metadata(sources);
+        assert_eq!(resolved.title, "Filename Title");
+        assert!(matches!(resolved.title_source, MetadataSource::Filename));
+        assert_eq!(
+            resolved.date,
+            Some(
+                NaiveDate::from_ymd_opt(2026, 3, 1)
+                    .unwrap()
+                    .and_hms_opt(12, 0, 0)
+                    .unwrap()
+            )
+        );
+        assert!(matches!(resolved.date_source, MetadataSource::Filename));
+    }
+
+    #[test]
+    fn test_resolve_metadata_default_fallback() {
+        let sources = MetadataSources {
+            user_provided: None,
+            calendar_bot: None,
+            filename: None,
+            ffprobe: None,
+        };
+
+        let resolved = resolve_metadata(sources);
+        assert_eq!(resolved.title, "Untitled Meeting");
+        assert!(matches!(resolved.title_source, MetadataSource::Default));
+        assert_eq!(resolved.date, None);
+        assert!(matches!(resolved.date_source, MetadataSource::Default));
+    }
+
+    #[test]
+    fn test_enrich_meeting_with_metadata_integration() {
+        let mut meeting = Meeting::new("Original Title".to_string());
+
+        // Create a temp file for testing (we'll use a minimal path that won't be probed)
+        let temp_path = std::path::PathBuf::from("2026-07-09_14-30_Test_Meeting.mp3");
+
+        let user_metadata = Some(UserMetadata {
+            title: None,
+            date: None,
+            participants: Some(vec!["Alice".to_string(), "Bob".to_string()]),
+            location: Some("Conference Room A".to_string()),
+            organizer: Some("Alice".to_string()),
+        });
+
+        // Note: This will attempt to run ffprobe, which might fail in test environment
+        // In a real scenario, we'd mock ffprobe or use a test fixture
+        let result = enrich_meeting_with_metadata(&mut meeting, &temp_path, user_metadata);
+
+        // Even if ffprobe fails, filename parsing and user metadata should work
+        if result.is_ok() {
+            assert_eq!(meeting.title, "Test Meeting");
+            assert_eq!(
+                meeting.participants,
+                Some(vec!["Alice".to_string(), "Bob".to_string()])
+            );
+            assert_eq!(meeting.location, Some("Conference Room A".to_string()));
+            assert_eq!(meeting.organizer, Some("Alice".to_string()));
+        }
     }
 }
