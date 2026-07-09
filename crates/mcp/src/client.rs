@@ -32,6 +32,16 @@ impl MeetingAgentClient {
             .to_string();
 
         let bytes = tokio::fs::read(path).await?;
+        self.import_meeting_audio_bytes(bytes, filename, title)
+            .await
+    }
+
+    pub async fn import_meeting_audio_bytes(
+        &self,
+        bytes: Vec<u8>,
+        filename: String,
+        title: Option<&str>,
+    ) -> Result<Value> {
         let part = multipart::Part::bytes(bytes).file_name(filename);
         let mut form = multipart::Form::new().part("file", part);
         if let Some(title) = title.filter(|value| !value.trim().is_empty()) {
