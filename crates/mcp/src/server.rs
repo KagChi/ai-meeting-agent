@@ -51,9 +51,21 @@ impl ServerHandler for MeetingAgentMcpServer {
         _context: RequestContext<RoleServer>,
     ) -> Result<ListToolsResult, McpError> {
         Ok(ListToolsResult::with_all_items(vec![
+            tool::<ImportFromFileRequest>(
+                "importFromFile",
+                "Import a meeting audio/video file from a local file path accessible by the MCP server.",
+            ),
+            tool::<ImportFromUrlRequest>(
+                "importFromUrl",
+                "Import a meeting audio/video file by downloading from an HTTP(S) URL.",
+            ),
+            tool::<ImportFromBase64Request>(
+                "importFromBase64",
+                "Import a meeting audio/video file from base64-encoded data. Use for remote MCP servers or small files.",
+            ),
             tool::<ImportMeetingAudioRequest>(
                 "importMeetingAudio",
-                "Import a meeting audio/video file from file_url, file_path accessible by MCP server, or small file_base64 payload. For large local remote uploads, use createUpload/uploadChunk/finishUpload.",
+                "[DEPRECATED] Use importFromFile, importFromUrl, or importFromBase64 instead.",
             ),
             tool::<CreateUploadRequest>(
                 "createUpload",
@@ -99,6 +111,35 @@ impl ServerHandler for MeetingAgentMcpServer {
         _context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, McpError> {
         let result = match request.name.as_ref() {
+            "importFromFile" => {
+                let req: ImportFromFileRequest = parse_arguments(&request.arguments)?;
+                self.client
+                    .import_meeting_audio(&req.file_path, req.title.as_deref())
+                    .await?
+            }
+            "importFromUrl" => {
+                let req: ImportFromUrlRequest = parse_arguments(&request.arguments)?;
+                let path = download_url_to_upload(&req.url, req.filename.as_deref()).await?;
+                let result = self
+                    .client
+                    .import_meeting_audio(&path.to_string_lossy(), req.title.as_deref())
+                    .await?;
+                tokio::spawn(async move {
+                    if let Err(err) = tokio::fs::remove_file(&path).await {
+                        tracing::warn!(%err, "failed to remove MCP URL download temp file");
+                    }
+                });
+                result
+            }
+            "importFromBase64" => {
+                let req: ImportFromBase64Request = parse_arguments(&request.arguments)?;
+                let bytes = STANDARD.decode(&req.data).map_err(|err| {
+                    ClientError::InvalidInput(format!("invalid base64 data: {err}"))
+                })?;
+                self.client
+                    .import_meeting_audio_bytes(bytes, req.filename, req.title.as_deref())
+                    .await?
+            }
             "importMeetingAudio" => {
                 let req: ImportMeetingAudioRequest = parse_arguments(&request.arguments)?;
                 match (req.file_url, req.file_base64, req.filename, req.file_path) {
@@ -342,8 +383,8 @@ async fn download_url_to_upload(
         .or_else(|| {
             url.path_segments()
                 .and_then(|mut segments| segments.next_back())
+                .map(|s| s.split('?').next().unwrap_or(s).to_string())
                 .filter(|value| !value.trim().is_empty())
-                .map(str::to_string)
         })
         .unwrap_or_else(|| "download.bin".to_string());
     let extension = std::path::Path::new(&filename)

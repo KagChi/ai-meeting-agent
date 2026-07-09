@@ -19,6 +19,34 @@ pub struct ImportMeetingAudioRequest {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+pub struct ImportFromFileRequest {
+    /// Path to audio/video file accessible by MCP server process.
+    pub file_path: String,
+    /// Optional meeting title.
+    pub title: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ImportFromUrlRequest {
+    /// HTTP(S) URL for the MCP server to download and import.
+    pub url: String,
+    /// Optional filename override (for extension detection). If not provided, extracts from URL.
+    pub filename: Option<String>,
+    /// Optional meeting title.
+    pub title: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ImportFromBase64Request {
+    /// Base64-encoded audio/video file bytes.
+    pub data: String,
+    /// Original filename, including extension (e.g., meeting.mp3). Required for format detection.
+    pub filename: String,
+    /// Optional meeting title.
+    pub title: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
 pub struct CreateUploadRequest {
     /// Original filename, including extension (for example meeting.mp3).
     pub filename: String,
