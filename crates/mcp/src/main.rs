@@ -26,7 +26,10 @@ async fn main() -> anyhow::Result<()> {
     let service = StreamableHttpService::new(
         move || Ok(MeetingAgentMcpServer::new(client.clone())),
         LocalSessionManager::default().into(),
-        StreamableHttpServerConfig::default().with_cancellation_token(cancellation.child_token()),
+        StreamableHttpServerConfig::default()
+            .disable_allowed_hosts()
+            .disable_allowed_origins()
+            .with_cancellation_token(cancellation.child_token()),
     );
 
     let app = axum::Router::new()
