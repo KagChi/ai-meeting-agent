@@ -4,8 +4,9 @@
 //! Supports filename parsing, FFprobe-based file metadata extraction, and precedence-based
 //! metadata resolution.
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use chrono::{NaiveDate, NaiveDateTime, NaiveTime};
+use ffmpeg_sidecar::ffprobe;
 use std::path::Path;
 
 use crate::models::{FileMetadata, Meeting, MetadataSource};
@@ -63,9 +64,64 @@ pub struct ResolvedMetadata {
 }
 
 /// Extract file metadata using FFprobe
-pub fn extract_file_metadata(_path: &Path) -> Result<FileMetadata> {
-    // Placeholder for commit 2
-    todo!("extract_file_metadata implementation")
+pub fn extract_file_metadata(path: &Path) -> Result<FileMetadata> {
+    let output = std::process::Command::new(ffprobe::ffprobe_path())
+        .arg("-v")
+        .arg("quiet")
+        .arg("-print_format")
+        .arg("json")
+        .arg("-show_format")
+        .arg("-show_streams")
+        .arg(path)
+        .output()
+        .context("Failed to spawn ffprobe")?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("ffprobe failed: {}", stderr.trim());
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let json: serde_json::Value = serde_json::from_str(&stdout)
+        .with_context(|| format!("Failed to parse ffprobe JSON output: {}", stdout))?;
+
+    // Extract audio stream metadata
+    let streams = json["streams"]
+        .as_array()
+        .context("Missing streams array in ffprobe output")?;
+
+    let audio_stream = streams
+        .iter()
+        .find(|s| s["codec_type"].as_str() == Some("audio"));
+
+    let codec = audio_stream
+        .and_then(|s| s["codec_name"].as_str())
+        .map(String::from);
+
+    let sample_rate = audio_stream
+        .and_then(|s| s["sample_rate"].as_str())
+        .and_then(|s| s.parse::<u32>().ok());
+
+    let bit_rate = audio_stream
+        .and_then(|s| s["bit_rate"].as_str())
+        .and_then(|s| s.parse::<u64>().ok());
+
+    let channels = audio_stream
+        .and_then(|s| s["channels"].as_i64())
+        .and_then(|c| u8::try_from(c).ok());
+
+    // Extract file size from format section
+    let file_size_bytes = json["format"]["size"]
+        .as_str()
+        .and_then(|s| s.parse::<u64>().ok());
+
+    Ok(FileMetadata {
+        codec,
+        sample_rate,
+        bit_rate,
+        channels,
+        file_size_bytes,
+    })
 }
 
 /// Parse filename to extract metadata
