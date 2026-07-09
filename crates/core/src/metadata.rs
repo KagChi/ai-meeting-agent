@@ -125,9 +125,82 @@ pub fn extract_file_metadata(path: &Path) -> Result<FileMetadata> {
 }
 
 /// Parse filename to extract metadata
-pub fn parse_filename(_filename: &str) -> Option<ParsedFilename> {
-    // Placeholder for commit 3
-    todo!("parse_filename implementation")
+///
+/// Supports 4 patterns per PRD:
+/// 1. `YYYY-MM-DD_HH-MM_Topic.ext` (ISO date-time)
+/// 2. `YYYY-MM-DD_Topic.ext` (ISO date)
+/// 3. `Meeting_YYYYMMDD.ext` (compact date)
+/// 4. `Topic_only.ext` (title only)
+pub fn parse_filename(filename: &str) -> Option<ParsedFilename> {
+    // Strip extension
+    let name = std::path::Path::new(filename).file_stem()?.to_str()?;
+
+    // Pattern 1: YYYY-MM-DD_HH-MM_Topic (ISO date-time)
+    // Example: 2026-07-09_14-30_Weekly_Standup
+    if let Some(caps) = regex::Regex::new(r"^(\d{4})-(\d{2})-(\d{2})_(\d{2})-(\d{2})_(.+)$")
+        .ok()?
+        .captures(name)
+    {
+        let year = caps.get(1)?.as_str().parse().ok()?;
+        let month = caps.get(2)?.as_str().parse().ok()?;
+        let day = caps.get(3)?.as_str().parse().ok()?;
+        let hour = caps.get(4)?.as_str().parse().ok()?;
+        let minute = caps.get(5)?.as_str().parse().ok()?;
+        let title = caps.get(6)?.as_str().replace('_', " ");
+
+        return Some(ParsedFilename {
+            date: NaiveDate::from_ymd_opt(year, month, day),
+            time: NaiveTime::from_hms_opt(hour, minute, 0),
+            title: Some(title),
+        });
+    }
+
+    // Pattern 2: YYYY-MM-DD_Topic (ISO date)
+    // Example: 2026-07-09_Project_Review
+    if let Some(caps) = regex::Regex::new(r"^(\d{4})-(\d{2})-(\d{2})_(.+)$")
+        .ok()?
+        .captures(name)
+    {
+        let year = caps.get(1)?.as_str().parse().ok()?;
+        let month = caps.get(2)?.as_str().parse().ok()?;
+        let day = caps.get(3)?.as_str().parse().ok()?;
+        let title = caps.get(4)?.as_str().replace('_', " ");
+
+        return Some(ParsedFilename {
+            date: NaiveDate::from_ymd_opt(year, month, day),
+            time: None,
+            title: Some(title),
+        });
+    }
+
+    // Pattern 3: Meeting_YYYYMMDD (compact date)
+    // Example: Meeting_20260709
+    if let Some(caps) = regex::Regex::new(r"^Meeting_(\d{4})(\d{2})(\d{2})$")
+        .ok()?
+        .captures(name)
+    {
+        let year = caps.get(1)?.as_str().parse().ok()?;
+        let month = caps.get(2)?.as_str().parse().ok()?;
+        let day = caps.get(3)?.as_str().parse().ok()?;
+
+        return Some(ParsedFilename {
+            date: NaiveDate::from_ymd_opt(year, month, day),
+            time: None,
+            title: None,
+        });
+    }
+
+    // Pattern 4: Topic_only (title only, no date)
+    // Example: Weekly_Team_Sync
+    if !name.is_empty() {
+        return Some(ParsedFilename {
+            date: None,
+            time: None,
+            title: Some(name.replace('_', " ")),
+        });
+    }
+
+    None
 }
 
 /// Resolve metadata from multiple sources using precedence logic

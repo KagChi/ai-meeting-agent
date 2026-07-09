@@ -27,6 +27,9 @@ futures-util = { workspace = true }
 speakrs = { workspace = true }
 symphonia = { workspace = true }
 
+# Metadata parsing
+regex = "1"
+
 # OpenAPI (optional, enabled by server)
 utoipa = { version = "4", optional = true, features = ["chrono", "uuid"] }
 
