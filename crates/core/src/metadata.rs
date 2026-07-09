@@ -315,13 +315,49 @@ pub fn resolve_metadata(sources: MetadataSources) -> ResolvedMetadata {
 }
 
 /// Enrich Meeting with metadata from file and user input
+///
+/// Orchestrates filename parsing, ffprobe extraction, metadata resolution, and Meeting mutation.
+/// This is the main entry point for metadata extraction.
 pub fn enrich_meeting_with_metadata(
-    _meeting: &mut Meeting,
-    _file_path: &Path,
-    _user_metadata: Option<UserMetadata>,
+    meeting: &mut Meeting,
+    file_path: &Path,
+    user_metadata: Option<UserMetadata>,
 ) -> Result<()> {
-    // Placeholder for commit 5
-    todo!("enrich_meeting_with_metadata implementation")
+    // Extract filename metadata
+    let filename = file_path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .context("Invalid filename")?;
+    let parsed_filename = parse_filename(filename);
+
+    // Extract file metadata via FFprobe
+    let file_metadata = extract_file_metadata(file_path).ok();
+
+    // Resolve metadata using precedence logic
+    let sources = MetadataSources {
+        user_provided: user_metadata,
+        calendar_bot: None, // Calendar/bot metadata not available in file upload path
+        filename: parsed_filename,
+        ffprobe: file_metadata.clone(),
+    };
+
+    let resolved = resolve_metadata(sources);
+
+    // Mutate Meeting with resolved metadata
+    meeting.title = resolved.title;
+    meeting.metadata_source = Some(resolved.title_source);
+
+    if let Some(date) = resolved.date {
+        meeting.date = chrono::DateTime::from_naive_utc_and_offset(date, chrono::Utc);
+        meeting.recording_date = Some(date);
+    }
+
+    meeting.participants = resolved.participants;
+    meeting.location = resolved.location;
+    meeting.organizer = resolved.organizer;
+    meeting.file_metadata = file_metadata;
+
+    Ok(())
 }
 
 #[cfg(test)]
