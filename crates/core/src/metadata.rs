@@ -358,6 +358,7 @@ pub fn enrich_meeting_with_metadata(
     meeting.location = resolved.location;
     meeting.organizer = resolved.organizer;
     meeting.file_metadata = file_metadata;
+    meeting.platform = Some("Upload".to_string());
 
     Ok(())
 }
