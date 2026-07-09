@@ -213,7 +213,7 @@ impl TranscriptionClient {
         let file_name = file_path
             .file_name()
             .and_then(|n| n.to_str())
-            .unwrap_or("audio.m4a")
+            .unwrap_or("audio.wav")
             .to_string();
 
         // Build the API URL (OpenAI-compatible: {base}/audio/transcriptions)
@@ -426,7 +426,7 @@ impl TranscriptionClient {
 
     /// Transcribe audio bytes directly (in-memory, no temp files)
     ///
-    /// Takes MP3-encoded audio bytes and a filename hint for the multipart request.
+    /// Takes WAV-encoded audio bytes and a filename hint for the multipart request.
     /// No temporary files are created.
     pub async fn transcribe_bytes(
         &self,
@@ -485,7 +485,7 @@ impl TranscriptionClient {
 
     /// Transcribe audio bytes with chunking (in-memory, no temp files)
     ///
-    /// Takes MP3-encoded audio bytes, splits them into chunks in memory,
+    /// Takes WAV-encoded audio bytes, splits them into chunks in memory,
     /// and transcribes each chunk in parallel. No temporary files are created.
     pub async fn transcribe_chunked_memory(
         &self,
@@ -587,7 +587,7 @@ impl TranscriptionClient {
             let language = config.language.clone();
             let prompt = config.prompt.clone();
             let temperature = config.temperature;
-            let chunk_name = format!("chunk-{:03}.mp3", i);
+            let chunk_name = format!("chunk-{:03}.wav", i);
 
             tasks.spawn(async move {
                 let _permit = permit.acquire().await.expect("semaphore closed");

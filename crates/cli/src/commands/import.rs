@@ -1,14 +1,22 @@
 use anyhow::Result;
+use chrono::NaiveDateTime;
 use colored::Colorize;
 use indicatif::{ProgressBar, ProgressStyle};
 use meeting_agent_core::{
-    config::Config, fs, models::Meeting, storage::MeetingStorage,
+    config::Config, fs, metadata::UserMetadata, models::Meeting, storage::MeetingStorage,
     transcription::TranscriptionClient, transcription::TranscriptionRequest,
 };
 use std::io::{self, Write};
 use std::path::PathBuf;
 
-pub async fn run(file: String, title: Option<String>) -> Result<()> {
+pub async fn run(
+    file: String,
+    title: Option<String>,
+    participants: Option<Vec<String>>,
+    location: Option<String>,
+    organizer: Option<String>,
+    recording_date: Option<String>,
+) -> Result<()> {
     let file_path = PathBuf::from(&file);
     if !file_path.exists() {
         anyhow::bail!("Audio file not found: {}", file);
@@ -56,7 +64,7 @@ pub async fn run(file: String, title: Option<String>) -> Result<()> {
             pb.set_message("Converting audio format...");
             pb.enable_steady_tick(std::time::Duration::from_millis(100));
 
-            let converted = meeting_agent_core::audio::convert_to_mp3(&file_path)?;
+            let converted = meeting_agent_core::audio::convert_to_wav(&file_path)?;
 
             pb.finish_with_message("Conversion complete".green().to_string());
             (converted, true)
@@ -102,6 +110,7 @@ pub async fn run(file: String, title: Option<String>) -> Result<()> {
     pb.finish_with_message("Transcription complete!".green().to_string());
 
     // Optional speaker diarization (must run before temp audio deletion).
+    #[cfg(feature = "diarization")]
     let response = if config.diarize.enabled {
         let pb2 = ProgressBar::new_spinner();
         pb2.set_style(
@@ -138,6 +147,17 @@ pub async fn run(file: String, title: Option<String>) -> Result<()> {
         response
     };
 
+    #[cfg(not(feature = "diarization"))]
+    let response = {
+        if config.diarize.enabled {
+            println!(
+                "{}",
+                "Warning: diarization feature not enabled, skipping speaker diarization".yellow()
+            );
+        }
+        response
+    };
+
     if temp_file_created {
         let _ = std::fs::remove_file(&audio_file_to_transcribe);
     }
@@ -159,15 +179,46 @@ pub async fn run(file: String, title: Option<String>) -> Result<()> {
         println!("{}: {}", "Segments".bold(), segments.len());
     }
 
-    let meeting_title = title.unwrap_or_else(|| {
-        file_path
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .unwrap_or("Untitled Meeting")
-            .to_string()
-    });
+    // Parse recording date if provided
+    let parsed_date = if let Some(date_str) = recording_date {
+        // Try parsing as datetime first (YYYY-MM-DD HH:MM:SS)
+        NaiveDateTime::parse_from_str(&date_str, "%Y-%m-%d %H:%M:%S")
+            .or_else(|_| {
+                // Try parsing as date only (YYYY-MM-DD), add 00:00:00 time
+                chrono::NaiveDate::parse_from_str(&date_str, "%Y-%m-%d")
+                    .map(|d| d.and_hms_opt(0, 0, 0).unwrap())
+            })
+            .ok()
+    } else {
+        None
+    };
 
-    let meeting = Meeting::new(meeting_title);
+    // Build user metadata from CLI flags
+    let user_metadata = if title.is_some()
+        || participants.is_some()
+        || location.is_some()
+        || organizer.is_some()
+        || parsed_date.is_some()
+    {
+        Some(UserMetadata {
+            title: title.clone(),
+            date: parsed_date,
+            participants: participants.clone(),
+            location: location.clone(),
+            organizer: organizer.clone(),
+        })
+    } else {
+        None
+    };
+
+    // Create meeting and enrich with metadata
+    let mut meeting = Meeting::new("Temporary Title".to_string());
+    meeting_agent_core::metadata::enrich_meeting_with_metadata(
+        &mut meeting,
+        &file_path,
+        user_metadata,
+    )?;
+
     let storage = MeetingStorage::new();
 
     storage.create_meeting(&meeting)?;

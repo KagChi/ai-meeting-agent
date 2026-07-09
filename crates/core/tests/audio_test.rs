@@ -1,5 +1,5 @@
 use meeting_agent_core::audio::{
-    chunk_audio_memory, convert_to_mp3_memory, probe_duration_from_bytes,
+    chunk_audio_memory, convert_to_wav_memory, probe_duration_from_bytes,
 };
 
 /// Generate a minimal valid MP3 file in memory for testing
@@ -17,20 +17,17 @@ fn generate_test_mp3() -> Vec<u8> {
 
 #[test]
 #[ignore] // Requires FFmpeg to be installed
-fn test_convert_to_mp3_memory_basic() {
+fn test_convert_to_wav_memory_basic() {
     let input = generate_test_mp3();
-    let result = convert_to_mp3_memory(&input);
+    let result = convert_to_wav_memory(&input);
 
     assert!(result.is_ok(), "Conversion should succeed");
     let output = result.unwrap();
     assert!(!output.is_empty(), "Output should not be empty");
 
-    // Check MP3 signature (first 2 bytes should be FF FB/FA/F3/F2)
-    assert_eq!(output[0], 0xFF, "MP3 should start with 0xFF");
-    assert!(
-        output[1] & 0xE0 == 0xE0,
-        "Second byte should have MP3 sync bits"
-    );
+    // Check WAV signature (RIFF header)
+    assert_eq!(&output[0..4], b"RIFF", "WAV should start with RIFF");
+    assert_eq!(&output[8..12], b"WAVE", "WAV should have WAVE marker");
 }
 
 #[test]
@@ -60,10 +57,10 @@ fn test_chunk_audio_memory_basic() {
     // Should produce at least 1 chunk (our test audio is ~1 second)
     assert!(!chunks.is_empty(), "Should produce at least one chunk");
 
-    // Each chunk should be valid MP3
+    // Each chunk should be valid WAV
     for (i, chunk) in chunks.iter().enumerate() {
         assert!(!chunk.is_empty(), "Chunk {} should not be empty", i);
-        assert_eq!(chunk[0], 0xFF, "Chunk {} should start with 0xFF", i);
+        assert_eq!(&chunk[0..4], b"RIFF", "Chunk {} should start with RIFF", i);
     }
 }
 
@@ -71,7 +68,7 @@ fn test_chunk_audio_memory_basic() {
 #[ignore] // Requires FFmpeg to be installed
 fn test_convert_empty_input() {
     let empty: Vec<u8> = vec![];
-    let result = convert_to_mp3_memory(&empty);
+    let result = convert_to_wav_memory(&empty);
 
     // Empty input should fail
     assert!(result.is_err(), "Empty input should produce error");

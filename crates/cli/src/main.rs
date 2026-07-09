@@ -26,14 +26,64 @@ enum Commands {
         #[arg(long)]
         host: Option<String>,
     },
-    /// Import an audio file
+    /// Import an audio file and transcribe it
+    ///
+    /// Metadata can be provided via CLI flags or extracted from the filename.
+    /// Precedence: User-provided flags > Filename parsing > Default values
+    ///
+    /// Supported filename patterns:
+    ///   - YYYY-MM-DD_HH-MM_Topic.ext (e.g., 2026-07-09_14-30_Weekly_Standup.mp3)
+    ///   - YYYY-MM-DD_Topic.ext (e.g., 2026-07-09_Project_Review.wav)
+    ///   - Meeting_YYYYMMDD.ext (e.g., Meeting_20260709.mp3)
+    ///   - Topic_only.ext (e.g., Weekly_Team_Sync.wav)
+    ///
+    /// Examples:
+    ///   # Basic import (metadata from filename)
+    ///   meeting-agent import 2026-07-09_14-30_Weekly_Standup.mp3
+    ///
+    ///   # Override title from filename
+    ///   meeting-agent import meeting.mp3 --title "Q2 Planning"
+    ///
+    ///   # Full metadata (overrides filename)
+    ///   meeting-agent import meeting.mp3 \
+    ///     --title "Sprint Review" \
+    ///     --participants Alice,Bob,Charlie \
+    ///     --location "Conference Room A" \
+    ///     --organizer Alice \
+    ///     --recording-date "2026-07-09 14:30:00"
+    #[command(verbatim_doc_comment)]
     Import {
         /// Path to audio file
         file: String,
 
-        /// Meeting title
-        #[arg(short, long)]
+        /// Meeting title (overrides filename-based title)
+        #[arg(short, long, help = "Meeting title (overrides filename-based title)")]
         title: Option<String>,
+
+        /// Meeting participants (comma-separated, e.g., Alice,Bob,Charlie)
+        #[arg(
+            short,
+            long,
+            value_delimiter = ',',
+            help = "Meeting participants (comma-separated, e.g., Alice,Bob,Charlie)"
+        )]
+        participants: Option<Vec<String>>,
+
+        /// Meeting location (physical or virtual)
+        #[arg(short, long, help = "Meeting location (physical or virtual)")]
+        location: Option<String>,
+
+        /// Meeting organizer
+        #[arg(short, long, help = "Meeting organizer")]
+        organizer: Option<String>,
+
+        /// Recording date and time (format: YYYY-MM-DD HH:MM:SS or YYYY-MM-DD, overrides filename)
+        #[arg(
+            short = 'd',
+            long,
+            help = "Recording date and time (format: YYYY-MM-DD HH:MM:SS or YYYY-MM-DD, overrides filename)"
+        )]
+        recording_date: Option<String>,
     },
     /// List all meetings
     List,
@@ -99,7 +149,24 @@ async fn main() -> anyhow::Result<()> {
 
     match cli.command {
         Commands::Server { port, host } => commands::server::start(port, host).await,
-        Commands::Import { file, title } => commands::import::run(file, title).await,
+        Commands::Import {
+            file,
+            title,
+            participants,
+            location,
+            organizer,
+            recording_date,
+        } => {
+            commands::import::run(
+                file,
+                title,
+                participants,
+                location,
+                organizer,
+                recording_date,
+            )
+            .await
+        }
         Commands::List => commands::list::run().await,
         Commands::Show { id } => commands::show::run(id).await,
         Commands::Summarize {

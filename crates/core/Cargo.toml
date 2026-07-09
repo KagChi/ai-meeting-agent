@@ -23,15 +23,19 @@ tokio-util = { workspace = true }
 tempfile = { workspace = true }
 futures-util = { workspace = true }
 
-# Speaker diarization (in-process, speakrs)
-speakrs = { workspace = true }
-symphonia = { workspace = true }
+# Speaker diarization (in-process, speakrs) - optional
+speakrs = { version = "0.4", optional = true }
+symphonia = { version = "0.5", features = ["mp3", "wav"], optional = true }
+
+# Metadata parsing
+regex = "1"
 
 # OpenAPI (optional, enabled by server)
 utoipa = { version = "4", optional = true, features = ["chrono", "uuid"] }
 
 [features]
 openapi = ["utoipa"]
+diarization = ["speakrs", "symphonia"]
 
 [dev-dependencies]
 wiremock = "0.6"

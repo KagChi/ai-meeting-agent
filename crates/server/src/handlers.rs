@@ -45,12 +45,15 @@ pub async fn version() -> Json<Value> {
 }
 
 /// List all meetings
+///
+/// Returns all meetings with their metadata. Each meeting includes optional metadata fields:
+/// participants, location, organizer, metadata_source, file_metadata, recording_date, audio_file, video_file.
 #[utoipa::path(
     get,
     path = "/meetings",
     tag = "meetings",
     responses(
-        (status = 200, description = "List of all meetings", body = ListMeetingsResponse)
+        (status = 200, description = "List of all meetings with metadata", body = ListMeetingsResponse)
     )
 )]
 pub async fn list_meetings(
@@ -61,6 +64,16 @@ pub async fn list_meetings(
 }
 
 /// Get a specific meeting
+///
+/// Returns meeting details including metadata fields:
+/// - `participants`: List of meeting participants
+/// - `location`: Physical or virtual location
+/// - `organizer`: Meeting organizer
+/// - `metadata_source`: Source of metadata (user_provided, calendar_bot, filename, ffprobe, default)
+/// - `file_metadata`: Audio/video file metadata (codec, sample_rate, bit_rate, channels, file_size_bytes)
+/// - `recording_date`: Recording date (may differ from meeting date)
+/// - `audio_file`: Path to audio file
+/// - `video_file`: Path to video file
 #[utoipa::path(
     get,
     path = "/meetings/{id}",
@@ -69,7 +82,7 @@ pub async fn list_meetings(
         ("id" = String, Path, description = "Meeting ID or prefix")
     ),
     responses(
-        (status = 200, description = "Meeting details", body = MeetingResponse),
+        (status = 200, description = "Meeting details with metadata", body = MeetingResponse),
         (status = 404, description = "Meeting not found", body = ErrorResponse)
     )
 )]
@@ -115,13 +128,18 @@ pub async fn get_transcript(
 }
 
 /// Create a new meeting
+///
+/// Creates a new meeting with optional metadata. Metadata fields can be populated
+/// through the import endpoint, which automatically extracts metadata from files.
+///
+/// Response includes all metadata fields (see GET /meetings/{id} for details).
 #[utoipa::path(
     post,
     path = "/meetings",
     tag = "meetings",
     request_body = CreateMeetingRequest,
     responses(
-        (status = 201, description = "Meeting created", body = MeetingResponse),
+        (status = 201, description = "Meeting created with metadata", body = MeetingResponse),
         (status = 400, description = "Invalid request", body = ErrorResponse)
     )
 )]

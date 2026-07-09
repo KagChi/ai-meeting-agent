@@ -24,6 +24,10 @@ pub struct ImportMemoryConfig {
     pub audio_bytes: Vec<u8>,
     pub audio_filename: String,
     pub title: Option<String>,
+    pub participants: Option<Vec<String>>,
+    pub location: Option<String>,
+    pub organizer: Option<String>,
+    pub recording_date: Option<chrono::NaiveDateTime>,
     pub config: Config,
     pub storage: Arc<MeetingStorage>,
     pub registry: Arc<JobRegistry>,
@@ -89,7 +93,7 @@ async fn run_import_inner(
         check_cancelled(cancel_token)?;
         let converted = tokio::task::spawn_blocking({
             let path = audio_path.clone();
-            move || audio::convert_to_mp3(&path)
+            move || audio::convert_to_wav(&path)
         })
         .await??;
         Some(converted)
@@ -146,6 +150,7 @@ async fn run_import_inner(
 
     // Optional speaker diarization. Resilient: on failure, log and proceed
     // without speaker labels rather than failing the whole import.
+    #[cfg(feature = "diarization")]
     let transcription = if config.diarize.enabled {
         registry.update_progress(
             job_id,
@@ -164,6 +169,14 @@ async fn run_import_inner(
             }
         }
     } else {
+        transcription
+    };
+
+    #[cfg(not(feature = "diarization"))]
+    let transcription = {
+        if config.diarize.enabled {
+            log::warn!("[diarize] feature not enabled, skipping speaker diarization");
+        }
         transcription
     };
 
@@ -348,12 +361,12 @@ async fn run_import_memory_inner(cfg: &ImportMemoryConfig) -> Result<()> {
     let working_audio = if audio::needs_conversion_by_filename(&cfg.audio_filename) {
         check_cancelled(&cfg.cancel_token)?;
         log::info!(
-            "[import_memory] converting {} bytes to MP3 in memory",
+            "[import_memory] converting {} bytes to WAV in memory",
             cfg.audio_bytes.len()
         );
         let converted = tokio::task::spawn_blocking({
             let bytes = cfg.audio_bytes.clone();
-            move || audio::convert_to_mp3_memory(&bytes)
+            move || audio::convert_to_wav_memory(&bytes)
         })
         .await??;
         log::info!(
@@ -376,15 +389,29 @@ async fn run_import_memory_inner(cfg: &ImportMemoryConfig) -> Result<()> {
         ProgressEvent::new("processing", "Creating meeting record"),
     );
 
-    let meeting_title = cfg.title.clone().unwrap_or_else(|| {
-        std::path::Path::new(&cfg.audio_filename)
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .unwrap_or("Untitled Meeting")
-            .to_string()
-    });
+    // Build user metadata from config
+    let user_metadata = if cfg.title.is_some()
+        || cfg.participants.is_some()
+        || cfg.location.is_some()
+        || cfg.organizer.is_some()
+        || cfg.recording_date.is_some()
+    {
+        Some(crate::metadata::UserMetadata {
+            title: cfg.title.clone(),
+            date: cfg.recording_date,
+            participants: cfg.participants.clone(),
+            location: cfg.location.clone(),
+            organizer: cfg.organizer.clone(),
+        })
+    } else {
+        None
+    };
 
-    let meeting = Meeting::new(meeting_title);
+    // Create meeting and enrich with metadata
+    let mut meeting = Meeting::new("Temporary Title".to_string());
+    let filename_path = std::path::Path::new(&cfg.audio_filename);
+    crate::metadata::enrich_meeting_with_metadata(&mut meeting, filename_path, user_metadata)?;
+
     cfg.storage.create_meeting(&meeting)?;
     cfg.registry.set_meeting_id(&cfg.job_id, meeting.id.clone());
 
@@ -416,6 +443,7 @@ async fn run_import_memory_inner(cfg: &ImportMemoryConfig) -> Result<()> {
 
     // Optional speaker diarization. Resilient: on failure, log and proceed
     // without speaker labels rather than failing the whole import.
+    #[cfg(feature = "diarization")]
     let transcription = if cfg.config.diarize.enabled {
         cfg.registry.update_progress(
             &cfg.job_id,
@@ -430,7 +458,7 @@ async fn run_import_memory_inner(cfg: &ImportMemoryConfig) -> Result<()> {
         let temp_audio = {
             let temp_dir = std::env::temp_dir();
             let temp_path = temp_dir.join(format!(
-                "meeting-agent-diarize-{}.mp3",
+                "meeting-agent-diarize-{}.wav",
                 uuid::Uuid::new_v4()
             ));
             tokio::fs::write(&temp_path, &working_audio).await?;
@@ -462,6 +490,14 @@ async fn run_import_memory_inner(cfg: &ImportMemoryConfig) -> Result<()> {
 
         result
     } else {
+        transcription
+    };
+
+    #[cfg(not(feature = "diarization"))]
+    let transcription = {
+        if cfg.config.diarize.enabled {
+            log::warn!("[diarize] feature not enabled, skipping speaker diarization");
+        }
         transcription
     };
 

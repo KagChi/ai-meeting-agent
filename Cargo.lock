@@ -1737,6 +1737,7 @@ dependencies = [
  "ffmpeg-sidecar",
  "futures-util",
  "log",
+ "regex",
  "reqwest",
  "serde",
  "serde_json",
