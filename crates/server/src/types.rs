@@ -21,6 +21,33 @@ pub struct UpdateMeetingRequest {
 
 // === Response Types ===
 
+/// Meeting response with all fields including metadata
+///
+/// Example response with metadata:
+/// ```json
+/// {
+///   "id": "550e8400-e29b-41d4-a716-446655440000",
+///   "title": "Team Standup 2024-03-15",
+///   "date": "2024-03-15T09:00:00Z",
+///   "duration_seconds": 1800,
+///   "status": "ready",
+///   "participants": ["Alice", "Bob", "Charlie"],
+///   "location": "Conference Room A",
+///   "organizer": "Alice",
+///   "metadata_source": "filename",
+///   "file_metadata": {
+///     "codec": "aac",
+///     "sample_rate": 44100,
+///     "bit_rate": 128000,
+///     "channels": 2,
+///     "file_size_bytes": 5242880
+///   },
+///   "recording_date": "2024-03-15T09:00:00",
+///   "audio_file": "meeting.m4a",
+///   "created_at": "2024-03-15T08:50:00Z",
+///   "updated_at": "2024-03-15T09:30:00Z"
+/// }
+/// ```
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ListMeetingsResponse {
     pub meetings: Vec<Meeting>,
