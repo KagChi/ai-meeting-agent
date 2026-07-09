@@ -1,202 +1,189 @@
 use crate::{client::MeetingAgentClient, error::ClientError, schemas::*};
 use rmcp::{
-    handler::server::{router::tool::ToolRouter, wrapper::Parameters},
     model::{
-        CallToolResult, ContentBlock, Implementation, ProtocolVersion, ServerCapabilities,
-        ServerInfo,
+        CallToolRequestParams, CallToolResult, ContentBlock, Implementation,
+        InitializeRequestParams, InitializeResult, ListToolsResult, PaginatedRequestParams,
+        ServerCapabilities, ServerInfo, TextContent, Tool,
     },
-    service::RequestContext,
-    tool, tool_handler, tool_router, ErrorData as McpError, Json, RoleServer, ServerHandler,
+    service::{RequestContext, RoleServer},
+    ErrorData as McpError, ServerHandler,
 };
+use schemars::JsonSchema;
 use serde_json::Value;
+use std::sync::Arc;
 
 #[derive(Clone)]
 pub struct MeetingAgentMcpServer {
     client: MeetingAgentClient,
-    tool_router: ToolRouter<Self>,
 }
 
 impl MeetingAgentMcpServer {
     pub fn new(client: MeetingAgentClient) -> Self {
-        Self {
-            client,
-            tool_router: Self::tool_router(),
-        }
+        Self { client }
     }
 }
 
-#[tool_router(router = tool_router)]
-impl MeetingAgentMcpServer {
-    #[tool(
-        name = "importMeetingAudio",
-        description = "Import a meeting audio/video file. Returns background job id."
-    )]
-    pub async fn import_meeting_audio(
-        &self,
-        Parameters(req): Parameters<ImportMeetingAudioRequest>,
-    ) -> Result<Json<Value>, McpError> {
-        let value = self
-            .client
-            .import_meeting_audio(&req.file_path, req.title.as_deref())
-            .await?;
-        Ok(Json(value))
-    }
-
-    #[tool(
-        name = "getJobStatus",
-        description = "Get current import or summary job status."
-    )]
-    pub async fn get_job_status(
-        &self,
-        Parameters(req): Parameters<JobIdRequest>,
-    ) -> Result<Json<Value>, McpError> {
-        Ok(Json(self.client.get_job_status(&req.job_id).await?))
-    }
-
-    #[tool(
-        name = "streamJobEvents",
-        description = "Read job progress events through meeting-agent SSE endpoint."
-    )]
-    pub async fn stream_job_events(
-        &self,
-        Parameters(req): Parameters<JobIdRequest>,
-    ) -> Result<CallToolResult, McpError> {
-        let events = self.client.stream_job_events(&req.job_id).await?;
-        Ok(CallToolResult::success(vec![ContentBlock::text(events)]))
-    }
-
-    #[tool(name = "listMeetings", description = "List all meetings.")]
-    pub async fn list_meetings(&self) -> Result<Json<Value>, McpError> {
-        Ok(Json(self.client.list_meetings().await?))
-    }
-
-    #[tool(
-        name = "getMeeting",
-        description = "Get meeting details by full id or prefix."
-    )]
-    pub async fn get_meeting(
-        &self,
-        Parameters(req): Parameters<MeetingIdRequest>,
-    ) -> Result<Json<Value>, McpError> {
-        Ok(Json(self.client.get_meeting(&req.meeting_id).await?))
-    }
-
-    #[tool(
-        name = "getTranscript",
-        description = "Get meeting transcript with segments."
-    )]
-    pub async fn get_transcript(
-        &self,
-        Parameters(req): Parameters<MeetingIdRequest>,
-    ) -> Result<Json<Value>, McpError> {
-        Ok(Json(self.client.get_transcript(&req.meeting_id).await?))
-    }
-
-    #[tool(
-        name = "generateSummary",
-        description = "Generate a meeting summary. Template defaults to full."
-    )]
-    pub async fn generate_summary(
-        &self,
-        Parameters(req): Parameters<GenerateSummaryRequest>,
-    ) -> Result<Json<Value>, McpError> {
-        let template = normalize_template(req.template.as_deref())?;
-        let value = self
-            .client
-            .generate_summary(&req.meeting_id, template, req.language.as_deref())
-            .await?;
-        Ok(Json(value))
-    }
-
-    #[tool(
-        name = "getSummary",
-        description = "Get generated summary. Template defaults to full."
-    )]
-    pub async fn get_summary(
-        &self,
-        Parameters(req): Parameters<GetSummaryRequest>,
-    ) -> Result<Json<Value>, McpError> {
-        let template = normalize_template(req.template.as_deref())?;
-        Ok(Json(
-            self.client.get_summary(&req.meeting_id, template).await?,
-        ))
-    }
-
-    #[tool(
-        name = "updateMeeting",
-        description = "Update meeting title and/or date."
-    )]
-    pub async fn update_meeting(
-        &self,
-        Parameters(req): Parameters<UpdateMeetingRequest>,
-    ) -> Result<Json<Value>, McpError> {
-        let value = self
-            .client
-            .update_meeting(&req.meeting_id, req.title, req.date)
-            .await?;
-        Ok(Json(value))
-    }
-
-    #[tool(
-        name = "deleteMeeting",
-        description = "Delete meeting and associated files."
-    )]
-    pub async fn delete_meeting(
-        &self,
-        Parameters(req): Parameters<MeetingIdRequest>,
-    ) -> Result<Json<Value>, McpError> {
-        Ok(Json(self.client.delete_meeting(&req.meeting_id).await?))
-    }
-
-    #[tool(
-        name = "cancelJob",
-        description = "Cancel a running import or summary job."
-    )]
-    pub async fn cancel_job(
-        &self,
-        Parameters(req): Parameters<JobIdRequest>,
-    ) -> Result<Json<Value>, McpError> {
-        Ok(Json(self.client.cancel_job(&req.job_id).await?))
-    }
-
-    #[tool(
-        name = "exportTranscript",
-        description = "Export transcript as srt, vtt, text, or json."
-    )]
-    pub async fn export_transcript(
-        &self,
-        Parameters(req): Parameters<ExportTranscriptRequest>,
-    ) -> Result<Json<ExportTranscriptResponse>, McpError> {
-        let format = req
-            .format
-            .unwrap_or_else(|| "text".to_string())
-            .to_lowercase();
-        let transcript = self.client.get_transcript(&req.meeting_id).await?;
-        let content = export_transcript_content(&transcript, &format)?;
-        Ok(Json(ExportTranscriptResponse {
-            meeting_id: req.meeting_id,
-            format,
-            content,
-        }))
-    }
-}
-
-#[tool_handler(router = self.tool_router)]
 impl ServerHandler for MeetingAgentMcpServer {
     fn get_info(&self) -> ServerInfo {
-        ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
-            .with_server_info(Implementation::from_build_env())
-            .with_protocol_version(ProtocolVersion::V_2024_11_05)
+        InitializeResult::new(ServerCapabilities::builder().enable_tools().build())
+            .with_server_info(
+                Implementation::new("meeting-agent-mcp", env!("CARGO_PKG_VERSION"))
+                    .with_description("HTTP MCP wrapper for AI Meeting Agent API"),
+            )
             .with_instructions("HTTP MCP wrapper for AI Meeting Agent API.".to_string())
     }
 
     async fn initialize(
         &self,
-        _request: rmcp::model::InitializeRequestParams,
+        _request: InitializeRequestParams,
         _context: RequestContext<RoleServer>,
-    ) -> Result<rmcp::model::InitializeResult, McpError> {
+    ) -> Result<InitializeResult, McpError> {
         Ok(self.get_info())
     }
+
+    async fn list_tools(
+        &self,
+        _request: Option<PaginatedRequestParams>,
+        _context: RequestContext<RoleServer>,
+    ) -> Result<ListToolsResult, McpError> {
+        Ok(ListToolsResult::with_all_items(vec![
+            tool::<ImportMeetingAudioRequest>(
+                "importMeetingAudio",
+                "Import a meeting audio/video file. Returns background job id.",
+            ),
+            tool::<JobIdRequest>("getJobStatus", "Get current import or summary job status."),
+            tool::<JobIdRequest>(
+                "streamJobEvents",
+                "Read job progress events through meeting-agent SSE endpoint.",
+            ),
+            tool::<EmptyParams>("listMeetings", "List all meetings."),
+            tool::<MeetingIdRequest>("getMeeting", "Get meeting details by full id or prefix."),
+            tool::<MeetingIdRequest>("getTranscript", "Get meeting transcript with segments."),
+            tool::<GenerateSummaryRequest>(
+                "generateSummary",
+                "Generate a meeting summary. Template defaults to full.",
+            ),
+            tool::<GetSummaryRequest>(
+                "getSummary",
+                "Get generated summary. Template defaults to full.",
+            ),
+            tool::<UpdateMeetingRequest>("updateMeeting", "Update meeting title and/or date."),
+            tool::<MeetingIdRequest>("deleteMeeting", "Delete meeting and associated files."),
+            tool::<JobIdRequest>("cancelJob", "Cancel a running import or summary job."),
+            tool::<ExportTranscriptRequest>(
+                "exportTranscript",
+                "Export transcript as srt, vtt, text, or json.",
+            ),
+        ]))
+    }
+
+    async fn call_tool(
+        &self,
+        request: CallToolRequestParams,
+        _context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, McpError> {
+        let result = match request.name.as_ref() {
+            "importMeetingAudio" => {
+                let req: ImportMeetingAudioRequest = parse_arguments(&request.arguments)?;
+                self.client
+                    .import_meeting_audio(&req.file_path, req.title.as_deref())
+                    .await?
+            }
+            "getJobStatus" => {
+                let req: JobIdRequest = parse_arguments(&request.arguments)?;
+                self.client.get_job_status(&req.job_id).await?
+            }
+            "streamJobEvents" => {
+                let req: JobIdRequest = parse_arguments(&request.arguments)?;
+                let events = self.client.stream_job_events(&req.job_id).await?;
+                return Ok(CallToolResult::success(vec![ContentBlock::Text(
+                    TextContent::new(events),
+                )]));
+            }
+            "listMeetings" => self.client.list_meetings().await?,
+            "getMeeting" => {
+                let req: MeetingIdRequest = parse_arguments(&request.arguments)?;
+                self.client.get_meeting(&req.meeting_id).await?
+            }
+            "getTranscript" => {
+                let req: MeetingIdRequest = parse_arguments(&request.arguments)?;
+                self.client.get_transcript(&req.meeting_id).await?
+            }
+            "generateSummary" => {
+                let req: GenerateSummaryRequest = parse_arguments(&request.arguments)?;
+                let template = normalize_template(req.template.as_deref())?;
+                self.client
+                    .generate_summary(&req.meeting_id, template, req.language.as_deref())
+                    .await?
+            }
+            "getSummary" => {
+                let req: GetSummaryRequest = parse_arguments(&request.arguments)?;
+                let template = normalize_template(req.template.as_deref())?;
+                self.client.get_summary(&req.meeting_id, template).await?
+            }
+            "updateMeeting" => {
+                let req: UpdateMeetingRequest = parse_arguments(&request.arguments)?;
+                self.client
+                    .update_meeting(&req.meeting_id, req.title, req.date)
+                    .await?
+            }
+            "deleteMeeting" => {
+                let req: MeetingIdRequest = parse_arguments(&request.arguments)?;
+                self.client.delete_meeting(&req.meeting_id).await?
+            }
+            "cancelJob" => {
+                let req: JobIdRequest = parse_arguments(&request.arguments)?;
+                self.client.cancel_job(&req.job_id).await?
+            }
+            "exportTranscript" => {
+                let req: ExportTranscriptRequest = parse_arguments(&request.arguments)?;
+                let format = req
+                    .format
+                    .unwrap_or_else(|| "text".to_string())
+                    .to_lowercase();
+                let transcript = self.client.get_transcript(&req.meeting_id).await?;
+                let content = export_transcript_content(&transcript, &format)?;
+                serde_json::to_value(ExportTranscriptResponse {
+                    meeting_id: req.meeting_id,
+                    format,
+                    content,
+                })
+                .map_err(ClientError::from)?
+            }
+            other => {
+                return Err(McpError::invalid_params(
+                    format!("Tool not found: {other}"),
+                    None,
+                ))
+            }
+        };
+
+        let text = serde_json::to_string(&result).map_err(ClientError::from)?;
+        Ok(CallToolResult::success(vec![ContentBlock::Text(
+            TextContent::new(text),
+        )]))
+    }
+}
+
+fn tool<T: JsonSchema>(name: &'static str, description: &'static str) -> Tool {
+    Tool::new(
+        name,
+        description,
+        Arc::new(
+            serde_json::to_value(schemars::schema_for!(T))
+                .expect("schema serializes")
+                .as_object()
+                .expect("schema is object")
+                .clone(),
+        ),
+    )
+}
+
+fn parse_arguments<T: serde::de::DeserializeOwned>(
+    arguments: &Option<serde_json::Map<String, Value>>,
+) -> Result<T, McpError> {
+    serde_json::from_value(serde_json::to_value(arguments).unwrap_or(Value::Null))
+        .map_err(|err| McpError::invalid_params(err.to_string(), None))
 }
 
 fn normalize_template(template: Option<&str>) -> Result<&'static str, McpError> {
