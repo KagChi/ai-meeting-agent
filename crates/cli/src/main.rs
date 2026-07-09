@@ -31,9 +31,25 @@ enum Commands {
         /// Path to audio file
         file: String,
 
-        /// Meeting title
+        /// Meeting title (overrides filename-based title)
         #[arg(short, long)]
         title: Option<String>,
+
+        /// Meeting participants (comma-separated)
+        #[arg(short, long, value_delimiter = ',')]
+        participants: Option<Vec<String>>,
+
+        /// Meeting location
+        #[arg(short, long)]
+        location: Option<String>,
+
+        /// Meeting organizer
+        #[arg(short, long)]
+        organizer: Option<String>,
+
+        /// Recording date and time (format: YYYY-MM-DD HH:MM:SS or YYYY-MM-DD)
+        #[arg(short = 'd', long)]
+        recording_date: Option<String>,
     },
     /// List all meetings
     List,
@@ -99,7 +115,24 @@ async fn main() -> anyhow::Result<()> {
 
     match cli.command {
         Commands::Server { port, host } => commands::server::start(port, host).await,
-        Commands::Import { file, title } => commands::import::run(file, title).await,
+        Commands::Import {
+            file,
+            title,
+            participants,
+            location,
+            organizer,
+            recording_date,
+        } => {
+            commands::import::run(
+                file,
+                title,
+                participants,
+                location,
+                organizer,
+                recording_date,
+            )
+            .await
+        }
         Commands::List => commands::list::run().await,
         Commands::Show { id } => commands::show::run(id).await,
         Commands::Summarize {
