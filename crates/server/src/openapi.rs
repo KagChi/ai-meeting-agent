@@ -7,8 +7,8 @@ use crate::summary_handlers;
 use crate::types::*;
 use meeting_agent_core::jobs::{Job, JobState, JobType, ProgressEvent};
 use meeting_agent_core::models::{
-    Meeting, MeetingStatus, Summary, SummaryStatus, SummaryTemplate, Transcript, TranscriptSegment,
-    TranscriptionInfo,
+    FileMetadata, Meeting, MeetingStatus, MetadataSource, Summary, SummaryStatus, SummaryTemplate,
+    Transcript, TranscriptSegment, TranscriptionInfo,
 };
 use meeting_agent_core::transcription::TranscriptionResponse;
 use utoipa::OpenApi;
@@ -69,6 +69,8 @@ use utoipa::OpenApi;
             // Core domain models
             Meeting,
             MeetingStatus,
+            MetadataSource,
+            FileMetadata,
             TranscriptionInfo,
             Transcript,
             TranscriptSegment,
