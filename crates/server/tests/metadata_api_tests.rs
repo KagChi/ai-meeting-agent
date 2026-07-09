@@ -53,10 +53,8 @@ async fn test_get_meeting_includes_metadata() {
         channels: Some(2),
         file_size_bytes: Some(5242880),
     });
-    meeting.recording_date = Some(NaiveDateTime::parse_from_str(
-        "2024-03-15 09:00:00",
-        "%Y-%m-%d %H:%M:%S",
-    ).unwrap());
+    meeting.recording_date =
+        Some(NaiveDateTime::parse_from_str("2024-03-15 09:00:00", "%Y-%m-%d %H:%M:%S").unwrap());
     meeting.audio_file = Some("meeting.m4a".to_string());
 
     let meeting_id = meeting.id.clone();
@@ -133,7 +131,7 @@ async fn test_post_meeting_response_includes_metadata_fields() {
     assert!(json["status"].is_string());
     assert!(json["created_at"].is_string());
     assert!(json["updated_at"].is_string());
-    
+
     // Metadata fields should be null or absent for new meetings
     // (they're populated via import process)
     assert!(json["participants"].is_null() || json.get("participants").is_none());
@@ -180,22 +178,18 @@ async fn test_list_meetings_includes_metadata() {
     assert_eq!(meetings.len(), 2);
 
     // Find meeting with metadata
-    let meeting_with_metadata = meetings
-        .iter()
-        .find(|m| m["title"] == "Meeting 1")
-        .unwrap();
-    
+    let meeting_with_metadata = meetings.iter().find(|m| m["title"] == "Meeting 1").unwrap();
+
     assert_eq!(meeting_with_metadata["participants"][0], "Alice");
     assert_eq!(meeting_with_metadata["location"], "Room A");
 
     // Find meeting without metadata
-    let meeting_without_metadata = meetings
-        .iter()
-        .find(|m| m["title"] == "Meeting 2")
-        .unwrap();
-    
-    assert!(meeting_without_metadata["participants"].is_null() 
-        || meeting_without_metadata.get("participants").is_none());
+    let meeting_without_metadata = meetings.iter().find(|m| m["title"] == "Meeting 2").unwrap();
+
+    assert!(
+        meeting_without_metadata["participants"].is_null()
+            || meeting_without_metadata.get("participants").is_none()
+    );
 }
 
 #[tokio::test]

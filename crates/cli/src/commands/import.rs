@@ -150,7 +150,10 @@ pub async fn run(
     #[cfg(not(feature = "diarization"))]
     let response = {
         if config.diarize.enabled {
-            println!("{}", "Warning: diarization feature not enabled, skipping speaker diarization".yellow());
+            println!(
+                "{}",
+                "Warning: diarization feature not enabled, skipping speaker diarization".yellow()
+            );
         }
         response
     };

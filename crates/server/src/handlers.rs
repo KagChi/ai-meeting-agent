@@ -131,7 +131,7 @@ pub async fn get_transcript(
 ///
 /// Creates a new meeting with optional metadata. Metadata fields can be populated
 /// through the import endpoint, which automatically extracts metadata from files.
-/// 
+///
 /// Response includes all metadata fields (see GET /meetings/{id} for details).
 #[utoipa::path(
     post,
