@@ -7,11 +7,12 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 
-IMAGE_NAME="${IMAGE_NAME:-ghcr.io/bmw-ece-ntust/ai-meeting-agent/meeting-agent-server}"
+SERVER_IMAGE_NAME="${SERVER_IMAGE_NAME:-ghcr.io/bmw-ece-ntust/ai-meeting-agent/meeting-agent-server}"
+MCP_IMAGE_NAME="${MCP_IMAGE_NAME:-ghcr.io/bmw-ece-ntust/ai-meeting-agent/meeting-agent-mcp}"
 IMAGE_TAG="${IMAGE_TAG:-latest}"
 
 echo "==> Building meeting-agent-server Docker image (x86_64)"
-echo "    Image: ${IMAGE_NAME}:${IMAGE_TAG}"
+echo "    Image: ${SERVER_IMAGE_NAME}:${IMAGE_TAG}"
 echo "    Context: ${PROJECT_ROOT}"
 echo ""
 
@@ -19,11 +20,25 @@ echo ""
 docker build \
   --platform linux/amd64 \
   -f "${SCRIPT_DIR}/Dockerfile.server" \
-  -t "${IMAGE_NAME}:${IMAGE_TAG}" \
+  -t "${SERVER_IMAGE_NAME}:${IMAGE_TAG}" \
   "${PROJECT_ROOT}"
 
 echo ""
-echo "==> Build complete: ${IMAGE_NAME}:${IMAGE_TAG}"
+echo "==> Building meeting-agent-mcp Docker image (x86_64)"
+echo "    Image: ${MCP_IMAGE_NAME}:${IMAGE_TAG}"
+echo "    Context: ${PROJECT_ROOT}"
+echo ""
+
+docker build \
+  --platform linux/amd64 \
+  -f "${SCRIPT_DIR}/Dockerfile.mcp" \
+  -t "${MCP_IMAGE_NAME}:${IMAGE_TAG}" \
+  "${PROJECT_ROOT}"
+
+echo ""
+echo "==> Build complete:"
+echo "    ${SERVER_IMAGE_NAME}:${IMAGE_TAG}"
+echo "    ${MCP_IMAGE_NAME}:${IMAGE_TAG}"
 echo ""
 echo "To run the stack:"
 echo "  cd ${SCRIPT_DIR}"

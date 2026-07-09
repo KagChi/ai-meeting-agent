@@ -6,6 +6,7 @@ A standalone meeting agent API & CLI for transcribing and summarizing meeting re
 
 - **HTTP API Server**: RESTful API for managing meetings, transcripts, and summaries
 - **CLI Tool**: Command-line interface for local operations
+- **HTTP MCP Server**: Streamable HTTP MCP tools for API-based agent access
 - **Interactive Config Wizard**: Guided setup via `meeting-agent config edit`
 - **Live Config API**: Update server config at runtime via `PUT /config` endpoints
 - **OpenAPI / Swagger UI**: Interactive API docs at `/docs`, spec at `/api-docs/openapi.json`
@@ -22,6 +23,7 @@ The project uses a workspace structure with three crates:
 - **`meeting-agent-core`**: Shared business logic, models, and file system operations
 - **`meeting-agent-server`**: Axum-based HTTP API server
 - **`meeting-agent-cli`**: Command-line interface and API client
+- **`meeting-agent-mcp`**: HTTP MCP server that wraps the REST API
 
 ## Installation
 
@@ -43,6 +45,7 @@ cargo build --release
 # Binaries will be in target/release/
 # - meeting-agent-server
 # - meeting-agent
+# - meeting-agent-mcp
 ```
 
 ## Configuration

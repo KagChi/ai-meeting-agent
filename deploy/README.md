@@ -41,6 +41,7 @@ We already keep the **voiceprint** models in this repo's `Dockerfile.diarize`
                               │ whisperx :8010  (DGX, OpenAI STT)                                        │
                               │ minutes-llm :11434 (DGX, Qwen)                                           │
                               │ meeting-agent-server :8080 (in-process CPU diarization via speakrs)      │
+                              │ meeting-agent-mcp :9080 (Streamable HTTP MCP bridge)                    │
                               │ orchestrator (Phase 3-4): Vexa→SOP minutes→daily-log→GCal               │
                               └────────────────────────────────────────────────────────────────────────┘
 ```
@@ -99,6 +100,7 @@ Then restart the server: `docker compose -f deploy/docker-compose.yml restart me
 ### 3. Smoke test
 ```bash
 curl http://localhost:8080/health                          # meeting-agent-server
+curl http://localhost:9080/health                          # meeting-agent-mcp
 curl http://localhost:8010/v1/models                       # whisperx (OpenAI STT)
 # Send a bot to a live meeting (via Vexa):
 curl -X POST "http://localhost:8056/bots" -H "X-API-Key: $VEXA_API_KEY" \

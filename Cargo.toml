@@ -4,6 +4,7 @@ members = [
     "crates/core",
     "crates/server",
     "crates/cli",
+    "crates/mcp",
 ]
 
 [workspace.package]
@@ -40,6 +41,7 @@ env_logger = "0.11"
 # Web framework (server only)
 axum = { version = "0.7", features = ["multipart"] }
 tower-http = { version = "0.5", features = ["cors", "trace", "compression-gzip"] }
+tower = { version = "0.5", features = ["util"] }
 
 # Async utilities
 tokio-util = { version = "0.7", features = ["rt"] }
@@ -50,6 +52,12 @@ tempfile = "3"
 # Stream utilities
 futures-util = "0.3"
 tokio-stream = { version = "0.1", features = ["sync"] }
+
+# MCP
+rmcp = { version = "2.2", features = ["server", "transport-streamable-http-server"] }
+schemars = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 # CLI (cli only)
 clap = { version = "4", features = ["derive", "env"] }
@@ -62,5 +70,4 @@ dotenv = "0.15"
 
 # FFmpeg wrapper
 ffmpeg-sidecar = "2.5"
-
 
