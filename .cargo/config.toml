@@ -1,0 +1,7 @@
+[target.aarch64-apple-darwin]
+rustflags = [
+    "-C", "link-arg=-framework",
+    "-C", "link-arg=Accelerate",
+    "-C", "link-arg=-L/opt/homebrew/lib/gcc/current",
+    "-C", "link-arg=-lgfortran",
+]

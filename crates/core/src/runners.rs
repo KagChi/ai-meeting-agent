@@ -422,22 +422,55 @@ async fn run_import_memory_inner(cfg: &ImportMemoryConfig) -> Result<()> {
         ProgressEvent::new("transcribing", "Sending audio to transcription API").with_percent(10.0),
     );
 
+    log::info!(
+        "[import_memory] starting transcription for {} bytes (chunk_seconds={}, concurrency={})",
+        working_audio.len(),
+        cfg.config.transcription.chunk_seconds,
+        cfg.config.transcription.chunk_concurrency
+    );
+
+    // Write audio to temporary file for reliable ffmpeg processing
+    let temp_dir = std::env::temp_dir();
+    let temp_file_path = temp_dir.join(format!("meeting_agent_import_{}.wav", uuid::Uuid::new_v4()));
+    log::info!(
+        "[import_memory] writing {} bytes to temp file: {}",
+        working_audio.len(),
+        temp_file_path.display()
+    );
+    tokio::fs::write(&temp_file_path, &working_audio)
+        .await
+        .context("Failed to write audio to temp file")?;
+
     let transcription_client = TranscriptionClient::new(cfg.config.transcription.clone())?;
 
     let transcription = transcription_client
-        .transcribe_chunked_memory(
-            &working_audio,
-            &cfg.audio_filename,
-            crate::transcription::ChunkedMemoryConfig {
+        .transcribe_chunked(
+            crate::transcription::TranscriptionRequest {
+                file_path: temp_file_path.to_string_lossy().to_string(),
                 response_format: Some("verbose_json".to_string()),
                 language: None,
                 prompt: None,
                 temperature: None,
-                chunk_seconds: cfg.config.transcription.chunk_seconds,
-                concurrency: cfg.config.transcription.chunk_concurrency,
             },
+            cfg.config.transcription.chunk_seconds,
+            cfg.config.transcription.chunk_concurrency,
         )
         .await?;
+
+    // Clean up temp file
+    if let Err(e) = tokio::fs::remove_file(&temp_file_path).await {
+        log::warn!(
+            "[import_memory] failed to remove temp file {}: {}",
+            temp_file_path.display(),
+            e
+        );
+    }
+
+    log::info!(
+        "[import_memory] transcription complete: {} segments, duration={:.2}s",
+        transcription.segments.as_ref().map(|s| s.len()).unwrap_or(0),
+        transcription.duration.unwrap_or(0.0)
+    );
 
     check_cancelled(&cfg.cancel_token)?;
 

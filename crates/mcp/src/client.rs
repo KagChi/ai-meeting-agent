@@ -149,7 +149,10 @@ impl MeetingAgentClient {
     }
 
     async fn send_json(&self, request: reqwest::RequestBuilder) -> Result<Value> {
+        log::info!("Sending MCP API request");
         let response = request.send().await?;
+        let status = response.status();
+        log::info!("MCP API request completed with status: {}", status);
         let response = self.ensure_success(response).await?;
         Ok(response.json::<Value>().await?)
     }
@@ -179,6 +182,7 @@ impl MeetingAgentClient {
                     })
             })
             .unwrap_or(text);
+        log::error!("MCP API request failed with status {}: {}", status, message);
         Err(ClientError::Api { status, message })
     }
 

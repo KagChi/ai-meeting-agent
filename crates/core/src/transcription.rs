@@ -492,6 +492,7 @@ impl TranscriptionClient {
         audio_bytes: &[u8],
         file_name: &str,
         config: ChunkedMemoryConfig,
+        progress_callback: Option<Box<dyn Fn(usize, usize) + Send + Sync>>,
     ) -> Result<TranscriptionResponse> {
         let started = std::time::Instant::now();
 
@@ -643,7 +644,13 @@ impl TranscriptionClient {
         let mut results: Vec<(usize, TranscriptionResponse)> = Vec::with_capacity(chunk_count);
         while let Some(res) = tasks.join_next().await {
             match res {
-                Ok(Ok(pair)) => results.push(pair),
+                Ok(Ok(pair)) => {
+                    results.push(pair);
+                    // Report progress after each chunk completes
+                    if let Some(ref callback) = progress_callback {
+                        callback(results.len(), chunk_count);
+                    }
+                }
                 Ok(Err(e)) => return Err(e).context("Chunk transcription failed"),
                 Err(join_err) if join_err.is_cancelled() => continue,
                 Err(join_err) => return Err(anyhow::anyhow!("Chunk task panicked: {}", join_err)),
@@ -726,6 +733,13 @@ impl TranscriptionClient {
 
             form = form.text("timestamp_granularities[]", "word");
 
+            log::info!(
+                "Sending transcription request to {} (attempt {}/{})",
+                url,
+                attempt,
+                max_retries
+            );
+
             let response = self
                 .client
                 .post(url)
@@ -736,6 +750,10 @@ impl TranscriptionClient {
 
             match response {
                 Ok(resp) if resp.status().is_success() => {
+                    log::info!(
+                        "Transcription request completed successfully with status: {}",
+                        resp.status()
+                    );
                     return Ok(resp);
                 }
                 Ok(resp) if resp.status().is_server_error() && attempt < max_retries => {
@@ -756,6 +774,7 @@ impl TranscriptionClient {
                     // Client error (4xx) or final retry exhausted
                     let status = resp.status();
                     let error_text = resp.text().await.unwrap_or_default();
+                    log::error!("Transcription API request failed with status {}: {}", status, error_text);
                     anyhow::bail!("API request failed with status {}: {}", status, error_text);
                 }
                 Err(e) if attempt < max_retries => {

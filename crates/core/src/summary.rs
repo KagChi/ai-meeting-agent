@@ -103,6 +103,13 @@ impl SummaryClient {
             max_tokens: self.config.max_tokens,
         };
 
+        log::info!(
+            "Sending summary request to {} (model: {}, template: {:?})",
+            url,
+            self.config.model,
+            options.template
+        );
+
         let response = self
             .client
             .post(&url)
@@ -112,9 +119,16 @@ impl SummaryClient {
             .await
             .context("Failed to send summary request")?;
 
-        if !response.status().is_success() {
-            let status = response.status();
+        let status = response.status();
+        log::info!("Summary request completed with status: {}", status);
+
+        if !status.is_success() {
             let error_text = response.text().await.unwrap_or_default();
+            log::error!(
+                "Summary API request failed with status {}: {}",
+                status,
+                error_text
+            );
             anyhow::bail!(
                 "Summary API request failed with status {}: {}",
                 status,
