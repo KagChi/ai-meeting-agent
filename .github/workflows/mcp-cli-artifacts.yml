@@ -45,6 +45,10 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
+      - name: Install gfortran (macOS only)
+        if: runner.os == 'macOS'
+        run: brew install gcc
+
       - name: Build MCP CLI
         run: cargo build --release --target ${{ matrix.target }} --bin meeting-agent-mcp
 
