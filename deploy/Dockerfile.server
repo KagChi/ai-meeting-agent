@@ -4,7 +4,7 @@
 # (required for audio conversion/chunking).
 
 # ---- builder ----
-FROM ubuntu:22.04 AS builder
+FROM ubuntu:24.04 AS builder
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates curl pkg-config g++ git libssl-dev libopenblas-dev \
@@ -18,7 +18,7 @@ COPY crates/ ./crates/
 RUN cargo build --release --bin meeting-agent-server
 
 # ---- runtime ----
-FROM debian:12-slim AS runtime
+FROM debian:13-slim AS runtime
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates libstdc++6 ffmpeg \
     && rm -rf /var/lib/apt/lists/*
