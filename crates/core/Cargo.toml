@@ -33,14 +33,18 @@ regex = "1"
 utoipa = { version = "4", optional = true, features = ["chrono", "uuid"] }
 
 # Platform-specific speakrs configurations
+# Use openblas-system for all platforms (most compatible across architectures)
 [target.'cfg(target_os = "macos")'.dependencies]
-speakrs = { version = "0.5", optional = true, default-features = false, features = ["online", "coreml", "intel-mkl"] }
+speakrs = { version = "0.5", optional = true, default-features = false, features = ["online", "coreml", "openblas-system"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
-speakrs = { version = "0.5", optional = true, default-features = false, features = ["online", "cuda", "migraphx", "intel-mkl"] }
+speakrs = { version = "0.5", optional = true, default-features = false, features = ["online", "cuda", "migraphx", "openblas-system"] }
 
-[target.'cfg(not(any(target_os = "macos", target_os = "linux")))'.dependencies]
-speakrs = { version = "0.5", optional = true, default-features = false, features = ["online", "intel-mkl"] }
+[target.'cfg(target_os = "windows")'.dependencies]
+speakrs = { version = "0.5", optional = true, default-features = false, features = ["online", "openblas-system"] }
+
+[target.'cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))'.dependencies]
+speakrs = { version = "0.5", optional = true, default-features = false, features = ["online", "openblas-system"] }
 
 # Metadata parsing
 regex = "1"
