@@ -34,10 +34,10 @@ utoipa = { version = "4", optional = true, features = ["chrono", "uuid"] }
 
 # Platform-specific speakrs configurations
 [target.'cfg(target_os = "macos")'.dependencies]
-speakrs = { version = "0.5", optional = true, default-features = false, features = ["online", "openblas-static", "coreml"] }
+speakrs = { version = "0.5", optional = true, default-features = false, features = ["online", "coreml"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
-speakrs = { version = "0.5", optional = true, default-features = false, features = ["online", "openblas-static", "cuda", "migraphx"] }
+speakrs = { version = "0.5", optional = true, default-features = false, features = ["online", "cuda", "migraphx"] }
 
 [target.'cfg(not(any(target_os = "macos", target_os = "linux")))'.dependencies]
 speakrs = { version = "0.5", optional = true, default-features = false }
