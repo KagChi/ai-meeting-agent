@@ -1,8 +1,8 @@
-# Meeting Agent MCP Server
+# Meeting Agent MCP
 
-HTTP MCP server for the Meeting Agent REST API.
+MCP tools for the Meeting Agent REST API.
 
-## Run
+## Run HTTP Server
 
 Start the Meeting Agent API first:
 
@@ -10,10 +10,10 @@ Start the Meeting Agent API first:
 cargo run --bin meeting-agent-server
 ```
 
-Start MCP server:
+Start MCP HTTP server:
 
 ```bash
-MEETING_AGENT_BASE_URL=http://localhost:8080 cargo run --bin meeting-agent-mcp
+MEETING_AGENT_BASE_URL=http://localhost:8080 cargo run --bin meeting-agent-mcp-server
 ```
 
 Default MCP endpoint:
@@ -38,6 +38,16 @@ MEETING_AGENT_API_KEY=
 ```
 
 No MCP-side auth enforced for now. CORS is permissive for local/dev clients.
+
+## Run Stdio CLI
+
+Use `meeting-agent-mcp` as a local MCP server command for clients that launch MCP over stdio:
+
+```bash
+MEETING_AGENT_BASE_URL=http://localhost:8080 cargo run --bin meeting-agent-mcp
+```
+
+Logs are written to stderr so stdout stays reserved for MCP JSON-RPC.
 
 ## Tools
 

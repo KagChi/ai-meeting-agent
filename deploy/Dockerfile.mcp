@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1.7
-# Meeting Agent MCP HTTP server (meeting-agent-mcp).
+# Meeting Agent MCP HTTP server (meeting-agent-mcp-server).
 # Multi-stage: build the release binary, then a slim runtime.
 
 # ---- builder ----
@@ -14,7 +14,7 @@ ENV PATH="/root/.cargo/bin:${PATH}"
 WORKDIR /app
 COPY Cargo.toml Cargo.lock ./
 COPY crates/ ./crates/
-RUN cargo build --release --bin meeting-agent-mcp
+RUN cargo build --release --bin meeting-agent-mcp-server
 
 # ---- runtime ----
 FROM debian:12-slim AS runtime
@@ -22,9 +22,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates libstdc++6 \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
-COPY --from=builder /app/target/release/meeting-agent-mcp /usr/local/bin/meeting-agent-mcp
+COPY --from=builder /app/target/release/meeting-agent-mcp-server /usr/local/bin/meeting-agent-mcp-server
 EXPOSE 9080
 ENV MCP_HOST=0.0.0.0 \
     MCP_PORT=9080 \
     MEETING_AGENT_BASE_URL=http://meeting-agent-server:8080
-ENTRYPOINT ["meeting-agent-mcp"]
+ENTRYPOINT ["meeting-agent-mcp-server"]

@@ -7,6 +7,8 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
+const REFINE_CHUNK_CHARS: usize = 3000;
+
 pub struct SummaryClient {
     client: reqwest::Client,
     config: SummaryConfig,
@@ -79,12 +81,6 @@ impl SummaryClient {
                 .or(self.config.language.as_deref()),
         );
 
-        let api_key = self
-            .config
-            .api_key
-            .as_ref()
-            .context("SUMMARY_API_KEY is required but not set")?;
-
         let url = self.config.resolve_base_url();
 
         let request = ChatRequest {
@@ -103,36 +99,14 @@ impl SummaryClient {
             max_tokens: self.config.max_tokens,
         };
 
-        let response = self
-            .client
-            .post(&url)
-            .header("Authorization", format!("Bearer {}", api_key))
-            .json(&request)
-            .send()
-            .await
-            .context("Failed to send summary request")?;
+        log::info!(
+            "Sending summary request to {} (model: {}, template: {:?})",
+            url,
+            self.config.model,
+            options.template
+        );
 
-        if !response.status().is_success() {
-            let status = response.status();
-            let error_text = response.text().await.unwrap_or_default();
-            anyhow::bail!(
-                "Summary API request failed with status {}: {}",
-                status,
-                error_text
-            );
-        }
-
-        let chat_response: ChatResponse = response
-            .json()
-            .await
-            .context("Failed to parse summary response")?;
-
-        let content = chat_response
-            .choices
-            .into_iter()
-            .next()
-            .map(|c| c.message.content)
-            .context("Summary response contained no choices")?;
+        let content = self.send_chat_request(&url, &request, "summary").await?;
 
         let (key_points, action_items, decisions) =
             parse_sections(&content, options.template.clone());
@@ -144,6 +118,211 @@ impl SummaryClient {
             decisions,
         })
     }
+
+    /// Refine a raw transcript using LLM to improve formatting, punctuation, and readability.
+    /// Returns the refined text as a String.
+    pub async fn refine(&self, transcript: &TranscriptionResponse) -> Result<String> {
+        let system_prompt = "You are a transcript refinement assistant. Your task is to improve raw transcripts by:\n\
+            1. Adding proper punctuation and capitalization\n\
+            2. Structuring the text into clear paragraphs based on topic shifts and speaker changes\n\
+            3. Fixing transcription errors and making the text more readable\n\
+            4. Preserving all original content and meaning\n\
+            5. Keeping any speaker labels (like SPEAKER_00, SPEAKER_01) intact\n\
+            6. Maintaining the original language(s) of the transcript\n\n\
+            Output ONLY the refined transcript text without any additional commentary or metadata.";
+
+        let url = self.config.resolve_base_url();
+        let chunks = chunk_refinement_input(transcript, REFINE_CHUNK_CHARS);
+        log::info!(
+            "Sending refinement request to {} (model: {}, chunks: {})",
+            url,
+            self.config.model,
+            chunks.len()
+        );
+
+        let mut refined_chunks = Vec::with_capacity(chunks.len());
+        for (idx, chunk) in chunks.iter().enumerate() {
+            let user_prompt = if chunks.len() == 1 {
+                format!("Refine this transcript:\n\n{chunk}")
+            } else {
+                format!(
+                    "Refine this transcript chunk ({}/{}). Do not summarize. Do not add chunk labels.\n\n{}",
+                    idx + 1,
+                    chunks.len(),
+                    chunk
+                )
+            };
+
+            let request = ChatRequest {
+                model: self.config.model.clone(),
+                messages: vec![
+                    ChatMessage {
+                        role: "system".to_string(),
+                        content: system_prompt.to_string(),
+                    },
+                    ChatMessage {
+                        role: "user".to_string(),
+                        content: user_prompt,
+                    },
+                ],
+                temperature: 0.3,
+                max_tokens: self.config.max_tokens.max(1024),
+            };
+
+            log::info!(
+                "Sending refinement chunk {}/{} ({} chars)",
+                idx + 1,
+                chunks.len(),
+                chunk.len()
+            );
+            refined_chunks.push(
+                self.send_chat_request(&url, &request, "refinement")
+                    .await?
+                    .trim()
+                    .to_string(),
+            );
+        }
+
+        Ok(refined_chunks.join("\n\n"))
+    }
+
+    async fn send_chat_request(
+        &self,
+        url: &str,
+        request: &ChatRequest,
+        operation: &str,
+    ) -> Result<String> {
+        let mut request_builder = self.client.post(url).json(request);
+
+        if let Some(api_key) = &self.config.api_key {
+            request_builder =
+                request_builder.header("Authorization", format!("Bearer {}", api_key));
+        }
+
+        let response = request_builder
+            .send()
+            .await
+            .with_context(|| format!("Failed to send {operation} request"))?;
+
+        let status = response.status();
+        log::info!("{} request completed with status: {}", operation, status);
+
+        if !status.is_success() {
+            let error_text = response.text().await.unwrap_or_default();
+            log::error!(
+                "{} API request failed with status {}: {}",
+                operation,
+                status,
+                error_text
+            );
+            anyhow::bail!(
+                "{} API request failed with status {}: {}",
+                operation,
+                status,
+                error_text
+            );
+        }
+
+        let chat_response: ChatResponse = response
+            .json()
+            .await
+            .with_context(|| format!("Failed to parse {operation} response"))?;
+
+        chat_response
+            .choices
+            .into_iter()
+            .next()
+            .map(|c| c.message.content)
+            .with_context(|| format!("{operation} response contained no choices"))
+    }
+}
+
+fn chunk_refinement_input(transcript: &TranscriptionResponse, max_chars: usize) -> Vec<String> {
+    let segments = transcript.segments.as_deref().unwrap_or(&[]);
+    if !segments.is_empty() {
+        let lines = segments.iter().map(|s| {
+            let text = s.text.trim();
+            match s.speaker.as_deref() {
+                Some(speaker) if !speaker.trim().is_empty() => format!("{}: {}", speaker, text),
+                _ => text.to_string(),
+            }
+        });
+        return chunk_lines(lines, max_chars);
+    }
+
+    chunk_words(&transcript.text, max_chars)
+}
+
+fn chunk_lines<I>(lines: I, max_chars: usize) -> Vec<String>
+where
+    I: IntoIterator<Item = String>,
+{
+    let mut chunks = Vec::new();
+    let mut current = String::new();
+
+    for line in lines {
+        if line.trim().is_empty() {
+            continue;
+        }
+
+        if line.len() > max_chars {
+            if !current.trim().is_empty() {
+                chunks.push(current.trim().to_string());
+                current.clear();
+            }
+            chunks.extend(chunk_words(&line, max_chars));
+            continue;
+        }
+
+        let separator_len = if current.is_empty() { 0 } else { 1 };
+        if current.len() + separator_len + line.len() > max_chars && !current.is_empty() {
+            chunks.push(current.trim().to_string());
+            current.clear();
+        }
+
+        if !current.is_empty() {
+            current.push('\n');
+        }
+        current.push_str(line.trim());
+    }
+
+    if !current.trim().is_empty() {
+        chunks.push(current.trim().to_string());
+    }
+
+    if chunks.is_empty() {
+        chunks.push(String::new());
+    }
+
+    chunks
+}
+
+fn chunk_words(text: &str, max_chars: usize) -> Vec<String> {
+    let mut chunks = Vec::new();
+    let mut current = String::new();
+
+    for word in text.split_whitespace() {
+        let separator_len = if current.is_empty() { 0 } else { 1 };
+        if current.len() + separator_len + word.len() > max_chars && !current.is_empty() {
+            chunks.push(current.trim().to_string());
+            current.clear();
+        }
+
+        if !current.is_empty() {
+            current.push(' ');
+        }
+        current.push_str(word);
+    }
+
+    if !current.trim().is_empty() {
+        chunks.push(current.trim().to_string());
+    }
+
+    if chunks.is_empty() {
+        chunks.push(String::new());
+    }
+
+    chunks
 }
 
 fn system_prompt(template: SummaryTemplate) -> String {

@@ -44,10 +44,11 @@ pub async fn create_summary(
         )));
     }
 
-    let language = req.language.or_else(|| {
-        // Need to block on async read in sync context - use blocking_read
-        state.config.blocking_read().summary.language.clone()
-    });
+    let language = if let Some(lang) = req.language {
+        Some(lang)
+    } else {
+        state.config.read().await.summary.language.clone()
+    };
 
     let job_id = state.jobs.create_job(JobType::Summary);
     state

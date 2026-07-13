@@ -1,6 +1,4 @@
 use crate::{client::MeetingAgentClient, error::ClientError, schemas::*};
-use base64::{engine::general_purpose::STANDARD, Engine as _};
-use futures_util::TryStreamExt;
 use rmcp::{
     model::{
         CallToolRequestParams, CallToolResult, ContentBlock, Implementation,
@@ -12,9 +10,7 @@ use rmcp::{
 };
 use schemars::JsonSchema;
 use serde_json::Value;
-use std::path::PathBuf;
 use std::sync::Arc;
-use tokio::io::AsyncWriteExt;
 
 #[derive(Clone)]
 pub struct MeetingAgentMcpServer {
@@ -51,22 +47,15 @@ impl ServerHandler for MeetingAgentMcpServer {
         _context: RequestContext<RoleServer>,
     ) -> Result<ListToolsResult, McpError> {
         Ok(ListToolsResult::with_all_items(vec![
-            tool::<ImportMeetingAudioRequest>(
-                "importMeetingAudio",
-                "Import a meeting audio/video file from file_url, file_path accessible by MCP server, or small file_base64 payload. For large local remote uploads, use createUpload/uploadChunk/finishUpload.",
+            tool::<ImportFromFileRequest>(
+                "importFromFile",
+                "Import a meeting audio/video file from a local file path accessible by the MCP server.",
             ),
-            tool::<CreateUploadRequest>(
-                "createUpload",
-                "Start a chunked remote upload. Returns upload_id.",
+            tool::<ImportFromUrlRequest>(
+                "importFromUrl",
+                "Import a meeting audio/video file by downloading from an HTTP(S) URL.",
             ),
-            tool::<UploadChunkRequest>(
-                "uploadChunk",
-                "Append one base64 chunk to an upload_id. Use repeated calls for large files.",
-            ),
-            tool::<FinishUploadRequest>(
-                "finishUpload",
-                "Finish chunked upload and import the uploaded file. Returns background job id.",
-            ),
+
             tool::<JobIdRequest>("getJobStatus", "Get current import or summary job status."),
             tool::<JobIdRequest>(
                 "streamJobEvents",
@@ -99,66 +88,21 @@ impl ServerHandler for MeetingAgentMcpServer {
         _context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, McpError> {
         let result = match request.name.as_ref() {
-            "importMeetingAudio" => {
-                let req: ImportMeetingAudioRequest = parse_arguments(&request.arguments)?;
-                match (req.file_url, req.file_base64, req.filename, req.file_path) {
-                    (Some(file_url), None, filename, None) => {
-                        let path = download_url_to_upload(&file_url, filename.as_deref()).await?;
-                        let result = self
-                            .client
-                            .import_meeting_audio(&path.to_string_lossy(), req.title.as_deref())
-                            .await?;
-                        tokio::spawn(async move {
-                            if let Err(err) = tokio::fs::remove_file(&path).await {
-                                tracing::warn!(%err, "failed to remove MCP URL download temp file");
-                            }
-                        });
-                        result
-                    }
-                    (None, Some(file_base64), Some(filename), None) => {
-                        let bytes = STANDARD.decode(file_base64).map_err(|err| {
-                            ClientError::InvalidInput(format!("invalid file_base64: {err}"))
-                        })?;
-                        self.client
-                            .import_meeting_audio_bytes(bytes, filename, req.title.as_deref())
-                            .await?
-                    }
-                    (None, None, None, Some(file_path)) => {
-                        self.client
-                            .import_meeting_audio(&file_path, req.title.as_deref())
-                            .await?
-                    }
-                    _ => {
-                        return Err(ClientError::InvalidInput(
-                            "provide exactly one import source: file_url, file_base64 + filename, or file_path accessible by the MCP server"
-                                .to_string(),
-                        )
-                        .into())
-                    }
-                }
+            "importFromFile" => {
+                let req: ImportFromFileRequest = parse_arguments(&request.arguments)?;
+                self.client
+                    .import_meeting_audio(&req.file_path, req.title.as_deref())
+                    .await?
             }
-            "createUpload" => {
-                let req: CreateUploadRequest = parse_arguments(&request.arguments)?;
-                create_upload(&req.filename).await?
+            "importFromUrl" => {
+                let req: ImportFromUrlRequest = parse_arguments(&request.arguments)?;
+                let (bytes, filename) =
+                    download_url_to_memory(&req.url, req.filename.as_deref()).await?;
+                self.client
+                    .import_meeting_audio_bytes(bytes, filename, req.title.as_deref())
+                    .await?
             }
-            "uploadChunk" => {
-                let req: UploadChunkRequest = parse_arguments(&request.arguments)?;
-                upload_chunk(&req.upload_id, &req.chunk_base64, req.offset).await?
-            }
-            "finishUpload" => {
-                let req: FinishUploadRequest = parse_arguments(&request.arguments)?;
-                let path = upload_path(&req.upload_id)?;
-                let result = self
-                    .client
-                    .import_meeting_audio(&path.to_string_lossy(), req.title.as_deref())
-                    .await?;
-                tokio::spawn(async move {
-                    if let Err(err) = tokio::fs::remove_file(&path).await {
-                        tracing::warn!(%err, "failed to remove MCP upload temp file");
-                    }
-                });
-                result
-            }
+
             "getJobStatus" => {
                 let req: JobIdRequest = parse_arguments(&request.arguments)?;
                 self.client.get_job_status(&req.job_id).await?
@@ -256,78 +200,10 @@ fn parse_arguments<T: serde::de::DeserializeOwned>(
         .map_err(|err| McpError::invalid_params(err.to_string(), None))
 }
 
-async fn create_upload(filename: &str) -> Result<Value, McpError> {
-    let extension = std::path::Path::new(filename)
-        .extension()
-        .and_then(|value| value.to_str())
-        .filter(|value| value.chars().all(|ch| ch.is_ascii_alphanumeric()))
-        .unwrap_or("bin");
-    let upload_id = format!("{}.{extension}", uuid::Uuid::new_v4());
-    let path = upload_path(&upload_id)?;
-    if let Some(parent) = path.parent() {
-        tokio::fs::create_dir_all(parent)
-            .await
-            .map_err(ClientError::from)?;
-    }
-    tokio::fs::File::create(&path)
-        .await
-        .map_err(ClientError::from)?;
-    Ok(serde_json::json!({ "upload_id": upload_id }))
-}
-
-async fn upload_chunk(
-    upload_id: &str,
-    chunk_base64: &str,
-    offset: Option<u64>,
-) -> Result<Value, McpError> {
-    let path = upload_path(upload_id)?;
-    let bytes = STANDARD
-        .decode(chunk_base64)
-        .map_err(|err| ClientError::InvalidInput(format!("invalid chunk_base64: {err}")))?;
-
-    let current_size = tokio::fs::metadata(&path)
-        .await
-        .map_err(ClientError::from)?
-        .len();
-    if let Some(offset) = offset {
-        if offset != current_size {
-            return Err(ClientError::InvalidInput(format!(
-                "chunk offset mismatch: expected {current_size}, got {offset}"
-            ))
-            .into());
-        }
-    }
-
-    let mut file = tokio::fs::OpenOptions::new()
-        .append(true)
-        .open(&path)
-        .await
-        .map_err(ClientError::from)?;
-    file.write_all(&bytes).await.map_err(ClientError::from)?;
-    file.flush().await.map_err(ClientError::from)?;
-
-    Ok(serde_json::json!({
-        "upload_id": upload_id,
-        "bytes_received": current_size + bytes.len() as u64,
-    }))
-}
-
-fn upload_path(upload_id: &str) -> Result<PathBuf, McpError> {
-    if !upload_id
-        .chars()
-        .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '.')
-    {
-        return Err(ClientError::InvalidInput("invalid upload_id".to_string()).into());
-    }
-    Ok(std::env::temp_dir()
-        .join("meeting-agent-mcp-uploads")
-        .join(upload_id))
-}
-
-async fn download_url_to_upload(
+async fn download_url_to_memory(
     file_url: &str,
     filename: Option<&str>,
-) -> Result<PathBuf, McpError> {
+) -> Result<(Vec<u8>, String), McpError> {
     let url = reqwest::Url::parse(file_url)
         .map_err(|err| ClientError::InvalidInput(format!("invalid file_url: {err}")))?;
     if !matches!(url.scheme(), "http" | "https") {
@@ -342,22 +218,10 @@ async fn download_url_to_upload(
         .or_else(|| {
             url.path_segments()
                 .and_then(|mut segments| segments.next_back())
+                .map(|s| s.split('?').next().unwrap_or(s).to_string())
                 .filter(|value| !value.trim().is_empty())
-                .map(str::to_string)
         })
         .unwrap_or_else(|| "download.bin".to_string());
-    let extension = std::path::Path::new(&filename)
-        .extension()
-        .and_then(|value| value.to_str())
-        .filter(|value| value.chars().all(|ch| ch.is_ascii_alphanumeric()))
-        .unwrap_or("bin");
-    let upload_id = format!("{}.{extension}", uuid::Uuid::new_v4());
-    let path = upload_path(&upload_id)?;
-    if let Some(parent) = path.parent() {
-        tokio::fs::create_dir_all(parent)
-            .await
-            .map_err(ClientError::from)?;
-    }
 
     let response = reqwest::get(url).await.map_err(ClientError::from)?;
     if !response.status().is_success() {
@@ -368,15 +232,8 @@ async fn download_url_to_upload(
         .into());
     }
 
-    let mut file = tokio::fs::File::create(&path)
-        .await
-        .map_err(ClientError::from)?;
-    let mut stream = response.bytes_stream();
-    while let Some(chunk) = stream.try_next().await.map_err(ClientError::from)? {
-        file.write_all(&chunk).await.map_err(ClientError::from)?;
-    }
-    file.flush().await.map_err(ClientError::from)?;
-    Ok(path)
+    let bytes = response.bytes().await.map_err(ClientError::from)?;
+    Ok((bytes.to_vec(), filename))
 }
 
 fn normalize_template(template: Option<&str>) -> Result<&'static str, McpError> {

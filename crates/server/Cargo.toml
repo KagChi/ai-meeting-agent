@@ -16,7 +16,7 @@ path = "src/main.rs"
 
 [dependencies]
 # Local dependencies
-meeting-agent-core = { path = "../core", features = ["openapi"] }
+meeting-agent-core = { path = "../core", features = ["openapi", "diarization"] }
 
 # Workspace dependencies
 tokio = { workspace = true }

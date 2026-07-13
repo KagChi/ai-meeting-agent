@@ -223,30 +223,50 @@ fn try_init_pipeline_with_fallback(
 }
 
 /// Run `f` against the process-wide pipeline, initializing it on first use.
+///
+/// The mutex is only held during initialization. The pipeline is moved out
+/// temporarily, used, then put back to allow concurrent diarization operations.
 fn with_pipeline<T>(
     cfg: &DiarizerConfig,
     f: impl FnOnce(&mut OwnedDiarizationPipeline) -> Result<T>,
 ) -> anyhow::Result<T> {
     let mutex = DIARIZER.get_or_init(|| Mutex::new(None));
-    let mut guard = mutex
-        .lock()
-        .map_err(|e| anyhow::anyhow!("diarizer mutex poisoned: {e}"))?;
 
-    if guard.is_none() {
-        log::info!(
-            "[diarize] initializing speakrs pipeline (mode={}, model_dir={:?})",
-            cfg.execution_mode,
-            cfg.model_dir
-        );
-        let init_start = std::time::Instant::now();
-        let pipeline = try_init_pipeline_with_fallback(&cfg.model_dir, cfg.execution_mode)?;
-        log::info!(
-            "[diarize] pipeline initialized in {:.2}s",
-            init_start.elapsed().as_secs_f64()
-        );
+    // Take the pipeline out of the mutex temporarily
+    let mut pipeline = {
+        let mut guard = mutex
+            .lock()
+            .map_err(|e| anyhow::anyhow!("diarizer mutex poisoned: {e}"))?;
+
+        if guard.is_none() {
+            log::info!(
+                "[diarize] initializing speakrs pipeline (mode={}, model_dir={:?})",
+                cfg.execution_mode,
+                cfg.model_dir
+            );
+            let init_start = std::time::Instant::now();
+            let pipeline = try_init_pipeline_with_fallback(&cfg.model_dir, cfg.execution_mode)?;
+            log::info!(
+                "[diarize] pipeline initialized in {:.2}s",
+                init_start.elapsed().as_secs_f64()
+            );
+            *guard = Some(pipeline);
+        }
+
+        // Take ownership of the pipeline, releasing the mutex
+        guard.take().expect("pipeline must be initialized above")
+    }; // Mutex guard is dropped here, allowing other threads to proceed
+
+    // Run the closure with the pipeline outside the mutex
+    let result = f(&mut pipeline);
+
+    // Put the pipeline back
+    {
+        let mut guard = mutex
+            .lock()
+            .map_err(|e| anyhow::anyhow!("diarizer mutex poisoned: {e}"))?;
         *guard = Some(pipeline);
     }
 
-    let pipeline = guard.as_mut().expect("pipeline must be initialized above");
-    f(pipeline).map_err(Into::into)
+    result.map_err(Into::into)
 }
