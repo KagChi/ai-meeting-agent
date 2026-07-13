@@ -73,6 +73,7 @@ fn load_transcript() -> TranscriptionResponse {
                     language: Some("en".to_string()),
                     duration: Some(segs.last().map(|s| s.end).unwrap_or(0.0)),
                     segments: Some(segs),
+                    refined_text: None,
                 };
             }
         }
@@ -98,6 +99,7 @@ fn load_transcript() -> TranscriptionResponse {
             no_speech_prob: None,
             speaker: None,
         }]),
+        refined_text: None,
     }
 }
 

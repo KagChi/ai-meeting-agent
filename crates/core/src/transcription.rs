@@ -1030,6 +1030,7 @@ mod tests {
                     speaker: None,
                 },
             ]),
+            refined_text: None,
         };
         let chunk2 = TranscriptionResponse {
             text: "general kenobi".to_string(),
@@ -1061,6 +1062,7 @@ mod tests {
                     speaker: None,
                 },
             ]),
+            refined_text: None,
         };
 
         let merged = merge_chunk_responses(vec![chunk1, chunk2], vec![600.0, 500.0]);
@@ -1106,6 +1108,7 @@ mod tests {
                 no_speech_prob: None,
                 speaker: None,
             }]),
+            refined_text: None,
         };
         let merged = merge_chunk_responses(vec![chunk.clone()], vec![100.0]);
         assert_eq!(merged.text, "only chunk");
@@ -1125,12 +1128,14 @@ mod tests {
             language: None,
             duration: Some(50.0),
             segments: None,
+            refined_text: None,
         };
         let chunk2 = TranscriptionResponse {
             text: "neither here".to_string(),
             language: Some("en".to_string()),
             duration: Some(50.0),
             segments: None,
+            refined_text: None,
         };
         let merged = merge_chunk_responses(vec![chunk1, chunk2], vec![50.0, 50.0]);
         assert_eq!(merged.text, "no segments here neither here");

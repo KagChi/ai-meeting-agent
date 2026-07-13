@@ -505,6 +505,7 @@ mod tests {
                 make_segment(0.0, "Hello world"),
                 make_segment(65.0, "Second line"),
             ]),
+            refined_text: None,
         };
         let out = format_transcript(&t);
         assert!(out.contains("[00:00] Hello world"));
@@ -518,6 +519,7 @@ mod tests {
             language: None,
             duration: None,
             segments: None,
+            refined_text: None,
         };
         let out = format_transcript(&t);
         assert_eq!(out, "Hello world from text");
@@ -530,6 +532,7 @@ mod tests {
             language: None,
             duration: None,
             segments: Some(vec![]),
+            refined_text: None,
         };
         let out = format_transcript(&t);
         assert_eq!(out, "Fallback text");
