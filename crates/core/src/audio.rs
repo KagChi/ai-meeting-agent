@@ -183,11 +183,11 @@ pub fn convert_to_wav_memory(input_bytes: &[u8]) -> Result<Vec<u8>> {
     let writer_thread = thread::spawn(move || -> Result<()> {
         // Ignore broken pipe errors - FFmpeg may close stdin early if input is invalid
         match stdin.write_all(&input_data) {
-            Ok(_) => {},
+            Ok(_) => {}
             Err(e) if e.kind() == std::io::ErrorKind::BrokenPipe => {
                 // FFmpeg closed stdin early, likely due to invalid input
                 // Don't fail here - let the process exit status tell us what went wrong
-            },
+            }
             Err(e) => return Err(anyhow::Error::from(e).context("Failed to write to FFmpeg stdin")),
         }
         // Drop stdin to close it and signal EOF
@@ -198,7 +198,8 @@ pub fn convert_to_wav_memory(input_bytes: &[u8]) -> Result<Vec<u8>> {
     // Read stdout and stderr concurrently to avoid deadlock
     let stderr_thread = thread::spawn(move || -> Result<Vec<u8>> {
         let mut stderr_data = Vec::new();
-        stderr.read_to_end(&mut stderr_data)
+        stderr
+            .read_to_end(&mut stderr_data)
             .context("Failed to read FFmpeg stderr")?;
         Ok(stderr_data)
     });
@@ -255,7 +256,10 @@ pub fn probe_duration_from_bytes(audio_bytes: &[u8]) -> Result<f64> {
 
     // Check if bytes look like valid audio (basic heuristic)
     if audio_bytes.len() < 100 {
-        log::error!("[probe_duration_from_bytes] audio data too small: {} bytes", audio_bytes.len());
+        log::error!(
+            "[probe_duration_from_bytes] audio data too small: {} bytes",
+            audio_bytes.len()
+        );
         anyhow::bail!("Audio data too small: {} bytes", audio_bytes.len());
     }
 
@@ -277,7 +281,10 @@ pub fn probe_duration_from_bytes(audio_bytes: &[u8]) -> Result<f64> {
     if let Some(mut stdin) = child.stdin.take() {
         match stdin.write_all(audio_bytes) {
             Ok(_) => {
-                log::debug!("[probe_duration_from_bytes] wrote {} bytes to ffprobe stdin", audio_bytes.len());
+                log::debug!(
+                    "[probe_duration_from_bytes] wrote {} bytes to ffprobe stdin",
+                    audio_bytes.len()
+                );
             }
             Err(e) if e.kind() == std::io::ErrorKind::BrokenPipe => {
                 log::warn!("[probe_duration_from_bytes] broken pipe while writing to ffprobe (ffprobe may have rejected input early)");
@@ -304,13 +311,19 @@ pub fn probe_duration_from_bytes(audio_bytes: &[u8]) -> Result<f64> {
         stderr.len(),
         stdout.len()
     );
-    
+
     if !stderr.trim().is_empty() {
-        log::info!("[probe_duration_from_bytes] ffprobe stderr: {}", stderr.trim());
+        log::info!(
+            "[probe_duration_from_bytes] ffprobe stderr: {}",
+            stderr.trim()
+        );
     }
-    
+
     if !stdout.trim().is_empty() {
-        log::info!("[probe_duration_from_bytes] ffprobe stdout: {}", stdout.trim());
+        log::info!(
+            "[probe_duration_from_bytes] ffprobe stdout: {}",
+            stdout.trim()
+        );
     }
 
     if !output.status.success() {
@@ -318,24 +331,31 @@ pub fn probe_duration_from_bytes(audio_bytes: &[u8]) -> Result<f64> {
             "[probe_duration_from_bytes] ffprobe failed with status {:?}",
             output.status.code()
         );
-        anyhow::bail!("ffprobe failed (exit {}): {}", output.status.code().unwrap_or(-1), stderr.trim());
+        anyhow::bail!(
+            "ffprobe failed (exit {}): {}",
+            output.status.code().unwrap_or(-1),
+            stderr.trim()
+        );
     }
 
     // Log any warnings from stderr even on success
     if !stderr.trim().is_empty() {
-        log::warn!("[probe_duration_from_bytes] ffprobe stderr: {}", stderr.trim());
+        log::warn!(
+            "[probe_duration_from_bytes] ffprobe stderr: {}",
+            stderr.trim()
+        );
     }
 
     let duration_str = stdout.trim();
-    
+
     // Handle "N/A" case - ffprobe couldn't determine duration from container metadata
     if duration_str == "N/A" || duration_str.is_empty() {
         log::warn!("[probe_duration_from_bytes] ffprobe returned N/A for duration, audio may lack container metadata");
-        
+
         // Fall back to counting frames - more expensive but works for headerless/piped audio
         return probe_duration_from_bytes_fallback(audio_bytes);
     }
-    
+
     let duration: f64 = duration_str
         .parse()
         .with_context(|| format!("Failed to parse duration: {:?}", duration_str))?;
@@ -348,8 +368,11 @@ pub fn probe_duration_from_bytes(audio_bytes: &[u8]) -> Result<f64> {
 fn probe_duration_from_bytes_fallback(audio_bytes: &[u8]) -> Result<f64> {
     use std::io::Write;
     use std::process::{Command, Stdio};
-    
-    log::info!("[probe_duration_from_bytes_fallback] counting frames for {} bytes", audio_bytes.len());
+
+    log::info!(
+        "[probe_duration_from_bytes_fallback] counting frames for {} bytes",
+        audio_bytes.len()
+    );
 
     // Use ffprobe to count frames and calculate duration
     let mut child = Command::new(ffprobe::ffprobe_path())
@@ -390,12 +413,18 @@ fn probe_duration_from_bytes_fallback(audio_bytes: &[u8]) -> Result<f64> {
     let stdout = String::from_utf8_lossy(&output.stdout);
 
     if !output.status.success() {
-        log::error!("[probe_duration_from_bytes_fallback] ffprobe failed: {}", stderr.trim());
+        log::error!(
+            "[probe_duration_from_bytes_fallback] ffprobe failed: {}",
+            stderr.trim()
+        );
         anyhow::bail!("ffprobe fallback failed: {}", stderr.trim());
     }
 
-    log::info!("[probe_duration_from_bytes_fallback] ffprobe output: {}", stdout.trim());
-    
+    log::info!(
+        "[probe_duration_from_bytes_fallback] ffprobe output: {}",
+        stdout.trim()
+    );
+
     // Parse CSV output: nb_read_packets,sample_rate
     let parts: Vec<&str> = stdout.trim().split(',').collect();
     if parts.len() < 2 {
@@ -405,11 +434,15 @@ fn probe_duration_from_bytes_fallback(audio_bytes: &[u8]) -> Result<f64> {
     // For now, if we can't determine duration precisely, use a rough estimate
     // based on file size and typical bitrates
     log::warn!("[probe_duration_from_bytes_fallback] frame counting not fully implemented, using size-based estimate");
-    
+
     // Rough estimate: assume 128kbps average bitrate
     let estimated_duration = (audio_bytes.len() as f64 * 8.0) / (128.0 * 1000.0);
-    log::info!("[probe_duration_from_bytes_fallback] estimated duration={:.2}s (from {} bytes)", estimated_duration, audio_bytes.len());
-    
+    log::info!(
+        "[probe_duration_from_bytes_fallback] estimated duration={:.2}s (from {} bytes)",
+        estimated_duration,
+        audio_bytes.len()
+    );
+
     Ok(estimated_duration)
 }
 
@@ -473,10 +506,10 @@ fn chunk_audio_at_offset(audio_bytes: &[u8], start: f64, duration: f64) -> Resul
     if let Some(mut stdin) = child.stdin.take() {
         // Ignore broken pipe errors - FFmpeg may close stdin early if input is invalid
         match stdin.write_all(audio_bytes) {
-            Ok(_) => {},
+            Ok(_) => {}
             Err(e) if e.kind() == std::io::ErrorKind::BrokenPipe => {
                 // FFmpeg closed stdin early, let the exit status tell us what went wrong
-            },
+            }
             Err(e) => return Err(anyhow::Error::from(e).context("Failed to write to FFmpeg stdin")),
         }
         drop(stdin);

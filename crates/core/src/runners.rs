@@ -11,7 +11,7 @@ use crate::jobs::{JobRegistry, ProgressEvent};
 use crate::models::{Meeting, SummaryStatus, SummaryTemplate};
 use crate::storage::MeetingStorage;
 use crate::summary::{SummarizeOptions, SummaryClient};
-use crate::transcription::{TranscriptionClient, TranscriptionRequest};
+use crate::transcription::{TranscriptionClient, TranscriptionRequest, TranscriptionResponse};
 use anyhow::{Context, Result};
 use chrono::Utc;
 use std::path::PathBuf;
@@ -179,6 +179,8 @@ async fn run_import_inner(
         }
         transcription
     };
+
+    let transcription = refine_transcript(transcription, config, registry, job_id).await;
 
     registry.update_progress(
         job_id,
@@ -431,7 +433,8 @@ async fn run_import_memory_inner(cfg: &ImportMemoryConfig) -> Result<()> {
 
     // Write audio to temporary file for reliable ffmpeg processing
     let temp_dir = std::env::temp_dir();
-    let temp_file_path = temp_dir.join(format!("meeting_agent_import_{}.wav", uuid::Uuid::new_v4()));
+    let temp_file_path =
+        temp_dir.join(format!("meeting_agent_import_{}.wav", uuid::Uuid::new_v4()));
     log::info!(
         "[import_memory] writing {} bytes to temp file: {}",
         working_audio.len(),
@@ -468,7 +471,11 @@ async fn run_import_memory_inner(cfg: &ImportMemoryConfig) -> Result<()> {
 
     log::info!(
         "[import_memory] transcription complete: {} segments, duration={:.2}s",
-        transcription.segments.as_ref().map(|s| s.len()).unwrap_or(0),
+        transcription
+            .segments
+            .as_ref()
+            .map(|s| s.len())
+            .unwrap_or(0),
         transcription.duration.unwrap_or(0.0)
     );
 
@@ -534,6 +541,9 @@ async fn run_import_memory_inner(cfg: &ImportMemoryConfig) -> Result<()> {
         transcription
     };
 
+    let transcription =
+        refine_transcript(transcription, &cfg.config, &cfg.registry, &cfg.job_id).await;
+
     cfg.registry.update_progress(
         &cfg.job_id,
         ProgressEvent::new("saving", "Saving transcript and audio").with_percent(90.0),
@@ -552,4 +562,48 @@ async fn run_import_memory_inner(cfg: &ImportMemoryConfig) -> Result<()> {
     )?;
 
     Ok(())
+}
+
+async fn refine_transcript(
+    transcription: TranscriptionResponse,
+    config: &Config,
+    registry: &Arc<JobRegistry>,
+    job_id: &str,
+) -> TranscriptionResponse {
+    if config.summary.base_url.trim().is_empty() {
+        log::warn!("[refine] skipped: summary.base_url is empty");
+        return transcription;
+    }
+
+    log::info!(
+        "[refine] improving transcript with LLM at {} (model: {})",
+        config.summary.resolve_base_url(),
+        config.summary.model
+    );
+    registry.update_progress(
+        job_id,
+        ProgressEvent::new("refining", "Refining transcript with LLM").with_percent(85.0),
+    );
+
+    let summary_client = match SummaryClient::new(config.summary.clone()) {
+        Ok(client) => client,
+        Err(e) => {
+            log::warn!("[refine] could not create client: {:#}", e);
+            return transcription;
+        }
+    };
+
+    match summary_client.refine(&transcription).await {
+        Ok(refined) => {
+            log::info!("[refine] completed successfully");
+            TranscriptionResponse {
+                refined_text: Some(refined),
+                ..transcription
+            }
+        }
+        Err(e) => {
+            log::warn!("[refine] failed: {:#}", e);
+            transcription
+        }
+    }
 }

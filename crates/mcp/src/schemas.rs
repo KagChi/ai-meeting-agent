@@ -22,7 +22,6 @@ pub struct ImportFromUrlRequest {
     pub title: Option<String>,
 }
 
-
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct JobIdRequest {
     pub job_id: String,

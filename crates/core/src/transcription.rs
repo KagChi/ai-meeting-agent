@@ -65,6 +65,9 @@ pub struct TranscriptionResponse {
     /// Transcript segments (only in verbose_json format)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub segments: Option<Vec<TranscriptSegment>>,
+    /// LLM-refined transcript with improved formatting and punctuation
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub refined_text: Option<String>,
 }
 
 /// A segment of the transcript with timing information
@@ -176,6 +179,7 @@ fn parse_response(raw: &str) -> Result<TranscriptionResponse> {
             language: None,
             duration: None,
             segments: Some(segments),
+            refined_text: None,
         })
     } else {
         // text-only or unknown — best-effort deserialize
@@ -774,7 +778,11 @@ impl TranscriptionClient {
                     // Client error (4xx) or final retry exhausted
                     let status = resp.status();
                     let error_text = resp.text().await.unwrap_or_default();
-                    log::error!("Transcription API request failed with status {}: {}", status, error_text);
+                    log::error!(
+                        "Transcription API request failed with status {}: {}",
+                        status,
+                        error_text
+                    );
                     anyhow::bail!("API request failed with status {}: {}", status, error_text);
                 }
                 Err(e) if attempt < max_retries => {
@@ -868,6 +876,7 @@ fn merge_chunk_responses(
         } else {
             Some(all_segments)
         },
+        refined_text: None,
     }
 }
 

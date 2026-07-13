@@ -1,10 +1,6 @@
 //! Request logging middleware
 
-use axum::{
-    extract::Request,
-    middleware::Next,
-    response::Response,
-};
+use axum::{extract::Request, middleware::Next, response::Response};
 use std::time::Instant;
 
 /// Middleware that logs all incoming HTTP requests and their responses

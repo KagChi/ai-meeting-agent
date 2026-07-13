@@ -223,7 +223,7 @@ fn try_init_pipeline_with_fallback(
 }
 
 /// Run `f` against the process-wide pipeline, initializing it on first use.
-/// 
+///
 /// The mutex is only held during initialization. The pipeline is moved out
 /// temporarily, used, then put back to allow concurrent diarization operations.
 fn with_pipeline<T>(
@@ -231,7 +231,7 @@ fn with_pipeline<T>(
     f: impl FnOnce(&mut OwnedDiarizationPipeline) -> Result<T>,
 ) -> anyhow::Result<T> {
     let mutex = DIARIZER.get_or_init(|| Mutex::new(None));
-    
+
     // Take the pipeline out of the mutex temporarily
     let mut pipeline = {
         let mut guard = mutex

@@ -96,7 +96,8 @@ impl ServerHandler for MeetingAgentMcpServer {
             }
             "importFromUrl" => {
                 let req: ImportFromUrlRequest = parse_arguments(&request.arguments)?;
-                let (bytes, filename) = download_url_to_memory(&req.url, req.filename.as_deref()).await?;
+                let (bytes, filename) =
+                    download_url_to_memory(&req.url, req.filename.as_deref()).await?;
                 self.client
                     .import_meeting_audio_bytes(bytes, filename, req.title.as_deref())
                     .await?
