@@ -34,13 +34,13 @@ utoipa = { version = "4", optional = true, features = ["chrono", "uuid"] }
 
 # Platform-specific speakrs configurations
 [target.'cfg(target_os = "macos")'.dependencies]
-speakrs = { version = "0.5", optional = true, default-features = false, features = ["online", "coreml"] }
+speakrs = { version = "0.5", optional = true, default-features = false, features = ["online", "coreml", "intel-mkl"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
-speakrs = { version = "0.5", optional = true, default-features = false, features = ["online", "cuda", "migraphx"] }
+speakrs = { version = "0.5", optional = true, default-features = false, features = ["online", "cuda", "migraphx", "intel-mkl"] }
 
 [target.'cfg(not(any(target_os = "macos", target_os = "linux")))'.dependencies]
-speakrs = { version = "0.5", optional = true, default-features = false }
+speakrs = { version = "0.5", optional = true, default-features = false, features = ["online", "intel-mkl"] }
 
 # Metadata parsing
 regex = "1"
