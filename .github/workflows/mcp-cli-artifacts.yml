@@ -83,7 +83,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y xz-utils
-          SDK_VERSION=13.3
+          SDK_VERSION=26.1
           curl -fsSL "https://github.com/joseluisq/macosx-sdks/releases/download/${SDK_VERSION}/MacOSX${SDK_VERSION}.sdk.tar.xz" \
             -o /tmp/MacOSX.sdk.tar.xz
           sudo mkdir -p /opt/macosx-sdks
