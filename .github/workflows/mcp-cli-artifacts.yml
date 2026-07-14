@@ -58,11 +58,18 @@ jobs:
           echo '[target.x86_64-pc-windows-gnu]' >> .cargo/config.toml
           echo 'linker = "x86_64-w64-mingw32-gcc"' >> .cargo/config.toml
 
-      - name: Install AArch64 GCC (For Linux ARM64)
-        if: matrix.target == 'aarch64-unknown-linux-gnu'
+      - name: Install host OpenSSL (Linux targets)
+        if: contains(matrix.target, 'linux')
         run: |
           sudo apt-get update
-          sudo apt-get install -y gcc-aarch64-linux-gnu
+          sudo apt-get install -y pkg-config libssl-dev
+
+      - name: Install AArch64 GCC + OpenSSL (For Linux ARM64)
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: |
+          sudo dpkg --add-architecture arm64
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu libssl-dev:arm64
 
       - name: Configure Cargo Linker (For Linux ARM64)
         if: matrix.target == 'aarch64-unknown-linux-gnu'
@@ -81,8 +88,16 @@ jobs:
         if: contains(matrix.target, 'apple')
         run: cargo install cargo-zigbuild
 
-      - name: Build (Native Linux, Linux ARM64, & Windows)
-        if: "!contains(matrix.target, 'apple')"
+      - name: Build (Native Linux & Windows)
+        if: "!contains(matrix.target, 'apple') && matrix.target != 'aarch64-unknown-linux-gnu'"
+        run: cargo build --release --target ${{ matrix.target }} --bin meeting-agent-mcp
+
+      - name: Build (Linux ARM64)
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        env:
+          PKG_CONFIG_ALLOW_CROSS: "1"
+          AARCH64_UNKNOWN_LINUX_GNU_OPENSSL_LIB_DIR: /usr/lib/aarch64-linux-gnu
+          AARCH64_UNKNOWN_LINUX_GNU_OPENSSL_INCLUDE_DIR: /usr/include
         run: cargo build --release --target ${{ matrix.target }} --bin meeting-agent-mcp
 
       - name: Build (macOS via Zig)
