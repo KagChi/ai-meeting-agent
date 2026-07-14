@@ -93,7 +93,7 @@ jobs:
         shell: bash
         run: |
           mkdir -p dist
-          cp "target/${{ matrix.target }}/release/meeting-agent-mcp${{ matrix.ext }}" "dist/meeting-agent-mcp-${{ matrix.suffix }}${matrix.ext}"
+          cp "target/${{ matrix.target }}/release/meeting-agent-mcp${{ matrix.ext }}" "dist/meeting-agent-mcp-${{ matrix.suffix }}${{ matrix.ext }}"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
