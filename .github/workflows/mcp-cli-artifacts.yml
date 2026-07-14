@@ -71,11 +71,24 @@ jobs:
         if: contains(matrix.target, 'apple')
         uses: goto-bus-stop/setup-zig@v2
         with:
-          version: 0.11.0
+          version: 0.13.0
 
       - name: Install cargo-zigbuild
         if: contains(matrix.target, 'apple')
-        run: cargo install cargo-zigbuild
+        run: cargo install cargo-zigbuild --locked
+
+      # cargo-zigbuild on Linux needs a real MacOSX.sdk to link Security/System frameworks
+      - name: Install MacOSX SDK (For macOS cross-link)
+        if: contains(matrix.target, 'apple')
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xz-utils
+          SDK_VERSION=13.3
+          curl -fsSL "https://github.com/joseluisq/macosx-sdks/releases/download/${SDK_VERSION}/MacOSX${SDK_VERSION}.sdk.tar.xz" \
+            -o /tmp/MacOSX.sdk.tar.xz
+          sudo mkdir -p /opt/macosx-sdks
+          sudo tar -xJf /tmp/MacOSX.sdk.tar.xz -C /opt/macosx-sdks
+          echo "SDKROOT=/opt/macosx-sdks/MacOSX${SDK_VERSION}.sdk" >> "$GITHUB_ENV"
 
       - name: Build (Native Linux, Linux ARM64, & Windows)
         if: "!contains(matrix.target, 'apple')"
@@ -83,7 +96,14 @@ jobs:
 
       - name: Build (macOS via Zig)
         if: contains(matrix.target, 'apple')
-        run: cargo zigbuild --release --target ${{ matrix.target }} --bin meeting-agent-mcp
+        env:
+          SDKROOT: ${{ env.SDKROOT }}
+        run: |
+          # Repo .cargo/config.toml has host-only homebrew gfortran/Accelerate flags;
+          # strip them when cross-compiling from Linux.
+          mkdir -p .cargo
+          printf '%s\n' '[target.aarch64-apple-darwin]' > .cargo/config.toml
+          cargo zigbuild --release --target ${{ matrix.target }} --bin meeting-agent-mcp
 
       - name: Package artifact
         shell: bash
