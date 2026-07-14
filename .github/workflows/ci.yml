@@ -18,6 +18,9 @@ jobs:
       
       - name: Install system dependencies
         run: |
+          for arch in $(dpkg --print-foreign-architectures); do
+            sudo dpkg --remove-architecture "$arch" || true
+          done
           sudo apt-get update
           sudo apt-get install -y libopenblas-dev pkg-config libssl-dev
       
@@ -53,6 +56,9 @@ jobs:
       
       - name: Install system dependencies
         run: |
+          for arch in $(dpkg --print-foreign-architectures); do
+            sudo dpkg --remove-architecture "$arch" || true
+          done
           sudo apt-get update
           sudo apt-get install -y libopenblas-dev pkg-config libssl-dev
       
@@ -102,6 +108,9 @@ jobs:
       
       - name: Install system dependencies
         run: |
+          for arch in $(dpkg --print-foreign-architectures); do
+            sudo dpkg --remove-architecture "$arch" || true
+          done
           sudo apt-get update
           sudo apt-get install -y libopenblas-dev pkg-config libssl-dev
       
