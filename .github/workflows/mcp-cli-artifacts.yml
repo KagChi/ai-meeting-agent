@@ -41,11 +41,18 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
+      # Prior multiarch experiments left arm64 foreign arch pointing at
+      # archive.ubuntu.com (amd64-only) → apt 404. Strip before any apt use.
+      - name: Fix apt architectures
+        run: |
+          for arch in $(dpkg --print-foreign-architectures); do
+            sudo dpkg --remove-architecture "$arch" || true
+          done
+          sudo apt-get update
+
       - name: Install MinGW (For Windows)
         if: matrix.target == 'x86_64-pc-windows-gnu'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y gcc-mingw-w64-x86-64
+        run: sudo apt-get install -y gcc-mingw-w64-x86-64
 
       - name: Configure Cargo Linker (For Windows)
         if: matrix.target == 'x86_64-pc-windows-gnu'
@@ -56,9 +63,7 @@ jobs:
 
       - name: Install AArch64 GCC (For Linux ARM64)
         if: matrix.target == 'aarch64-unknown-linux-gnu'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y gcc-aarch64-linux-gnu perl make
+        run: sudo apt-get install -y gcc-aarch64-linux-gnu perl make
 
       - name: Configure Cargo Linker (For Linux ARM64)
         if: matrix.target == 'aarch64-unknown-linux-gnu'
@@ -81,7 +86,6 @@ jobs:
       - name: Install MacOSX SDK (For macOS cross-link)
         if: contains(matrix.target, 'apple')
         run: |
-          sudo apt-get update
           sudo apt-get install -y xz-utils
           SDK_VERSION=26.1
           curl -fsSL "https://github.com/joseluisq/macosx-sdks/releases/download/${SDK_VERSION}/MacOSX${SDK_VERSION}.sdk.tar.xz" \
