@@ -107,29 +107,6 @@ services:
     restart: unless-stopped
 
   # -------------------------------------------------------------------------
-  # MCP HTTP bridge — exposes meeting-agent API as Streamable HTTP MCP tools.
-  # Endpoint: http://localhost:${MCP_HOST_PORT:-9080}/mcp
-  # No MCP-side auth for now; if MEETING_AGENT_API_KEY is set, it is forwarded
-  # to meeting-agent-server as X-API-Key.
-  # -------------------------------------------------------------------------
-  meeting-agent-mcp:
-    build:
-      context: ..
-      dockerfile: deploy/Dockerfile.mcp
-    image: ${MCP_IMAGE:-ghcr.io/bmw-ece-ntust/ai-meeting-agent/meeting-agent-mcp:latest}
-    environment:
-      - MCP_HOST=0.0.0.0
-      - MCP_PORT=9080
-      - MEETING_AGENT_BASE_URL=http://meeting-agent-server:8080
-      - MEETING_AGENT_API_KEY=${MEETING_AGENT_API_KEY:-}
-      - RUST_LOG=${MCP_LOG_LEVEL:-meeting_agent_mcp=info,tower_http=info}
-    ports:
-      - "${MCP_HOST_PORT:-9080}:9080"
-    networks: [meeting-agent]
-    depends_on: [meeting-agent-server]
-    restart: unless-stopped
-
-  # -------------------------------------------------------------------------
   # Orchestrator — the post-meeting glue (Phase 3-4, NOT YET IMPLEMENTED).
   # Responsibilities:
   #   - dispatch bots to Vexa (POST vexa/bots) and track meetings
