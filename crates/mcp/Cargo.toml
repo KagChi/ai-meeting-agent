@@ -35,5 +35,8 @@ schemars = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 log = { workspace = true }
-# Vendored so cross-builds (esp. aarch64-linux) need no target libssl
+
+# native-tls uses OpenSSL only on Linux; macOS=Security.framework, Windows=SChannel.
+# Vendored so aarch64-linux cross-build needs no target libssl.
+[target.'cfg(target_os = "linux")'.dependencies]
 openssl = { version = "0.10", features = ["vendored"] }
