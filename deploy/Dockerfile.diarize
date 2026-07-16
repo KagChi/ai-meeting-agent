@@ -3,23 +3,50 @@
 
 # syntax=docker/dockerfile:1.7
 
-# Build stage
-FROM nvidia/cuda:13.3.0-cudnn-devel-ubuntu24.04 AS builder
+# Chef stage: Install cargo-chef for dependency caching
+FROM nvidia/cuda:13.3.0-cudnn-devel-ubuntu24.04 AS chef
 ENV DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        ca-certificates curl pkg-config g++ git make perl \
-        libssl-dev libopenblas-dev \
+        ca-certificates curl pkg-config g++ \
     && rm -rf /var/lib/apt/lists/*
 
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
     | sh -s -- -y --default-toolchain stable --profile minimal
 ENV PATH="/root/.cargo/bin:${PATH}"
 
+RUN cargo install cargo-chef --locked
+
+# Planner stage: Generate recipe.json for dependency caching
+FROM chef AS planner
 WORKDIR /app
 COPY Cargo.toml Cargo.lock ./
 COPY crates/ ./crates/
-RUN cargo build --release --package meeting-agent-diarize-service
+RUN cargo chef prepare --recipe-path recipe.json
+
+# Cacher stage: Build dependencies (cached layer)
+FROM chef AS cacher
+WORKDIR /app
+COPY --from=planner /app/recipe.json recipe.json
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        git make perl libssl-dev libopenblas-dev \
+    && rm -rf /var/lib/apt/lists/*
+RUN --mount=type=cache,target=/root/.cargo/registry \
+    --mount=type=cache,target=/root/.cargo/git \
+    cargo chef cook --release --recipe-path recipe.json
+
+# Builder stage: Build application with cached dependencies
+FROM chef AS builder
+WORKDIR /app
+COPY Cargo.toml Cargo.lock ./
+COPY crates/ ./crates/
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        git make perl libssl-dev libopenblas-dev \
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=cacher /app/target target
+RUN --mount=type=cache,target=/root/.cargo/registry \
+    --mount=type=cache,target=/root/.cargo/git \
+    cargo build --release --package meeting-agent-diarize-service
 
 # Runtime stage
 FROM nvidia/cuda:13.3.0-cudnn-runtime-ubuntu24.04

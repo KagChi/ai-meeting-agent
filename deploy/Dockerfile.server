@@ -3,10 +3,9 @@
 # Multi-stage: build the release binary, then a slim runtime with ffmpeg
 # (required for audio conversion/chunking).
 
-# ---- builder ----
-FROM ubuntu:24.04 AS builder
+# ---- chef ----
+FROM ubuntu:24.04 AS chef
 ENV DEBIAN_FRONTEND=noninteractive
-# make/perl: workspace feature-unifies mcp openssl vendored → openssl-src build
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates curl pkg-config g++ git make perl \
         libssl-dev libopenblas-dev \
@@ -14,10 +13,31 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
     | sh -s -- -y --default-toolchain stable --profile minimal
 ENV PATH="/root/.cargo/bin:${PATH}"
+RUN cargo install cargo-chef
 WORKDIR /app
+
+# ---- planner ----
+FROM chef AS planner
 COPY Cargo.toml Cargo.lock ./
 COPY crates/ ./crates/
-RUN cargo build --release --bin meeting-agent-server
+RUN cargo chef prepare --recipe-path recipe.json
+
+# ---- cacher ----
+FROM chef AS cacher
+COPY --from=planner /app/recipe.json recipe.json
+RUN --mount=type=cache,target=/root/.cargo/registry \
+    --mount=type=cache,target=/root/.cargo/git \
+    cargo chef cook --release --recipe-path recipe.json
+
+# ---- builder ----
+FROM chef AS builder
+COPY --from=cacher /app/target target
+COPY --from=cacher /root/.cargo /root/.cargo
+COPY Cargo.toml Cargo.lock ./
+COPY crates/ ./crates/
+RUN --mount=type=cache,target=/root/.cargo/registry \
+    --mount=type=cache,target=/root/.cargo/git \
+    cargo build --release --bin meeting-agent-server
 
 # ---- runtime ----
 FROM debian:13-slim AS runtime
