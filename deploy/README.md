@@ -50,9 +50,10 @@ The key wiring: **Vexa's realtime transcription is pointed at our DGX WhisperX**
 via `TRANSCRIPTION_SERVICE_URL`, so no meeting audio and no transcription leaves
 the lab.
 
-**Diarization**: Runs in-process within meeting-agent-server using the `speakrs`
-crate (CPU mode). When `DIARIZE_ENABLED=true`, models (~200MB) are auto-downloaded
-from HuggingFace on first run.
+**Diarization**: Separate GPU service (`diarize-service`, Ubuntu 24.04 + CUDA)
+using `speakrs`. When `DIARIZE_ENABLED=true`, meeting-agent-server calls it via
+`DIARIZE_SERVICE_URL` (default `http://diarize-service:8001`). Models (~200MB)
+are auto-downloaded into the `diarize-models` volume on first run.
 
 ---
 
@@ -93,13 +94,15 @@ docker compose -f deploy/docker-compose.yml exec minutes-llm ollama pull qwen2.5
 **To enable diarization**, edit `deploy/.env`:
 ```bash
 DIARIZE_ENABLED=true
-DIARIZE_EXECUTION_MODE=cpu
+DIARIZE_SERVICE_URL=http://diarize-service:8001
+DIARIZE_EXECUTION_MODE=cuda-fast
 ```
-Then restart the server: `docker compose -f deploy/docker-compose.yml restart meeting-agent-server`
+Then restart: `docker compose -f deploy/docker-compose.yml up -d diarize-service meeting-agent-server`
 
 ### 3. Smoke test
 ```bash
 curl http://localhost:8080/health                          # meeting-agent-server
+curl http://localhost:8001/health                          # diarize-service
 curl http://localhost:8010/v1/models                       # whisperx (OpenAI STT)
 # Send a bot to a live meeting (via Vexa):
 curl -X POST "http://localhost:8056/bots" -H "X-API-Key: $VEXA_API_KEY" \

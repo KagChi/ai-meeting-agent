@@ -121,16 +121,10 @@ pub async fn run(
         pb2.set_message("Diarizing speakers...");
         pb2.enable_steady_tick(std::time::Duration::from_millis(100));
 
-        let diarizer_cfg = meeting_agent_core::diarize::DiarizerConfig {
-            execution_mode: meeting_agent_core::diarize::resolve_execution_mode(
-                &config.diarize.execution_mode,
-            ),
-            model_dir: config.diarize.model_dir.clone(),
-        };
         match meeting_agent_core::diarize::Diarizer::diarize(
             &audio_file_to_transcribe,
             &response,
-            &diarizer_cfg,
+            &config.diarize,
         )
         .await
         {

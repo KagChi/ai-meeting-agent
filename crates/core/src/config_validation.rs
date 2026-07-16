@@ -95,7 +95,22 @@ pub fn validate_diarize(d: &DiarizeConfig) -> Result<(), Vec<String>> {
         return Ok(());
     }
     let mut errs = Vec::new();
+
+    // HTTP mode: only service_url needs validation.
+    if let Some(url) = &d.service_url {
+        if let Err(e) = validate_url(url) {
+            errs.push(format!("diarize.service_url {e}"));
+        }
+        return if errs.is_empty() {
+            Ok(())
+        } else {
+            Err(errs)
+        };
+    }
+
+    // In-process mode: validate execution backend and model dir.
     let valid_modes = [
+        "auto",
         "cpu",
         "coreml",
         "coreml-fast",
@@ -191,6 +206,7 @@ mod tests {
             enabled: false,
             execution_mode: "cpu".into(),
             model_dir: None,
+            service_url: None,
         }
     }
 
@@ -265,6 +281,19 @@ mod tests {
         assert!(validate_diarize(&d).is_err());
         d.execution_mode = "cpu".into();
         assert!(validate_diarize(&d).is_ok());
+        d.execution_mode = "auto".into();
+        assert!(validate_diarize(&d).is_ok());
+    }
+
+    #[test]
+    fn diarize_service_url_mode() {
+        let mut d = good_diarize();
+        d.enabled = true;
+        d.execution_mode = "garbage".into();
+        d.service_url = Some("http://diarize-service:8001".into());
+        assert!(validate_diarize(&d).is_ok());
+        d.service_url = Some("not-a-url".into());
+        assert!(validate_diarize(&d).is_err());
     }
 
     #[test]

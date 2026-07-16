@@ -53,6 +53,14 @@ pub fn show() -> Result<()> {
 
     println!("\n{} Diarization", "▸".cyan());
     println!("  enabled:        {}", config.diarize.enabled);
+    println!(
+        "  service_url:    {}",
+        config
+            .diarize
+            .service_url
+            .as_deref()
+            .unwrap_or("(in-process)")
+    );
     println!("  execution_mode: {}", config.diarize.execution_mode);
     println!(
         "  model_dir:      {}",
@@ -92,6 +100,13 @@ pub fn set(key: String, value: String) -> Result<()> {
         "server.api_key" => config.server.api_key = Some(value.clone()),
         "diarize.enabled" => {
             config.diarize.enabled = matches!(value.to_lowercase().as_str(), "1" | "true" | "yes")
+        }
+        "diarize.service_url" => {
+            config.diarize.service_url = if value.trim().is_empty() {
+                None
+            } else {
+                Some(value.trim().to_string())
+            };
         }
         "diarize.execution_mode" => config.diarize.execution_mode = value.clone(),
         "diarize.model_dir" => {

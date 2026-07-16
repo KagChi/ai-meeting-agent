@@ -212,6 +212,21 @@ fn edit_diarize(config: &mut Config) -> Result<()> {
         return Ok(());
     }
 
+    let service_url: String = Input::new()
+        .with_prompt("Diarize service URL (blank = in-process)")
+        .with_initial_text(config.diarize.service_url.as_deref().unwrap_or_default())
+        .allow_empty(true)
+        .interact_text()?;
+    config.diarize.service_url = if service_url.trim().is_empty() {
+        None
+    } else {
+        Some(service_url.trim().to_string())
+    };
+
+    if config.diarize.service_url.is_some() {
+        return Ok(());
+    }
+
     config.diarize.execution_mode = Input::new()
         .with_prompt("Execution mode (auto|cpu|coreml|coreml-fast|cuda|cuda-fast|migraphx)")
         .with_initial_text(&config.diarize.execution_mode)
@@ -272,16 +287,26 @@ fn print_summary(config: &Config) {
     println!("{} Diarization", "▸".cyan());
     println!("  enabled:        {}", config.diarize.enabled);
     if config.diarize.enabled {
-        println!("  execution_mode: {}", config.diarize.execution_mode);
         println!(
-            "  model_dir:      {}",
+            "  service_url:    {}",
             config
                 .diarize
-                .model_dir
-                .as_ref()
-                .map(|d| d.display().to_string())
-                .unwrap_or_else(|| "(download)".to_string())
+                .service_url
+                .as_deref()
+                .unwrap_or("(in-process)")
         );
+        if config.diarize.service_url.is_none() {
+            println!("  execution_mode: {}", config.diarize.execution_mode);
+            println!(
+                "  model_dir:      {}",
+                config
+                    .diarize
+                    .model_dir
+                    .as_ref()
+                    .map(|d| d.display().to_string())
+                    .unwrap_or_else(|| "(download)".to_string())
+            );
+        }
     }
 }
 

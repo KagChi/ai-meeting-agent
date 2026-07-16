@@ -1,13 +1,18 @@
-//! In-process speaker diarization via `speakrs`.
+//! Speaker diarization via HTTP service or in-process `speakrs`.
 //!
-//! Wraps `speakrs::OwnedDiarizationPipeline` in a lazily-initialized
-//! `Mutex` so the model loads once per process. The pipeline is CPU-bound
-//! and blocking, so [`Diarizer::diarize`] offloads work to a
-//! `spawn_blocking` task.
+//! Two modes:
+//! - **HTTP mode**: When `service_url` is set, sends audio + transcript to
+//!   remote diarization service via multipart POST.
+//! - **In-process mode**: When `service_url` is None, wraps
+//!   `speakrs::OwnedDiarizationPipeline` in a lazily-initialized `Mutex`
+//!   so the model loads once per process. The pipeline is CPU-bound and
+//!   blocking, so [`Diarizer::diarize`] offloads work to a `spawn_blocking`
+//!   task.
 //!
 //! Resilience contract: [`Diarizer::diarize`] returns an error on any
-//! failure (model load, decode, pipeline). Callers are expected to log
-//! and proceed without speaker labels rather than fail the whole import.
+//! failure (model load, decode, pipeline, or HTTP). Callers are expected
+//! to log and proceed without speaker labels rather than fail the whole
+//! import.
 
 pub mod audio;
 pub mod error;
@@ -24,18 +29,90 @@ use std::sync::{Mutex, OnceLock};
 use anyhow::Context;
 use speakrs::{ExecutionMode, OwnedDiarizationPipeline};
 
+use crate::config::DiarizeConfig;
 use crate::diarize::audio::decode_audio_to_f32_mono_16k;
 use crate::diarize::merge::merge;
 use crate::transcription::TranscriptionResponse;
 
-/// Configuration for the in-process diarizer. Built once, cached in the
-/// process-wide [`OnceLock`] so the first call pays the model-load cost.
+/// Local configuration for the in-process diarizer.
+///
+/// Not to be confused with `crate::config::DiarizeConfig`, which includes
+/// HTTP service URL and is the public API.
 #[derive(Debug, Clone)]
-pub struct DiarizerConfig {
-    pub execution_mode: ExecutionMode,
+struct InProcessConfig {
+    execution_mode: ExecutionMode,
     /// Optional local model directory. `None` = download via
     /// `speakrs` `online` feature on first use.
-    pub model_dir: Option<PathBuf>,
+    model_dir: Option<PathBuf>,
+}
+
+/// HTTP service response structure
+#[derive(Debug, serde::Deserialize)]
+struct DiarizeServiceResponse {
+    success: bool,
+    transcript: TranscriptionResponse,
+    error: Option<String>,
+}
+
+/// Call remote diarization service via HTTP multipart POST.
+async fn call_service(
+    audio_path: &Path,
+    transcript: &TranscriptionResponse,
+    service_url: &str,
+) -> anyhow::Result<TranscriptionResponse> {
+    let audio_bytes = tokio::fs::read(audio_path)
+        .await
+        .context("Failed to read audio file for HTTP diarization")?;
+
+    let transcript_json = serde_json::to_string(transcript)
+        .context("Failed to serialize transcript for HTTP diarization")?;
+
+    let client = reqwest::Client::new();
+    let url = format!("{}/v1/diarize", service_url.trim_end_matches('/'));
+
+    let form = reqwest::multipart::Form::new()
+        .part(
+            "audio",
+            reqwest::multipart::Part::bytes(audio_bytes)
+                .file_name(
+                    audio_path
+                        .file_name()
+                        .and_then(|n| n.to_str())
+                        .unwrap_or("audio.wav")
+                        .to_string(),
+                )
+                .mime_str("audio/wav")?,
+        )
+        .part("transcript", reqwest::multipart::Part::text(transcript_json));
+
+    let response = client
+        .post(&url)
+        .multipart(form)
+        .send()
+        .await
+        .context("Failed to send request to diarization service")?;
+
+    if !response.status().is_success() {
+        anyhow::bail!(
+            "Diarization service returned status {}: {}",
+            response.status(),
+            response.text().await.unwrap_or_default()
+        );
+    }
+
+    let result: DiarizeServiceResponse = response
+        .json()
+        .await
+        .context("Failed to parse diarization service response")?;
+
+    if !result.success {
+        anyhow::bail!(
+            "Diarization service reported failure: {}",
+            result.error.unwrap_or_else(|| "Unknown error".to_string())
+        );
+    }
+
+    Ok(result.transcript)
 }
 
 /// Lazily-initialized, process-wide diarization pipeline.
@@ -104,27 +181,39 @@ impl Diarizer {
     /// a clone of the transcript with `speaker` labels assigned to each
     /// segment.
     ///
-    /// Blocks on a `spawn_blocking` task because `speakrs` inference is
-    /// CPU/GPU-bound and not async-safe. Takes a reference so callers
-    /// keep the original transcript on error.
+    /// Routes by `cfg.service_url`:
+    /// - `Some(url)` → HTTP multipart POST to remote service
+    /// - `None` → in-process speakrs (via `spawn_blocking`)
+    ///
+    /// Callers keep the original transcript on error.
     pub async fn diarize(
         audio_path: &Path,
         transcript: &TranscriptionResponse,
-        cfg: &DiarizerConfig,
+        cfg: &DiarizeConfig,
     ) -> anyhow::Result<TranscriptionResponse> {
-        let cfg = cfg.clone();
+        if let Some(service_url) = cfg.service_url.as_deref() {
+            log::info!("[diarize] using HTTP service at {service_url}");
+            return call_service(audio_path, transcript, service_url).await;
+        }
+
+        let in_process = InProcessConfig {
+            execution_mode: resolve_execution_mode(&cfg.execution_mode),
+            model_dir: cfg.model_dir.clone(),
+        };
         let audio_path = audio_path.to_path_buf();
         let transcript = transcript.clone();
-        tokio::task::spawn_blocking(move || run_in_process(&audio_path, &transcript, &cfg))
-            .await
-            .context("diarize blocking task panicked")?
+        tokio::task::spawn_blocking(move || {
+            run_in_process(&audio_path, &transcript, &in_process)
+        })
+        .await
+        .context("diarize blocking task panicked")?
     }
 }
 
 fn run_in_process(
     audio_path: &Path,
     transcript: &TranscriptionResponse,
-    cfg: &DiarizerConfig,
+    cfg: &InProcessConfig,
 ) -> anyhow::Result<TranscriptionResponse> {
     // Build WhisperSegment vec from the transcript for the merge step.
     let whisper_segments: Vec<WhisperSegment> = transcript
@@ -227,7 +316,7 @@ fn try_init_pipeline_with_fallback(
 /// The mutex is only held during initialization. The pipeline is moved out
 /// temporarily, used, then put back to allow concurrent diarization operations.
 fn with_pipeline<T>(
-    cfg: &DiarizerConfig,
+    cfg: &InProcessConfig,
     f: impl FnOnce(&mut OwnedDiarizationPipeline) -> Result<T>,
 ) -> anyhow::Result<T> {
     let mutex = DIARIZER.get_or_init(|| Mutex::new(None));

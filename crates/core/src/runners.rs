@@ -157,11 +157,7 @@ async fn run_import_inner(
             ProgressEvent::new("diarizing", "Speaker diarization").with_percent(70.0),
         );
         check_cancelled(cancel_token)?;
-        let diarizer_cfg = crate::diarize::DiarizerConfig {
-            execution_mode: crate::diarize::resolve_execution_mode(&config.diarize.execution_mode),
-            model_dir: config.diarize.model_dir.clone(),
-        };
-        match crate::diarize::Diarizer::diarize(final_audio, &transcription, &diarizer_cfg).await {
+        match crate::diarize::Diarizer::diarize(final_audio, &transcription, &config.diarize).await {
             Ok(labeled) => labeled,
             Err(e) => {
                 log::warn!("[diarize] failed, proceeding without speaker labels: {e:#}");
@@ -505,15 +501,8 @@ async fn run_import_memory_inner(cfg: &ImportMemoryConfig) -> Result<()> {
             temp_path
         };
 
-        let diarizer_cfg = crate::diarize::DiarizerConfig {
-            execution_mode: crate::diarize::resolve_execution_mode(
-                &cfg.config.diarize.execution_mode,
-            ),
-            model_dir: cfg.config.diarize.model_dir.clone(),
-        };
-
         let result =
-            match crate::diarize::Diarizer::diarize(&temp_audio, &transcription, &diarizer_cfg)
+            match crate::diarize::Diarizer::diarize(&temp_audio, &transcription, &cfg.config.diarize)
                 .await
             {
                 Ok(labeled) => labeled,

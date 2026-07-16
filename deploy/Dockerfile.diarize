@@ -1,0 +1,53 @@
+# Diarization Service Dockerfile
+# Ubuntu 24.04 with NVIDIA CUDA support for GPU acceleration
+
+# syntax=docker/dockerfile:1.7
+
+# Build stage
+FROM nvidia/cuda:12.4.0-devel-ubuntu24.04 AS builder
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates curl pkg-config g++ git make perl \
+        libssl-dev libopenblas-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+    | sh -s -- -y --default-toolchain stable --profile minimal
+ENV PATH="/root/.cargo/bin:${PATH}"
+
+WORKDIR /app
+COPY Cargo.toml Cargo.lock ./
+COPY crates/ ./crates/
+RUN cargo build --release --package meeting-agent-diarize-service
+
+# Runtime stage
+FROM nvidia/cuda:12.4.0-runtime-ubuntu24.04
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates curl libopenblas0 \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN useradd -m -u 1000 -s /bin/bash app
+
+WORKDIR /app
+COPY --from=builder /app/target/release/meeting-agent-diarize-service /app/diarize-service
+
+RUN mkdir -p /tmp/diarize-service /app/.cache/speakrs \
+    && chown -R app:app /tmp/diarize-service /app/.cache /app/diarize-service
+
+USER app
+
+ENV RUST_LOG=info \
+    HOST=0.0.0.0 \
+    PORT=8001 \
+    DIARIZE_EXECUTION_MODE=cuda-fast \
+    TEMP=/tmp/diarize-service
+
+EXPOSE 8001
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD curl -f http://localhost:8001/health || exit 1
+
+CMD ["/app/diarize-service"]

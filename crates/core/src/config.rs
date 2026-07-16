@@ -69,13 +69,17 @@ pub struct ServerConfig {
     pub api_key: Option<String>,
 }
 
-/// Configuration for the optional in-process speaker-diarization step.
+/// Configuration for the optional speaker-diarization step.
 ///
 /// When `enabled` is false (the default), the import pipeline skips
 /// diarization entirely and `TranscriptionResponse.segments` carry no
-/// `speaker` field. When true, the pipeline runs `speakrs`
-/// in-process (no separate server) and assigns speaker labels to each
-/// Whisper segment by max-timestamp-overlap.
+/// `speaker` field. When true, the pipeline runs diarization either:
+/// - Via HTTP to a separate diarization service (if `service_url` is set)
+/// - In-process using `speakrs` (if `service_url` is None)
+///
+/// The HTTP mode allows GPU-based diarization to run in a dedicated
+/// container with proper CUDA/GPU support, while the main service remains
+/// lightweight.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DiarizeConfig {
     /// Whether to run diarization during import. Default false.
@@ -83,13 +87,18 @@ pub struct DiarizeConfig {
     pub enabled: bool,
     /// speakrs execution backend: `auto` (default, GPU priority with CPU
     /// fallback), `cpu`, `coreml`, `coreml-fast`, `cuda`, `cuda-fast`,
-    /// or `migraphx`.
+    /// or `migraphx`. Only used for in-process mode.
     #[serde(default = "default_diarize_execution_mode")]
     pub execution_mode: String,
     /// Optional local model directory. `None` = download models on first
-    /// use via speakrs `online` feature.
+    /// use via speakrs `online` feature. Only used for in-process mode.
     #[serde(default)]
     pub model_dir: Option<PathBuf>,
+    /// Optional HTTP service URL. When set, diarization is performed via
+    /// HTTP POST to this endpoint instead of in-process. Example:
+    /// `http://diarize-service:8001`
+    #[serde(default)]
+    pub service_url: Option<String>,
 }
 
 fn default_diarize_execution_mode() -> String {
@@ -102,6 +111,7 @@ impl Default for DiarizeConfig {
             enabled: false,
             execution_mode: default_diarize_execution_mode(),
             model_dir: None,
+            service_url: None,
         }
     }
 }
@@ -229,6 +239,11 @@ impl Config {
         if let Ok(dir) = std::env::var("DIARIZE_MODEL_DIR") {
             if !dir.trim().is_empty() {
                 config.diarize.model_dir = Some(PathBuf::from(dir));
+            }
+        }
+        if let Ok(url) = std::env::var("DIARIZE_SERVICE_URL") {
+            if !url.trim().is_empty() {
+                config.diarize.service_url = Some(url);
             }
         }
 

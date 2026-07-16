@@ -73,12 +73,42 @@ services:
     restart: unless-stopped
 
   # -------------------------------------------------------------------------
+  # DGX model service 3 — Diarization (speaker identification)
+  # Separate GPU-enabled service for speaker diarization using speakrs/pyannote.
+  # Called by meeting-agent-server when DIARIZE_ENABLED=true.
+  # Serves HTTP API on port 8001: POST /v1/diarize
+  # -------------------------------------------------------------------------
+  diarize-service:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.diarize
+    image: ${DIARIZE_IMAGE:-meeting-agent-diarize-service:latest}
+    environment:
+      - HOST=0.0.0.0
+      - PORT=8001
+      - DIARIZE_EXECUTION_MODE=${DIARIZE_EXECUTION_MODE:-cuda-fast}
+      - RUST_LOG=${DIARIZE_LOG_LEVEL:-info}
+    ports:
+      - "${DIARIZE_HOST_PORT:-8001}:8001"
+    volumes:
+      - diarize-models:/app/.cache/speakrs
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    networks: [meeting-agent]
+    restart: unless-stopped
+
+  # -------------------------------------------------------------------------
   # Existing meeting-agent HTTP API + storage (Rust, this repo).
   # Owns meeting metadata, transcript/summary storage, file-import path,
   # and serves the OpenAPI/Swagger UI. Points its transcription + summary
   # providers at the DGX services above (OpenAI-compatible).
-  # In-process diarization via speakrs crate (CPU mode, ~200MB models downloaded
-  # from HuggingFace on first run when DIARIZE_ENABLED=true).
+  # Diarization via remote diarize-service (GPU) when DIARIZE_SERVICE_URL is set;
+  # falls back to in-process speakrs when unset.
   # -------------------------------------------------------------------------
   meeting-agent-server:
     build:
@@ -97,13 +127,14 @@ services:
       - SUMMARY_MODEL=${LLM_MODEL:-qwen2.5:32b}
       - SUMMARY_API_KEY=${SUMMARY_API_KEY:-not-needed-local}
       - DIARIZE_ENABLED=${DIARIZE_ENABLED:-false}
+      - DIARIZE_SERVICE_URL=${DIARIZE_SERVICE_URL:-http://diarize-service:8001}
       - DIARIZE_EXECUTION_MODE=${DIARIZE_EXECUTION_MODE:-cpu}
     ports:
       - "${SERVER_HOST_PORT:-8080}:8080"
     volumes:
       - meeting-data:/root/.meeting-agent
     networks: [meeting-agent]
-    depends_on: [whisperx, minutes-llm]
+    depends_on: [whisperx, minutes-llm, diarize-service]
     restart: unless-stopped
 
   # -------------------------------------------------------------------------
@@ -141,4 +172,5 @@ networks:
 volumes:
   whisperx-models:
   llm-models:
+  diarize-models:
   meeting-data:
