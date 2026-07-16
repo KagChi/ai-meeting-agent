@@ -116,6 +116,43 @@ impl Default for DiarizeConfig {
     }
 }
 
+impl DiarizeConfig {
+    /// Build config from defaults + environment overrides.
+    ///
+    /// Env vars (same as `Config::load`):
+    /// - `DIARIZE_ENABLED` (1/true/yes)
+    /// - `DIARIZE_EXECUTION_MODE` (auto|cpu|coreml|coreml-fast|cuda|cuda-fast|migraphx)
+    /// - `DIARIZE_MODEL_DIR` (local model path; blank = download on first use)
+    /// - `DIARIZE_SERVICE_URL` (HTTP service URL; blank = in-process)
+    pub fn from_env() -> Self {
+        let mut config = Self::default();
+        config.apply_env();
+        config
+    }
+
+    /// Apply `DIARIZE_*` environment overrides onto this config.
+    pub fn apply_env(&mut self) {
+        if let Ok(enabled) = std::env::var("DIARIZE_ENABLED") {
+            self.enabled = matches!(enabled.to_lowercase().as_str(), "1" | "true" | "yes");
+        }
+        if let Ok(mode) = std::env::var("DIARIZE_EXECUTION_MODE") {
+            if !mode.trim().is_empty() {
+                self.execution_mode = mode;
+            }
+        }
+        if let Ok(dir) = std::env::var("DIARIZE_MODEL_DIR") {
+            if !dir.trim().is_empty() {
+                self.model_dir = Some(PathBuf::from(dir));
+            }
+        }
+        if let Ok(url) = std::env::var("DIARIZE_SERVICE_URL") {
+            if !url.trim().is_empty() {
+                self.service_url = Some(url);
+            }
+        }
+    }
+}
+
 impl Default for Config {
     fn default() -> Self {
         Self {
@@ -163,8 +200,9 @@ impl Config {
     /// - SUMMARY_MAX_TOKENS
     /// - SUMMARY_LANGUAGE
     /// - DIARIZE_ENABLED (1/true/yes to enable speaker diarization)
-    /// - DIARIZE_EXECUTION_MODE (cpu|coreml|coreml-fast|cuda|cuda-fast|migraphx; default cpu)
+    /// - DIARIZE_EXECUTION_MODE (auto|cpu|coreml|coreml-fast|cuda|cuda-fast|migraphx)
     /// - DIARIZE_MODEL_DIR (path to local speakrs model dir; blank = download on first use)
+    /// - DIARIZE_SERVICE_URL (HTTP diarize service; blank = in-process)
     /// - MEETING_AGENT_PORT (server listen port)
     /// - MEETING_AGENT_HOST (server bind host)
     /// - MEETING_AGENT_API_KEY (server auth key; empty = open access)
@@ -228,24 +266,8 @@ impl Config {
             config.summary.language = Some(language);
         }
 
-        // Diarization overrides
-        if let Ok(enabled) = std::env::var("DIARIZE_ENABLED") {
-            config.diarize.enabled =
-                matches!(enabled.to_lowercase().as_str(), "1" | "true" | "yes");
-        }
-        if let Ok(mode) = std::env::var("DIARIZE_EXECUTION_MODE") {
-            config.diarize.execution_mode = mode;
-        }
-        if let Ok(dir) = std::env::var("DIARIZE_MODEL_DIR") {
-            if !dir.trim().is_empty() {
-                config.diarize.model_dir = Some(PathBuf::from(dir));
-            }
-        }
-        if let Ok(url) = std::env::var("DIARIZE_SERVICE_URL") {
-            if !url.trim().is_empty() {
-                config.diarize.service_url = Some(url);
-            }
-        }
+        // Diarization overrides (shared with diarize-service via DiarizeConfig::apply_env)
+        config.diarize.apply_env();
 
         // Server overrides (MEETING_AGENT_* env vars documented in .env.example)
         if let Ok(port) = std::env::var("MEETING_AGENT_PORT") {

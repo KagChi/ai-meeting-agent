@@ -95,7 +95,7 @@ docker compose -f deploy/docker-compose.yml exec minutes-llm ollama pull qwen2.5
 ```bash
 DIARIZE_ENABLED=true
 DIARIZE_SERVICE_URL=http://diarize-service:8001
-DIARIZE_EXECUTION_MODE=cuda-fast
+DIARIZE_EXECUTION_MODE=auto
 ```
 Then restart: `docker compose -f deploy/docker-compose.yml up -d diarize-service meeting-agent-server`
 

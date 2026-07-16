@@ -12,9 +12,7 @@ use tower_http::trace::TraceLayer;
 use tracing::{error, info, warn};
 
 use meeting_agent_core::{
-    config::DiarizeConfig,
-    diarize::Diarizer,
-    transcription::TranscriptionResponse,
+    config::DiarizeConfig, diarize::Diarizer, transcription::TranscriptionResponse,
 };
 
 #[derive(Clone)]
@@ -80,11 +78,15 @@ async fn main() {
 
     info!("Starting diarization service");
 
-    // Load configuration from environment
-    let config = load_config();
-    info!("Diarization mode: {}", config.execution_mode);
+    // Env-only config (same DIARIZE_* vars as core). Force in-process + always-on.
+    let mut config = DiarizeConfig::from_env();
+    config.enabled = true;
+    config.service_url = None;
+    info!(
+        "Diarization mode: {} model_dir={:?}",
+        config.execution_mode, config.model_dir
+    );
 
-    // Create temp directory for audio files
     let temp_dir = std::env::temp_dir().join("diarize-service");
     if let Err(e) = std::fs::create_dir_all(&temp_dir) {
         error!("Failed to create temp directory: {}", e);
@@ -93,16 +95,19 @@ async fn main() {
 
     let state = AppState { config, temp_dir };
 
-    // Build router
     let app = Router::new()
         .route("/v1/diarize", post(diarize_handler))
         .route("/health", get(health_handler))
         .layer(TraceLayer::new_for_http())
         .with_state(Arc::new(state));
 
-    // Get bind address from environment
-    let host = std::env::var("HOST").unwrap_or_else(|_| "0.0.0.0".to_string());
-    let port = std::env::var("PORT").unwrap_or_else(|_| "8001".to_string());
+    // Prefer DIARIZE_HOST/PORT; fall back to HOST/PORT for container defaults.
+    let host = std::env::var("DIARIZE_HOST")
+        .or_else(|_| std::env::var("HOST"))
+        .unwrap_or_else(|_| "0.0.0.0".to_string());
+    let port = std::env::var("DIARIZE_PORT")
+        .or_else(|_| std::env::var("PORT"))
+        .unwrap_or_else(|_| "8001".to_string());
     let addr = format!("{}:{}", host, port);
 
     info!("Listening on {}", addr);
@@ -111,27 +116,7 @@ async fn main() {
         .await
         .expect("Failed to bind address");
 
-    axum::serve(listener, app)
-        .await
-        .expect("Server failed");
-}
-
-fn load_config() -> DiarizeConfig {
-    let execution_mode = std::env::var("DIARIZE_EXECUTION_MODE")
-        .unwrap_or_else(|_| "cuda-fast".to_string());
-
-    let model_dir = std::env::var("DIARIZE_MODEL_DIR")
-        .ok()
-        .filter(|s| !s.trim().is_empty())
-        .map(std::path::PathBuf::from);
-
-    // Always in-process on the service itself (no nested HTTP).
-    DiarizeConfig {
-        enabled: true,
-        execution_mode,
-        model_dir,
-        service_url: None,
-    }
+    axum::serve(listener, app).await.expect("Server failed");
 }
 
 async fn health_handler(State(state): State<Arc<AppState>>) -> Json<HealthResponse> {
@@ -158,19 +143,15 @@ async fn diarize_handler(
 
         match name.as_str() {
             "audio" => {
-                let data = field
-                    .bytes()
-                    .await
-                    .map_err(|e| AppError::InvalidRequest(format!("Failed to read audio: {}", e)))?;
+                let data = field.bytes().await.map_err(|e| {
+                    AppError::InvalidRequest(format!("Failed to read audio: {}", e))
+                })?;
                 audio_bytes = Some(data.to_vec());
             }
             "transcript" => {
-                let data = field
-                    .text()
-                    .await
-                    .map_err(|e| {
-                        AppError::InvalidRequest(format!("Failed to read transcript: {}", e))
-                    })?;
+                let data = field.text().await.map_err(|e| {
+                    AppError::InvalidRequest(format!("Failed to read transcript: {}", e))
+                })?;
 
                 let parsed: TranscriptionResponse = serde_json::from_str(&data).map_err(|e| {
                     AppError::InvalidRequest(format!("Invalid transcript JSON: {}", e))
@@ -184,8 +165,8 @@ async fn diarize_handler(
         }
     }
 
-    let audio_bytes = audio_bytes
-        .ok_or_else(|| AppError::InvalidRequest("Missing 'audio' field".to_string()))?;
+    let audio_bytes =
+        audio_bytes.ok_or_else(|| AppError::InvalidRequest("Missing 'audio' field".to_string()))?;
 
     let transcript = transcript
         .ok_or_else(|| AppError::InvalidRequest("Missing 'transcript' field".to_string()))?;
@@ -195,11 +176,7 @@ async fn diarize_handler(
 
     fs::write(&temp_path, &audio_bytes).await?;
 
-    let segment_count = transcript
-        .segments
-        .as_ref()
-        .map(|s| s.len())
-        .unwrap_or(0);
+    let segment_count = transcript.segments.as_ref().map(|s| s.len()).unwrap_or(0);
     info!(
         "Processing diarization request: {} bytes audio, {} segments",
         audio_bytes.len(),

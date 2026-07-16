@@ -83,7 +83,10 @@ async fn call_service(
                 )
                 .mime_str("audio/wav")?,
         )
-        .part("transcript", reqwest::multipart::Part::text(transcript_json));
+        .part(
+            "transcript",
+            reqwest::multipart::Part::text(transcript_json),
+        );
 
     let response = client
         .post(&url)
@@ -202,11 +205,9 @@ impl Diarizer {
         };
         let audio_path = audio_path.to_path_buf();
         let transcript = transcript.clone();
-        tokio::task::spawn_blocking(move || {
-            run_in_process(&audio_path, &transcript, &in_process)
-        })
-        .await
-        .context("diarize blocking task panicked")?
+        tokio::task::spawn_blocking(move || run_in_process(&audio_path, &transcript, &in_process))
+            .await
+            .context("diarize blocking task panicked")?
     }
 }
 

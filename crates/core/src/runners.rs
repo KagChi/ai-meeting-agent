@@ -157,7 +157,8 @@ async fn run_import_inner(
             ProgressEvent::new("diarizing", "Speaker diarization").with_percent(70.0),
         );
         check_cancelled(cancel_token)?;
-        match crate::diarize::Diarizer::diarize(final_audio, &transcription, &config.diarize).await {
+        match crate::diarize::Diarizer::diarize(final_audio, &transcription, &config.diarize).await
+        {
             Ok(labeled) => labeled,
             Err(e) => {
                 log::warn!("[diarize] failed, proceeding without speaker labels: {e:#}");
@@ -501,16 +502,19 @@ async fn run_import_memory_inner(cfg: &ImportMemoryConfig) -> Result<()> {
             temp_path
         };
 
-        let result =
-            match crate::diarize::Diarizer::diarize(&temp_audio, &transcription, &cfg.config.diarize)
-                .await
-            {
-                Ok(labeled) => labeled,
-                Err(e) => {
-                    log::warn!("[diarize] failed, proceeding without speaker labels: {e:#}");
-                    transcription
-                }
-            };
+        let result = match crate::diarize::Diarizer::diarize(
+            &temp_audio,
+            &transcription,
+            &cfg.config.diarize,
+        )
+        .await
+        {
+            Ok(labeled) => labeled,
+            Err(e) => {
+                log::warn!("[diarize] failed, proceeding without speaker labels: {e:#}");
+                transcription
+            }
+        };
 
         // Clean up temp file
         if let Err(e) = tokio::fs::remove_file(&temp_audio).await {

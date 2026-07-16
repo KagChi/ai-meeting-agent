@@ -40,9 +40,9 @@ RUN mkdir -p /tmp/diarize-service /app/.cache/speakrs \
 USER app
 
 ENV RUST_LOG=info \
-    HOST=0.0.0.0 \
-    PORT=8001 \
-    DIARIZE_EXECUTION_MODE=cuda-fast \
+    DIARIZE_HOST=0.0.0.0 \
+    DIARIZE_PORT=8001 \
+    DIARIZE_EXECUTION_MODE=auto \
     TEMP=/tmp/diarize-service
 
 EXPOSE 8001

@@ -84,9 +84,10 @@ services:
       dockerfile: deploy/Dockerfile.diarize
     image: ${DIARIZE_IMAGE:-meeting-agent-diarize-service:latest}
     environment:
-      - HOST=0.0.0.0
-      - PORT=8001
-      - DIARIZE_EXECUTION_MODE=${DIARIZE_EXECUTION_MODE:-cuda-fast}
+      - DIARIZE_HOST=0.0.0.0
+      - DIARIZE_PORT=8001
+      - DIARIZE_EXECUTION_MODE=${DIARIZE_EXECUTION_MODE:-auto}
+      - DIARIZE_MODEL_DIR=${DIARIZE_MODEL_DIR:-}
       - RUST_LOG=${DIARIZE_LOG_LEVEL:-info}
     ports:
       - "${DIARIZE_HOST_PORT:-8001}:8001"

@@ -101,11 +101,7 @@ pub fn validate_diarize(d: &DiarizeConfig) -> Result<(), Vec<String>> {
         if let Err(e) = validate_url(url) {
             errs.push(format!("diarize.service_url {e}"));
         }
-        return if errs.is_empty() {
-            Ok(())
-        } else {
-            Err(errs)
-        };
+        return if errs.is_empty() { Ok(()) } else { Err(errs) };
     }
 
     // In-process mode: validate execution backend and model dir.
