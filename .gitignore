@@ -86,3 +86,5 @@ audio
 .claude/model-policy.state.json
 graphify-out/
 graphify-out-*/
+
+.omo
