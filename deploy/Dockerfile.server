@@ -21,8 +21,10 @@ RUN cargo build --release --bin meeting-agent-server
 
 # ---- runtime ----
 FROM debian:13-slim AS runtime
+# libopenblas0: speakrs links OpenBLAS at build (openblas-system feature);
+# without it the binary fails at startup with libopenblas.so.0 missing.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        ca-certificates libstdc++6 ffmpeg \
+        ca-certificates libstdc++6 libopenblas0 ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY --from=builder /app/target/release/meeting-agent-server /usr/local/bin/meeting-agent-server
