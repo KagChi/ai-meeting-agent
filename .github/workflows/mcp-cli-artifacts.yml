@@ -1,9 +1,6 @@
 name: MCP CLI Artifacts
 
 on:
-  push:
-    branches:
-      - '**'
   workflow_dispatch:
 
 concurrency:
