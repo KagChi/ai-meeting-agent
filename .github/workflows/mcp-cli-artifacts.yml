@@ -45,30 +45,16 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
-      - name: Get Rust version
-        id: rust-version
-        run: echo "version=$(rustc --version | cut -d' ' -f2)" >> $GITHUB_OUTPUT
-
-      - name: Cache Cargo registry and git
+      - name: Cache cargo registry
         uses: actions/cache@v4
         with:
           path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            ~/.cargo/bin
-          key: cargo-${{ runner.os }}-${{ steps.rust-version.outputs.version }}-${{ hashFiles('**/Cargo.lock') }}
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+          key: cargo-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
-            cargo-${{ runner.os }}-${{ steps.rust-version.outputs.version }}-
             cargo-${{ runner.os }}-
-
-      - name: Cache target directory
-        uses: actions/cache@v4
-        with:
-          path: target
-          key: cargo-target-${{ matrix.target }}-${{ steps.rust-version.outputs.version }}-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            cargo-target-${{ matrix.target }}-${{ steps.rust-version.outputs.version }}-
-            cargo-target-${{ matrix.target }}-
 
       # Prior multiarch experiments left arm64 foreign arch pointing at
       # archive.ubuntu.com (amd64-only) → apt 404. Strip before any apt use.

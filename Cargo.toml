@@ -74,11 +74,5 @@ dotenv = "0.15"
 ffmpeg-sidecar = "2.5"
 
 [profile.release]
-# Link-time optimization: "thin" balances compile time with optimization
-lto = "thin"
-# Single codegen unit for maximum optimization (slower compile, smaller/faster binary)
-codegen-units = 1
-# Strip debug symbols from release builds
+# Keep release builds fast to compile; strip only for smaller binaries.
 strip = "symbols"
-# Abort on panic instead of unwinding (smaller binary)
-panic = "abort"

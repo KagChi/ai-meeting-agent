@@ -1,53 +1,34 @@
 # syntax=docker/dockerfile:1.7
 # Meeting Agent HTTP API server (meeting-agent-server).
-# Multi-stage: build the release binary, then a slim runtime with ffmpeg
-# (required for audio conversion/chunking).
 
-# ---- chef ----
-FROM ubuntu:24.04 AS chef
+FROM ubuntu:24.04 AS builder
 ENV DEBIAN_FRONTEND=noninteractive
+
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates curl pkg-config g++ git make perl \
         libssl-dev libopenblas-dev \
     && rm -rf /var/lib/apt/lists/*
+
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
     | sh -s -- -y --default-toolchain stable --profile minimal
 ENV PATH="/root/.cargo/bin:${PATH}"
-RUN cargo install cargo-chef
+
 WORKDIR /app
-
-# ---- planner ----
-FROM chef AS planner
 COPY Cargo.toml Cargo.lock ./
 COPY crates/ ./crates/
-RUN cargo chef prepare --recipe-path recipe.json
 
-# ---- cacher ----
-FROM chef AS cacher
-COPY --from=planner /app/recipe.json recipe.json
 RUN --mount=type=cache,target=/root/.cargo/registry \
     --mount=type=cache,target=/root/.cargo/git \
-    cargo chef cook --release --recipe-path recipe.json
+    --mount=type=cache,target=/app/target \
+    cargo build --release --bin meeting-agent-server \
+    && cp /app/target/release/meeting-agent-server /app/meeting-agent-server
 
-# ---- builder ----
-FROM chef AS builder
-COPY --from=cacher /app/target target
-COPY --from=cacher /root/.cargo /root/.cargo
-COPY Cargo.toml Cargo.lock ./
-COPY crates/ ./crates/
-RUN --mount=type=cache,target=/root/.cargo/registry \
-    --mount=type=cache,target=/root/.cargo/git \
-    cargo build --release --bin meeting-agent-server
-
-# ---- runtime ----
 FROM debian:13-slim AS runtime
-# libopenblas0: speakrs links OpenBLAS at build (openblas-system feature);
-# without it the binary fails at startup with libopenblas.so.0 missing.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates libstdc++6 libopenblas0 ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
-COPY --from=builder /app/target/release/meeting-agent-server /usr/local/bin/meeting-agent-server
+COPY --from=builder /app/meeting-agent-server /usr/local/bin/meeting-agent-server
 EXPOSE 8080
 ENV MEETING_AGENT_HOST=0.0.0.0 \
     MEETING_AGENT_PORT=8080
