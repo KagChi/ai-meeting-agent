@@ -29,15 +29,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates curl libopenblas0 \
     && rm -rf /var/lib/apt/lists/*
 
-RUN useradd -m -u 1000 -s /bin/bash app
-
 WORKDIR /app
 COPY --from=builder /app/target/release/meeting-agent-diarize-service /app/diarize-service
 
-RUN mkdir -p /tmp/diarize-service /app/.cache/speakrs \
-    && chown -R app:app /tmp/diarize-service /app/.cache /app/diarize-service
-
-USER app
+RUN mkdir -p /tmp/diarize-service /app/.cache/speakrs
 
 ENV RUST_LOG=info \
     DIARIZE_HOST=0.0.0.0 \
