@@ -86,13 +86,18 @@ services:
     environment:
       - DIARIZE_HOST=0.0.0.0
       - DIARIZE_PORT=8001
-      - DIARIZE_EXECUTION_MODE=${DIARIZE_EXECUTION_MODE:-auto}
+      # cuda-fast matches ORT cu12 + CUDA 12.6 image (auto also tries CUDA first on Linux)
+      - DIARIZE_EXECUTION_MODE=${DIARIZE_EXECUTION_MODE:-cuda-fast}
       - DIARIZE_MODEL_DIR=${DIARIZE_MODEL_DIR:-}
+      # speakrs/hf-hub cache (must match volume path)
+      - HF_HOME=/app/.cache/huggingface
       - RUST_LOG=${DIARIZE_LOG_LEVEL:-info}
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
     ports:
       - "${DIARIZE_HOST_PORT:-8001}:8001"
     volumes:
-      - diarize-models:/app/.cache/speakrs
+      - diarize-models:/app/.cache/huggingface
     deploy:
       resources:
         reservations:

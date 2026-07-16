@@ -185,7 +185,16 @@ async fn diarize_handler(
 
     let result = match Diarizer::diarize(&temp_path, &transcript, &state.config).await {
         Ok(diarized) => {
-            info!("Diarization completed successfully");
+            let total = diarized.segments.as_ref().map(|s| s.len()).unwrap_or(0);
+            let labeled = diarized
+                .segments
+                .as_ref()
+                .map(|s| s.iter().filter(|seg| seg.speaker.is_some()).count())
+                .unwrap_or(0);
+            info!(
+                "Diarization completed successfully: labeled {}/{} segments",
+                labeled, total
+            );
             DiarizeResponse {
                 transcript: diarized,
                 success: true,
@@ -193,11 +202,11 @@ async fn diarize_handler(
             }
         }
         Err(e) => {
-            error!("Diarization failed: {}", e);
+            error!("Diarization failed: {:#}", e);
             DiarizeResponse {
                 transcript,
                 success: false,
-                error: Some(format!("{}", e)),
+                error: Some(format!("{:#}", e)),
             }
         }
     };

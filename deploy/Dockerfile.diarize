@@ -1,8 +1,11 @@
 # syntax=docker/dockerfile:1.7
-# Diarization Service — Ubuntu 24.04 + NVIDIA CUDA/cuDNN for GPU acceleration.
+# Diarization Service — Ubuntu 24.04 + CUDA 12.6/cuDNN for ONNX Runtime CUDA EP.
+# ort 2.0.0-rc.12 defaults to cu12 binaries (libcudart.so.12); CUDA 13 images break GPU.
 
-FROM nvidia/cuda:13.2.0-cudnn-devel-ubuntu24.04 AS builder
+FROM nvidia/cuda:12.6.3-cudnn-devel-ubuntu24.04 AS builder
 ENV DEBIAN_FRONTEND=noninteractive
+# Ensure ort-sys downloads the cu12 CUDA EP package when building with cuda feature.
+ENV ORT_CUDA_VERSION=12
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates curl pkg-config g++ git make perl \
@@ -24,7 +27,7 @@ RUN --mount=type=cache,target=/root/.cargo/registry \
     cargo build --release --package meeting-agent-diarize-service \
     && cp /app/target/release/meeting-agent-diarize-service /app/diarize-service
 
-FROM nvidia/cuda:13.2.0-cudnn-runtime-ubuntu24.04
+FROM nvidia/cuda:12.6.3-cudnn-runtime-ubuntu24.04
 ENV DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -34,13 +37,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /app
 COPY --from=builder /app/diarize-service /app/diarize-service
 
-RUN mkdir -p /tmp/diarize-service /app/.cache/speakrs
+# hf-hub / speakrs cache (override with HF_HOME in compose)
+RUN mkdir -p /tmp/diarize-service /app/.cache/huggingface
 
 ENV RUST_LOG=info \
     DIARIZE_HOST=0.0.0.0 \
     DIARIZE_PORT=8001 \
-    DIARIZE_EXECUTION_MODE=auto \
-    TEMP=/tmp/diarize-service
+    DIARIZE_EXECUTION_MODE=cuda-fast \
+    HF_HOME=/app/.cache/huggingface \
+    TEMP=/tmp/diarize-service \
+    NVIDIA_VISIBLE_DEVICES=all \
+    NVIDIA_DRIVER_CAPABILITIES=compute,utility
 
 EXPOSE 8001
 

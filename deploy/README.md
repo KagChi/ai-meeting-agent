@@ -53,9 +53,9 @@ the lab.
 
 **Diarization**: Prebuilt image
 `ghcr.io/bmw-ece-ntust/ai-meeting-agent/meeting-agent-diarize-service` (Ubuntu
-24.04 + CUDA, `speakrs`). When `DIARIZE_ENABLED=true`, meeting-agent-server calls
+24.04 + CUDA 12.6/cuDNN, `speakrs`/ORT). When `DIARIZE_ENABLED=true`, meeting-agent-server calls
 it via `DIARIZE_SERVICE_URL` (default `http://diarize-service:8001`). Models
-(~200MB) are auto-downloaded into the `diarize-models` volume on first run.
+are auto-downloaded into the `diarize-models` volume (`HF_HOME`) on first run.
 
 ---
 
@@ -97,7 +97,7 @@ docker compose -f deploy/docker-compose.yml exec minutes-llm ollama pull qwen2.5
 ```bash
 DIARIZE_ENABLED=true
 DIARIZE_SERVICE_URL=http://diarize-service:8001
-DIARIZE_EXECUTION_MODE=auto
+DIARIZE_EXECUTION_MODE=cuda-fast
 ```
 Then restart: `docker compose -f deploy/docker-compose.yml up -d diarize-service meeting-agent-server`
 

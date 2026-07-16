@@ -260,12 +260,35 @@ fn run_in_process(
 
     // Copy speaker labels onto a clone of the transcript.
     let mut out = transcript.clone();
+    let mut labeled = 0usize;
+    let mut total = 0usize;
     if let Some(segs) = out.segments.as_mut() {
+        total = segs.len();
         for (i, seg) in segs.iter_mut().enumerate() {
             if let Some(c) = cleaned.get(i) {
                 seg.speaker = c.speaker.clone();
+                if seg.speaker.is_some() {
+                    labeled += 1;
+                }
             }
         }
+    }
+
+    if total == 0 {
+        log::warn!("[diarize] no transcript segments to label");
+    } else if labeled == 0 {
+        log::warn!(
+            "[diarize] labeled 0/{} transcript segments (no time overlap with {} speaker turns)",
+            total,
+            result.segments.len()
+        );
+    } else {
+        log::info!(
+            "[diarize] labeled {}/{} transcript segments ({} speaker turns)",
+            labeled,
+            total,
+            result.segments.len()
+        );
     }
 
     Ok(out)
@@ -295,7 +318,7 @@ fn try_init_pipeline_with_fallback(
     match init_result {
         Ok(pipeline) => Ok(pipeline),
         Err(e) if is_gpu_mode => {
-            log::warn!("[diarize] GPU initialization failed (mode={}): {}", mode, e);
+            log::warn!("[diarize] GPU initialization failed (mode={mode}): {e:#}");
             log::warn!("[diarize] falling back to CPU mode");
 
             // Retry with CPU
@@ -307,6 +330,10 @@ fn try_init_pipeline_with_fallback(
                     .map_err(DiarizeError::from)
                     .context("Failed to load speakrs pipeline (CPU fallback)"),
             }
+            .map_err(|cpu_err| {
+                log::error!("[diarize] CPU fallback also failed: {cpu_err:#}");
+                cpu_err
+            })
         }
         Err(e) => Err(e),
     }
