@@ -35,6 +35,10 @@ schemars = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 log = { workspace = true }
+dirs = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
 
 # native-tls uses OpenSSL only on Linux; macOS=Security.framework, Windows=SChannel.
 # Vendored so aarch64-linux cross-build needs no target libssl.

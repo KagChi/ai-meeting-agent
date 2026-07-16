@@ -6,7 +6,10 @@ pub struct EmptyParams {}
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct ImportFromFileRequest {
-    /// Path to audio/video file accessible by MCP server process.
+    /// Local filesystem path, or OpenClaw inbound media URI
+    /// (`media://inbound/<filename>`). OpenClaw URIs resolve under
+    /// `OPENCLAW_MEDIA_INBOUND_DIR` (default `~/.openclaw/media/inbound`).
+    /// The path must be readable by the MCP server process.
     pub file_path: String,
     /// Optional meeting title.
     pub title: Option<String>,

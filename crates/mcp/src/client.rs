@@ -1,7 +1,6 @@
 use crate::error::{ClientError, Result};
 use reqwest::multipart;
 use serde_json::{json, Value};
-use std::path::Path;
 
 #[derive(Clone)]
 pub struct MeetingAgentClient {
@@ -24,14 +23,14 @@ impl MeetingAgentClient {
         file_path: &str,
         title: Option<&str>,
     ) -> Result<Value> {
-        let path = Path::new(file_path);
+        let path = crate::path_resolve::resolve_import_path(file_path)?;
         let filename = path
             .file_name()
             .and_then(|name| name.to_str())
             .ok_or_else(|| ClientError::InvalidInput("file_path must point to a file".to_string()))?
             .to_string();
 
-        let bytes = tokio::fs::read(path).await?;
+        let bytes = tokio::fs::read(&path).await?;
         self.import_meeting_audio_bytes(bytes, filename, title)
             .await
     }
