@@ -82,7 +82,7 @@ services:
     build:
       context: ..
       dockerfile: deploy/Dockerfile.diarize
-    image: ${DIARIZE_IMAGE:-meeting-agent-diarize-service:latest}
+    image: ${DIARIZE_IMAGE:-ghcr.io/bmw-ece-ntust/ai-meeting-agent/meeting-agent-diarize-service:latest}
     environment:
       - DIARIZE_HOST=0.0.0.0
       - DIARIZE_PORT=8001

@@ -40,7 +40,8 @@ We already keep the **voiceprint** models in this repo's `Dockerfile.diarize`
                               ┌──────────────── this stack (network: vexa + meeting-agent) ─────────────┐
                               │ whisperx :8010  (DGX, OpenAI STT)                                        │
                               │ minutes-llm :11434 (DGX, Qwen)                                           │
-                              │ meeting-agent-server :8080 (in-process CPU diarization via speakrs)      │
+                              │ diarize-service :8001 (DGX, speakrs/CUDA)                                │
+                              │ meeting-agent-server :8080                                              │
                               │ MCP: CLI only (meeting-agent-mcp), not containerized                     │
                               │ orchestrator (Phase 3-4): Vexa→SOP minutes→daily-log→GCal               │
                               └────────────────────────────────────────────────────────────────────────┘
@@ -50,10 +51,11 @@ The key wiring: **Vexa's realtime transcription is pointed at our DGX WhisperX**
 via `TRANSCRIPTION_SERVICE_URL`, so no meeting audio and no transcription leaves
 the lab.
 
-**Diarization**: Separate GPU service (`diarize-service`, Ubuntu 24.04 + CUDA)
-using `speakrs`. When `DIARIZE_ENABLED=true`, meeting-agent-server calls it via
-`DIARIZE_SERVICE_URL` (default `http://diarize-service:8001`). Models (~200MB)
-are auto-downloaded into the `diarize-models` volume on first run.
+**Diarization**: Prebuilt image
+`ghcr.io/bmw-ece-ntust/ai-meeting-agent/meeting-agent-diarize-service` (Ubuntu
+24.04 + CUDA, `speakrs`). When `DIARIZE_ENABLED=true`, meeting-agent-server calls
+it via `DIARIZE_SERVICE_URL` (default `http://diarize-service:8001`). Models
+(~200MB) are auto-downloaded into the `diarize-models` volume on first run.
 
 ---
 

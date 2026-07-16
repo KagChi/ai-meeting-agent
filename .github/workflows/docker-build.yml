@@ -25,6 +25,8 @@ jobs:
         include:
           - image: meeting-agent-server
             dockerfile: ./deploy/Dockerfile.server
+          - image: meeting-agent-diarize-service
+            dockerfile: ./deploy/Dockerfile.diarize
 
     steps:
       - name: Checkout repository
