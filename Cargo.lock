@@ -1733,6 +1733,7 @@ dependencies = [
  "env_logger",
  "ffmpeg-sidecar",
  "futures-util",
+ "hf-hub",
  "log",
  "regex",
  "reqwest",

@@ -40,10 +40,12 @@ COPY --from=builder /app/diarize-service /app/diarize-service
 # hf-hub / speakrs cache (override with HF_HOME in compose)
 RUN mkdir -p /tmp/diarize-service /app/.cache/huggingface
 
+# HOME=/app so any leftover Cache::default() paths stay on the volume too.
 ENV RUST_LOG=info \
     DIARIZE_HOST=0.0.0.0 \
     DIARIZE_PORT=8001 \
     DIARIZE_EXECUTION_MODE=cuda-fast \
+    HOME=/app \
     HF_HOME=/app/.cache/huggingface \
     TEMP=/tmp/diarize-service \
     NVIDIA_VISIBLE_DEVICES=all \

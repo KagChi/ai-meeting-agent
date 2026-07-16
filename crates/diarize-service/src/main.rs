@@ -82,9 +82,14 @@ async fn main() {
     let mut config = DiarizeConfig::from_env();
     config.enabled = true;
     config.service_url = None;
+    let hf_home = std::env::var("HF_HOME").unwrap_or_else(|_| "(unset)".into());
+    let hub_cache = meeting_agent_core::diarize::resolve_hf_hub_cache();
     info!(
-        "Diarization mode: {} model_dir={:?}",
-        config.execution_mode, config.model_dir
+        "Diarization mode: {} model_dir={:?} HF_HOME={} hub_cache={}",
+        config.execution_mode,
+        config.model_dir,
+        hf_home,
+        hub_cache.display()
     );
 
     let temp_dir = std::env::temp_dir().join("diarize-service");

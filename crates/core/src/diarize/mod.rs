@@ -18,10 +18,12 @@ pub mod audio;
 pub mod error;
 pub mod merge;
 pub mod models;
+pub mod models_download;
 
 pub use error::{DiarizeError, Result};
 pub use merge::{merge as merge_segments, CleanedSegment};
 pub use models::{WhisperSegment, WhisperTranscript};
+pub use models_download::{ensure_pretrained_models, resolve_hf_hub_cache};
 
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
@@ -306,14 +308,22 @@ fn try_init_pipeline_with_fallback(
 ) -> anyhow::Result<OwnedDiarizationPipeline> {
     let is_gpu_mode = !matches!(mode, ExecutionMode::Cpu);
 
-    let init_result = match model_dir {
-        Some(dir) => OwnedDiarizationPipeline::from_dir(dir, mode)
-            .map_err(DiarizeError::from)
-            .context("Failed to load speakrs pipeline from local model dir"),
-        None => OwnedDiarizationPipeline::from_pretrained(mode)
-            .map_err(DiarizeError::from)
-            .context("Failed to load speakrs pipeline (pretrained download)"),
+    // Resolve models once: local dir or HF download that honors HF_HOME and
+    // includes CUDA split-tail files speakrs from_pretrained omits.
+    let resolved_dir: PathBuf = match model_dir {
+        Some(dir) => dir.clone(),
+        None => ensure_pretrained_models(mode)
+            .context("Failed to download speakrs models (HF_HOME-aware)")?,
     };
+
+    let init_result = OwnedDiarizationPipeline::from_dir(&resolved_dir, mode)
+        .map_err(DiarizeError::from)
+        .with_context(|| {
+            format!(
+                "Failed to load speakrs pipeline from {} (mode={mode})",
+                resolved_dir.display()
+            )
+        });
 
     match init_result {
         Ok(pipeline) => Ok(pipeline),
@@ -321,19 +331,18 @@ fn try_init_pipeline_with_fallback(
             log::warn!("[diarize] GPU initialization failed (mode={mode}): {e:#}");
             log::warn!("[diarize] falling back to CPU mode");
 
-            // Retry with CPU
-            match model_dir {
-                Some(dir) => OwnedDiarizationPipeline::from_dir(dir, ExecutionMode::Cpu)
-                    .map_err(DiarizeError::from)
-                    .context("Failed to load speakrs pipeline from local model dir (CPU fallback)"),
-                None => OwnedDiarizationPipeline::from_pretrained(ExecutionMode::Cpu)
-                    .map_err(DiarizeError::from)
-                    .context("Failed to load speakrs pipeline (CPU fallback)"),
-            }
-            .map_err(|cpu_err| {
-                log::error!("[diarize] CPU fallback also failed: {cpu_err:#}");
-                cpu_err
-            })
+            OwnedDiarizationPipeline::from_dir(&resolved_dir, ExecutionMode::Cpu)
+                .map_err(DiarizeError::from)
+                .with_context(|| {
+                    format!(
+                        "Failed to load speakrs pipeline from {} (CPU fallback)",
+                        resolved_dir.display()
+                    )
+                })
+                .map_err(|cpu_err| {
+                    log::error!("[diarize] CPU fallback also failed: {cpu_err:#}");
+                    cpu_err
+                })
         }
         Err(e) => Err(e),
     }

@@ -55,7 +55,17 @@ the lab.
 `ghcr.io/bmw-ece-ntust/ai-meeting-agent/meeting-agent-diarize-service` (Ubuntu
 24.04 + CUDA 12.6/cuDNN, `speakrs`/ORT). When `DIARIZE_ENABLED=true`, meeting-agent-server calls
 it via `DIARIZE_SERVICE_URL` (default `http://diarize-service:8001`). Models
-are auto-downloaded into the `diarize-models` volume (`HF_HOME`) on first run.
+are auto-downloaded into the `diarize-models` volume (`HF_HOME=/app/.cache/huggingface`)
+on first run (HF-aware download; includes CUDA split-tail ONNX files).
+
+If an older run left a **partial** cache (e.g. missing
+`wespeaker-voxceleb-resnet34-tail.onnx`), wipe once then restart:
+
+```bash
+docker compose -f deploy/docker-compose.yml stop diarize-service
+docker volume rm "$(docker volume ls -q | grep diarize-models)"
+docker compose -f deploy/docker-compose.yml up -d --build diarize-service
+```
 
 ---
 

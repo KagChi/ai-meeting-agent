@@ -89,7 +89,8 @@ services:
       # cuda-fast matches ORT cu12 + CUDA 12.6 image (auto also tries CUDA first on Linux)
       - DIARIZE_EXECUTION_MODE=${DIARIZE_EXECUTION_MODE:-cuda-fast}
       - DIARIZE_MODEL_DIR=${DIARIZE_MODEL_DIR:-}
-      # speakrs/hf-hub cache (must match volume path)
+      # HF-aware download uses HF_HOME; HOME keeps legacy defaults on the volume
+      - HOME=/app
       - HF_HOME=/app/.cache/huggingface
       - RUST_LOG=${DIARIZE_LOG_LEVEL:-info}
       - NVIDIA_VISIBLE_DEVICES=all
