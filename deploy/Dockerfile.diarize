@@ -3,7 +3,7 @@
 
 # syntax=docker/dockerfile:1.7
 
-# Build stage (12.4.0 has no ubuntu24.04 tags; 13.3.0 is current for 24.04)
+# Build stage
 FROM nvidia/cuda:13.3.0-cudnn-devel-ubuntu24.04 AS builder
 ENV DEBIAN_FRONTEND=noninteractive
 
