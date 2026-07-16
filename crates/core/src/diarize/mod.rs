@@ -207,9 +207,17 @@ impl Diarizer {
         };
         let audio_path = audio_path.to_path_buf();
         let transcript = transcript.clone();
-        tokio::task::spawn_blocking(move || run_in_process(&audio_path, &transcript, &in_process))
-            .await
-            .context("diarize blocking task panicked")?
+
+        // speakrs ONNX/CUDA inference uses deep C call stacks (cuDNN conv
+        // kernels + ndarray Array3 stack allocs) that exceed tokio's default
+        // 2 MB blocking-thread stack. Run on a dedicated thread with 8 MB.
+        let handle = std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(move || run_in_process(&audio_path, &transcript, &in_process))
+            .context("failed to spawn diarize thread")?;
+        handle
+            .join()
+            .map_err(|_| anyhow::anyhow!("diarize thread panicked"))?
     }
 }
 
