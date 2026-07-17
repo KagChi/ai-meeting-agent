@@ -53,11 +53,11 @@ WORKDIR /app
 COPY --from=builder /app/diarize-service /app/diarize-service
 
 # Copy ONNX Runtime libraries needed for CUDA Execution Provider
-# Copy entire directory first, then move libs with shell to handle empty case
+# ort expects these in /app/ (same directory as the binary)
 COPY --from=builder /onnxruntime-libs /onnxruntime-libs
 RUN if [ -n "$(ls -A /onnxruntime-libs 2>/dev/null)" ]; then \
-      echo "Copying ONNX Runtime libraries to /usr/local/lib/"; \
-      cp -v /onnxruntime-libs/* /usr/local/lib/ && ldconfig; \
+      echo "Copying ONNX Runtime libraries to /app/"; \
+      cp -v /onnxruntime-libs/* /app/; \
     else \
       echo "WARNING: No ONNX Runtime libraries found - CUDA support will not work"; \
     fi && rm -rf /onnxruntime-libs
