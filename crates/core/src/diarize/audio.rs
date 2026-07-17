@@ -1,3 +1,5 @@
+use std::path::Path;
+
 use symphonia::core::audio::SampleBuffer;
 use symphonia::core::codecs::{DecoderOptions, CODEC_TYPE_NULL};
 use symphonia::core::formats::FormatOptions;
@@ -8,12 +10,32 @@ use crate::diarize::error::{DiarizeError, Result};
 
 const TARGET_SAMPLE_RATE: u32 = 16000;
 
+/// Decode audio from a file path, streaming packet-by-packet through symphonia
+/// without first materializing the full raw byte buffer in RAM.
+///
+/// Produces mono f32 samples at 16 kHz. Multi-channel input is downmixed by
+/// averaging channels. If the source sample rate differs from 16 kHz, a linear
+/// resampler is applied.
+pub fn decode_audio_from_file(path: &Path) -> Result<Vec<f32>> {
+    log::debug!("[audio] decoding file: {}", path.display());
+
+    let file = std::fs::File::open(path)
+        .map_err(|e| DiarizeError::AudioDecodeError(format!("open {}: {e}", path.display())))?;
+    let mss = MediaSourceStream::new(Box::new(file), Default::default());
+
+    decode_mss(mss)
+}
+
 pub fn decode_audio_to_f32_mono_16k(bytes: &[u8]) -> Result<Vec<f32>> {
     log::debug!("[audio] decoding {} bytes", bytes.len());
 
     let cursor = std::io::Cursor::new(bytes.to_vec());
     let mss = MediaSourceStream::new(Box::new(cursor), Default::default());
 
+    decode_mss(mss)
+}
+
+fn decode_mss(mss: MediaSourceStream) -> Result<Vec<f32>> {
     let prober = symphonia::default::get_probe();
     let hint = symphonia::core::probe::Hint::new();
 

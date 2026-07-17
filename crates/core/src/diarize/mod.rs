@@ -27,12 +27,13 @@ pub use models_download::{ensure_pretrained_models, resolve_hf_hub_cache};
 
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
+use std::time::Duration;
 
 use anyhow::Context;
 use speakrs::{ExecutionMode, OwnedDiarizationPipeline};
 
 use crate::config::DiarizeConfig;
-use crate::diarize::audio::decode_audio_to_f32_mono_16k;
+use crate::diarize::audio::decode_audio_from_file;
 use crate::diarize::merge::merge;
 use crate::transcription::TranscriptionResponse;
 
@@ -56,41 +57,61 @@ struct DiarizeServiceResponse {
     error: Option<String>,
 }
 
+/// Shared HTTP client for the diarization service.
+///
+/// Built once with a 2h timeout (long meetings up to 7200s) and a connection
+/// pool that keeps the diarize-service link warm across imports.
+fn http_client() -> &'static reqwest::Client {
+    static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+    CLIENT.get_or_init(|| {
+        reqwest::Client::builder()
+            .timeout(Duration::from_secs(7200))
+            .pool_idle_timeout(Duration::from_secs(90))
+            .build()
+            .expect("failed to build diarize reqwest client")
+    })
+}
+
 /// Call remote diarization service via HTTP multipart POST.
+///
+/// Streams the audio file from disk (no full byte buffer in RAM) and ships the
+/// transcript JSON alongside it. The server writes the stream to a temp file
+/// and runs speakrs over it.
 async fn call_service(
     audio_path: &Path,
     transcript: &TranscriptionResponse,
     service_url: &str,
 ) -> anyhow::Result<TranscriptionResponse> {
-    let audio_bytes = tokio::fs::read(audio_path)
-        .await
-        .context("Failed to read audio file for HTTP diarization")?;
-
     let transcript_json = serde_json::to_string(transcript)
         .context("Failed to serialize transcript for HTTP diarization")?;
 
-    let client = reqwest::Client::new();
-    let url = format!("{}/v1/diarize", service_url.trim_end_matches('/'));
+    let file = tokio::fs::File::open(audio_path)
+        .await
+        .with_context(|| format!("Failed to open audio file: {}", audio_path.display()))?;
+
+    let file_name = audio_path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("audio.wav")
+        .to_string();
+
+    let audio_len = file.metadata().await.map(|m| m.len()).unwrap_or(0);
+
+    // reqwest::Body implements From<tokio::fs::File> directly, so the file is
+    // streamed to the server without buffering the full audio in RAM.
+    let audio_part = reqwest::multipart::Part::stream_with_length(file, audio_len)
+        .file_name(file_name)
+        .mime_str("audio/wav")?;
 
     let form = reqwest::multipart::Form::new()
-        .part(
-            "audio",
-            reqwest::multipart::Part::bytes(audio_bytes)
-                .file_name(
-                    audio_path
-                        .file_name()
-                        .and_then(|n| n.to_str())
-                        .unwrap_or("audio.wav")
-                        .to_string(),
-                )
-                .mime_str("audio/wav")?,
-        )
+        .part("audio", audio_part)
         .part(
             "transcript",
             reqwest::multipart::Part::text(transcript_json),
         );
 
-    let response = client
+    let url = format!("{}/v1/diarize", service_url.trim_end_matches('/'));
+    let response = http_client()
         .post(&url)
         .multipart(form)
         .send()
@@ -242,9 +263,8 @@ fn run_in_process(
         .unwrap_or_default();
 
     log::info!("[diarize] decoding audio: {}", audio_path.display());
-    let audio_bytes = std::fs::read(audio_path)
-        .with_context(|| format!("Failed to read audio file: {}", audio_path.display()))?;
-    let samples = decode_audio_to_f32_mono_16k(&audio_bytes)?;
+    let samples = decode_audio_from_file(audio_path)
+        .with_context(|| format!("Failed to decode audio file: {}", audio_path.display()))?;
     log::info!(
         "[diarize] decoded {} samples ({:.2}s)",
         samples.len(),

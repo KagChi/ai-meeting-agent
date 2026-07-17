@@ -1,5 +1,5 @@
 use axum::{
-    extract::{Multipart, State},
+    extract::{DefaultBodyLimit, Multipart, State},
     http::StatusCode,
     response::{IntoResponse, Response},
     routing::{get, post},
@@ -7,7 +7,9 @@ use axum::{
 };
 use serde::Serialize;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::fs;
+use tower_http::timeout::TimeoutLayer;
 use tower_http::trace::TraceLayer;
 use tracing::{error, info, warn};
 
@@ -103,6 +105,10 @@ async fn main() {
     let app = Router::new()
         .route("/v1/diarize", post(diarize_handler))
         .route("/health", get(health_handler))
+        // Long meetings (up to 2h audio) need a generous body cap + per-request
+        // timeout so axum's 2MB default and 30s idle don't kill the upload.
+        .layer(DefaultBodyLimit::max(1024 * 1024 * 1024))
+        .layer(TimeoutLayer::new(Duration::from_secs(7800)))
         .layer(TraceLayer::new_for_http())
         .with_state(Arc::new(state));
 
