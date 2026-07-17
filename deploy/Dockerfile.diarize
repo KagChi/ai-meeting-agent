@@ -6,6 +6,7 @@ FROM nvidia/cuda:12.6.3-cudnn-devel-ubuntu24.04 AS builder
 ENV DEBIAN_FRONTEND=noninteractive
 # Ensure ort-sys downloads the cu12 CUDA EP package when building with cuda feature.
 ENV ORT_CUDA_VERSION=12
+ENV ORT_RUST_USE_CUDA=1
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates curl pkg-config g++ git make perl \
