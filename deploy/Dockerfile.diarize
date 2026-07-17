@@ -48,8 +48,14 @@ WORKDIR /app
 COPY --from=builder /app/diarize-service /app/diarize-service
 
 # Copy ONNX Runtime libraries needed for CUDA Execution Provider
-COPY --from=builder /onnxruntime-libs/* /usr/local/lib/ 2>/dev/null || echo "No ONNX Runtime libraries to copy"
-RUN ldconfig
+# Copy entire directory first, then move libs with shell to handle empty case
+COPY --from=builder /onnxruntime-libs /onnxruntime-libs
+RUN if [ -n "$(ls -A /onnxruntime-libs 2>/dev/null)" ]; then \
+      echo "Copying ONNX Runtime libraries to /usr/local/lib/"; \
+      cp -v /onnxruntime-libs/* /usr/local/lib/ && ldconfig; \
+    else \
+      echo "WARNING: No ONNX Runtime libraries found - CUDA support will not work"; \
+    fi && rm -rf /onnxruntime-libs
 
 # hf-hub / speakrs cache (override with HF_HOME in compose)
 RUN mkdir -p /tmp/diarize-service /app/.cache/huggingface
