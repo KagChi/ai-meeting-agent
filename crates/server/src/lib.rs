@@ -87,7 +87,7 @@ pub fn build_router(state: AppState) -> Router {
         .merge(public_routes)
         .merge(protected_routes)
         .with_state(state)
-        .layer(DefaultBodyLimit::max(100 * 1024 * 1024)) // 100MB max body size
+        .layer(DefaultBodyLimit::max(2 * 1024 * 1024 * 1024)) // 2GB max body size (video files)
         .layer(CorsLayer::permissive())
         .layer(TraceLayer::new_for_http())
         .layer(middleware::from_fn(logging::log_request))

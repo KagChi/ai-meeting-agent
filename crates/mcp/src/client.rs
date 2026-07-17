@@ -169,13 +169,14 @@ impl MeetingAgentClient {
         let message = serde_json::from_str::<Value>(&text)
             .ok()
             .and_then(|value| {
+                // Prefer "details" over "error" for more specific error messages
                 value
-                    .get("error")
+                    .get("details")
                     .and_then(Value::as_str)
                     .map(str::to_string)
                     .or_else(|| {
                         value
-                            .get("details")
+                            .get("error")
                             .and_then(Value::as_str)
                             .map(str::to_string)
                     })
