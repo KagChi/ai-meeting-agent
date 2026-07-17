@@ -28,14 +28,18 @@ RUN --mount=type=cache,target=/root/.cargo/registry \
     cargo build --release --package meeting-agent-diarize-service \
     && cp /app/target/release/meeting-agent-diarize-service /app/diarize-service \
     && mkdir -p /onnxruntime-libs \
-    && echo "Searching for ONNX Runtime libraries..." \
-    && find /app/target/release/build -name "libonnxruntime*.so*" -exec cp -v {} /onnxruntime-libs/ \; \
-    && ls -la /onnxruntime-libs/ \
-    && if [ -z "$(ls -A /onnxruntime-libs/)" ]; then \
-         echo "WARNING: No ONNX Runtime libraries found - CUDA support may not work"; \
-       else \
-         echo "Found ONNX Runtime libraries for CUDA support"; \
-       fi
+    && echo "=== Investigating ONNX Runtime libraries ===" \
+    && echo "1. Checking dynamic dependencies of the binary:" \
+    && ldd /app/diarize-service | grep -i onnx || echo "No onnxruntime in ldd output" \
+    && echo "2. Searching in /app/target/release/build:" \
+    && find /app/target/release/build -name "*.so*" 2>/dev/null | grep -i onnx || echo "Not found in build dir" \
+    && echo "3. Searching in /root/.cargo:" \
+    && find /root/.cargo -name "libonnxruntime*.so*" 2>/dev/null || echo "Not found in cargo dir" \
+    && echo "4. Searching entire /app/target:" \
+    && find /app/target -name "libonnxruntime*.so*" 2>/dev/null | head -20 \
+    && echo "5. Attempting to copy found libraries:" \
+    && (find /app/target -name "libonnxruntime*.so*" -exec cp -v {} /onnxruntime-libs/ \; || true) \
+    && ls -la /onnxruntime-libs/
 
 FROM nvidia/cuda:12.6.3-cudnn-runtime-ubuntu24.04
 ENV DEBIAN_FRONTEND=noninteractive
