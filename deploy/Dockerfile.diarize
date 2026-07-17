@@ -21,11 +21,21 @@ COPY Cargo.toml Cargo.lock ./
 COPY crates/ ./crates/
 
 # BuildKit caches keep cargo registry + target between builds without cargo-chef overhead.
+# Also extract ONNX Runtime shared libraries that ort-sys downloads for CUDA support.
 RUN --mount=type=cache,target=/root/.cargo/registry \
     --mount=type=cache,target=/root/.cargo/git \
     --mount=type=cache,target=/app/target \
     cargo build --release --package meeting-agent-diarize-service \
-    && cp /app/target/release/meeting-agent-diarize-service /app/diarize-service
+    && cp /app/target/release/meeting-agent-diarize-service /app/diarize-service \
+    && mkdir -p /onnxruntime-libs \
+    && echo "Searching for ONNX Runtime libraries..." \
+    && find /app/target/release/build -name "libonnxruntime*.so*" -exec cp -v {} /onnxruntime-libs/ \; \
+    && ls -la /onnxruntime-libs/ \
+    && if [ -z "$(ls -A /onnxruntime-libs/)" ]; then \
+         echo "WARNING: No ONNX Runtime libraries found - CUDA support may not work"; \
+       else \
+         echo "Found ONNX Runtime libraries for CUDA support"; \
+       fi
 
 FROM nvidia/cuda:12.6.3-cudnn-runtime-ubuntu24.04
 ENV DEBIAN_FRONTEND=noninteractive
@@ -36,6 +46,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 COPY --from=builder /app/diarize-service /app/diarize-service
+
+# Copy ONNX Runtime libraries needed for CUDA Execution Provider
+COPY --from=builder /onnxruntime-libs/* /usr/local/lib/ 2>/dev/null || echo "No ONNX Runtime libraries to copy"
+RUN ldconfig
 
 # hf-hub / speakrs cache (override with HF_HOME in compose)
 RUN mkdir -p /tmp/diarize-service /app/.cache/huggingface
