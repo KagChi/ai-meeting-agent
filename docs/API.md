@@ -303,6 +303,78 @@ Full-text search across transcript segments using SQLite FTS5.
 - `400 Bad Request` — missing or invalid query
 - `404 Not Found` — meeting not found
 
+### `POST /meetings/{id}/retranscribe`
+
+Retranscribe a meeting with the current transcription configuration. Creates a new transcript version while preserving the previous one.
+
+**Path Parameters:**
+| Name | Type | Description |
+|------|------|-------------|
+| `id` | string | Meeting UUID or prefix |
+
+**Response:** `202 Accepted`
+```json
+{
+  "job_id": "990e8400-e29b-41d4-a716-446655440004",
+  "status": "pending"
+}
+```
+
+**Errors:**
+- `404 Not Found` — meeting not found
+- `409 Conflict` — no audio file available for retranscription
+
+**Notes:**
+- Uses the current `transcription.provider` and `transcription.model` from config
+- Previous transcript versions are preserved and accessible via `/meetings/{id}/transcript/versions`
+- Poll job status at `GET /jobs/{job_id}/status` or stream events at `GET /jobs/{job_id}/events`
+
+### `GET /meetings/{id}/transcript/versions`
+
+List all transcript versions for a meeting, ordered by version number (newest first).
+
+**Path Parameters:**
+| Name | Type | Description |
+|------|------|-------------|
+| `id` | string | Meeting UUID or prefix |
+
+**Response:** `200 OK`
+```json
+{
+  "meeting_id": "550e8400-e29b-41d4-a716-446655440000",
+  "versions": [
+    {
+      "id": 2,
+      "meeting_id": "550e8400-e29b-41d4-a716-446655440000",
+      "version": 2,
+      "provider": "openai",
+      "model": "whisper-1",
+      "language": "en",
+      "segment_count": 150,
+      "created_at": "2026-07-20T04:30:00Z"
+    },
+    {
+      "id": 1,
+      "meeting_id": "550e8400-e29b-41d4-a716-446655440000",
+      "version": 1,
+      "provider": "openai",
+      "model": "whisper-large-v3",
+      "language": "en",
+      "segment_count": 148,
+      "created_at": "2026-07-20T03:50:00Z"
+    }
+  ]
+}
+```
+
+**Errors:**
+- `404 Not Found` — meeting not found
+
+**Notes:**
+- Each retranscription creates a new version entry
+- The current active transcript is always the latest version
+- Version metadata includes provider, model, language, and segment count for comparison
+
 ---
 
 ## Summaries
@@ -457,7 +529,7 @@ Poll the status of a background job (import or summary).
 
 **Job States:** `pending`, `processing`, `completed`, `failed`, `cancelled`
 
-**Job Types:** `import`, `summary`
+**Job Types:** `import`, `summary`, `retranscribe`
 
 **Errors:**
 - `404 Not Found` — job not found
@@ -699,7 +771,7 @@ pub struct Summary {
 ```rust
 pub struct Job {
     pub id: String,
-    pub job_type: JobType,                   // import | summary
+    pub job_type: JobType,                   // import | summary | retranscribe
     pub state: JobState,                     // pending | processing | completed | failed | cancelled
     pub progress: Vec<ProgressEvent>,
     pub meeting_id: Option<String>,

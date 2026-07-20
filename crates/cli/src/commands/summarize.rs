@@ -38,7 +38,7 @@ pub async fn run(id: String, template: String, language: Option<String>) -> Resu
         );
     }
 
-    let transcript_resp = storage.get_transcript(&full_id).await?;
+    let transcript_resp = storage.get_transcript(&full_id, None).await?;
 
     let config_path = fs::config_path()?;
     let config = Config::load(&config_path)?;

@@ -147,14 +147,20 @@ pub async fn get_recording(
 pub async fn get_transcript(
     State(state): State<AppState>,
     Path(id): Path<String>,
+    Query(params): Query<std::collections::HashMap<String, String>>,
 ) -> Result<Json<TranscriptResponse>, ApiError> {
     validation::validate_uuid(&id)?;
 
     // Check if meeting exists first
     let meeting = state.storage.get_meeting(&id).await?;
 
+    // Parse optional version parameter
+    let version = params
+        .get("version")
+        .and_then(|v| v.parse::<u32>().ok());
+
     // Try to get transcript
-    let transcript = state.storage.get_transcript(&id).await.ok();
+    let transcript = state.storage.get_transcript(&id, version).await.ok();
 
     Ok(Json(TranscriptResponse {
         meeting_id: meeting.id.clone(),
@@ -270,6 +276,118 @@ pub async fn delete_meeting(
     state.storage.delete_meeting(&id).await?;
 
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// Retranscribe a meeting
+#[utoipa::path(
+    post,
+    path = "/meetings/{id}/retranscribe",
+    tag = "meetings",
+    params(
+        ("id" = String, Path, description = "Meeting ID or prefix")
+    ),
+    request_body = RetranscribeRequest,
+    responses(
+        (status = 202, description = "Retranscription job started", body = ImportResponse),
+        (status = 404, description = "Meeting not found", body = ErrorResponse),
+        (status = 409, description = "No audio file available", body = ErrorResponse)
+    )
+)]
+pub async fn retranscribe_meeting(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<axum::response::Response, ApiError> {
+    // Validate UUID
+    validation::validate_uuid(&id)?;
+
+    // Get meeting
+    let meeting = state.storage.get_meeting(&id).await?;
+
+    // Check if audio file exists
+    let audio_path = state
+        .storage
+        .get_recording_path(&meeting.id)
+        .await
+        .map_err(|_| ApiError::Conflict("No audio file available for retranscription".to_string()))?;
+
+    if !audio_path.exists() {
+        return Err(ApiError::Conflict(
+            "Audio file not found on disk".to_string(),
+        ));
+    }
+
+    // Create retranscribe job
+    let job_id = state
+        .jobs
+        .create_job(meeting_agent_core::jobs::JobType::Retranscribe);
+    let cancel_token = state
+        .jobs
+        .cancel_token(&job_id)
+        .ok_or_else(|| ApiError::InternalServerError("Failed to get cancel token".to_string()))?;
+
+    // Set meeting_id on job
+    state.jobs.set_meeting_id(&job_id, meeting.id.clone());
+
+    // Spawn background retranscription task
+    let job_id_clone = job_id.clone();
+    let meeting_id = meeting.id.clone();
+    let config = state.config.read().await.clone();
+    let storage = state.storage.clone();
+    let registry = state.jobs.clone();
+    let cancel_token_clone = cancel_token.clone();
+
+    tokio::spawn(async move {
+        meeting_agent_core::runners::run_retranscribe(
+            meeting_agent_core::runners::RetranscribeConfig {
+                job_id: job_id_clone,
+                meeting_id,
+                audio_path,
+                config,
+                storage,
+                registry,
+                cancel_token: cancel_token_clone,
+            },
+        )
+        .await;
+    });
+
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(crate::types::ImportResponse {
+            job_id,
+            status: meeting_agent_core::jobs::JobState::Pending,
+        }),
+    )
+        .into_response())
+}
+
+/// List transcript versions for a meeting
+#[utoipa::path(
+    get,
+    path = "/meetings/{id}/transcript/versions",
+    tag = "transcripts",
+    params(
+        ("id" = String, Path, description = "Meeting ID or prefix")
+    ),
+    responses(
+        (status = 200, description = "Transcript versions", body = TranscriptVersionsResponse),
+        (status = 404, description = "Meeting not found", body = ErrorResponse)
+    )
+)]
+pub async fn list_transcript_versions(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<crate::types::TranscriptVersionsResponse>, ApiError> {
+    // Validate UUID
+    validation::validate_uuid(&id)?;
+
+    // Get versions
+    let versions = state.storage.list_transcript_versions(&id).await?;
+
+    Ok(Json(crate::types::TranscriptVersionsResponse {
+        meeting_id: id,
+        versions,
+    }))
 }
 
 fn with_recording_url(mut meeting: Meeting, headers: &HeaderMap) -> Meeting {

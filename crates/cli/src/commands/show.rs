@@ -53,7 +53,7 @@ pub async fn run(id: String) -> Result<()> {
         meeting.updated_at.format("%Y-%m-%d %H:%M:%S UTC")
     );
 
-    if let Ok(resp) = storage.get_transcript(&full_id).await {
+    if let Ok(resp) = storage.get_transcript(&full_id, None).await {
         println!("\n{}", "Transcript Preview:".bold().green());
         println!("{}", "─".repeat(50));
         let preview = if resp.text.len() > 500 {
