@@ -41,8 +41,14 @@ impl IntoResponse for ApiError {
 impl From<anyhow::Error> for ApiError {
     fn from(err: anyhow::Error) -> Self {
         let msg = err.to_string();
-        if msg.contains("not found") || msg.contains("Not found") {
+        let lower = msg.to_lowercase();
+        if lower.contains("not found") {
             ApiError::NotFound(msg)
+        } else if lower.contains("fts5")
+            || lower.contains("syntax error near")
+            || (lower.contains("match") && lower.contains("sql"))
+        {
+            ApiError::BadRequest(format!("Invalid search query: {msg}"))
         } else {
             ApiError::InternalServerError(msg)
         }
@@ -100,5 +106,12 @@ mod tests {
         let err = anyhow::anyhow!("Some random error");
         let api_err = ApiError::from(err);
         assert!(matches!(api_err, ApiError::InternalServerError(_)));
+    }
+
+    #[test]
+    fn test_from_anyhow_fts5_is_bad_request() {
+        let err = anyhow::anyhow!("error returned from database: (code: 1) fts5: syntax error near \"+\"");
+        let api_err = ApiError::from(err);
+        assert!(matches!(api_err, ApiError::BadRequest(_)));
     }
 }

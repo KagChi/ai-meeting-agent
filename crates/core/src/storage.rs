@@ -15,6 +15,28 @@ use sqlx::{Pool, Row, Sqlite};
 use std::path::Path;
 use std::path::PathBuf;
 
+/// Escape a user search string for SQLite FTS5 `MATCH`.
+///
+/// Treats input as plain text (not FTS operators). Each whitespace-separated
+/// token is double-quoted so characters like `+`, `-`, `:`, `*` do not cause
+/// FTS5 syntax errors. Returns `None` if there are no usable tokens.
+pub fn escape_fts5_query(query: &str) -> Option<String> {
+    let mut parts = Vec::new();
+    for token in query.split_whitespace() {
+        if token.is_empty() {
+            continue;
+        }
+        // FTS5 phrase: double any embedded quotes
+        let escaped = token.replace('"', "\"\"");
+        parts.push(format!("\"{escaped}\""));
+    }
+    if parts.is_empty() {
+        None
+    } else {
+        Some(parts.join(" "))
+    }
+}
+
 /// Meeting storage manager with SQLite backend
 #[derive(Clone)]
 pub struct MeetingStorage {
@@ -578,6 +600,10 @@ impl MeetingStorage {
         limit: u32,
         offset: u32,
     ) -> Result<(Vec<MeetingSearchResult>, u64)> {
+        let Some(fts_query) = escape_fts5_query(query) else {
+            return Ok((Vec::new(), 0));
+        };
+
         // Count distinct ready meetings with matches
         let total: i64 = sqlx::query_scalar(
             "WITH latest_versions AS (
@@ -592,7 +618,7 @@ impl MeetingStorage {
              JOIN meetings m ON m.id = ts.meeting_id
              WHERE m.status = 'ready' AND transcript_search MATCH ?",
         )
-        .bind(query)
+        .bind(&fts_query)
         .fetch_one(&self.db)
         .await
         .context("Failed to count global transcript search results")?;
@@ -622,7 +648,7 @@ impl MeetingStorage {
              ORDER BY relevance_score ASC
              LIMIT ? OFFSET ?",
         )
-        .bind(query)
+        .bind(&fts_query)
         .bind(limit as i64)
         .bind(offset as i64)
         .fetch_all(&self.db)
@@ -660,7 +686,7 @@ impl MeetingStorage {
             )
             .bind(&meeting_id)
             .bind(latest_version)
-            .bind(query)
+            .bind(&fts_query)
             .bind(Self::SEARCH_SEGMENTS_PER_MEETING as i64)
             .fetch_all(&self.db)
             .await
@@ -705,6 +731,10 @@ impl MeetingStorage {
         limit: u32,
         offset: u32,
     ) -> Result<Vec<TranscriptSegment>> {
+        let Some(fts_query) = escape_fts5_query(query) else {
+            return Ok(Vec::new());
+        };
+
         // Get latest version for this meeting
         let latest_version: Option<i64> = sqlx::query_scalar(
             "SELECT MAX(version) FROM transcript_segments WHERE meeting_id = ?"
@@ -729,7 +759,7 @@ impl MeetingStorage {
         )
         .bind(meeting_id)
         .bind(version)
-        .bind(query)
+        .bind(&fts_query)
         .bind(limit as i64)
         .bind(offset as i64)
         .fetch_all(&self.db)
@@ -1249,5 +1279,61 @@ mod tests {
             .unwrap();
         assert_eq!(total, 0);
         assert!(results.is_empty());
+    }
+
+    #[test]
+    fn escape_fts5_quotes_special_chars() {
+        assert_eq!(
+            escape_fts5_query("C++").as_deref(),
+            Some("\"C++\"")
+        );
+        assert_eq!(
+            escape_fts5_query("hello-world").as_deref(),
+            Some("\"hello-world\"")
+        );
+        assert_eq!(
+            escape_fts5_query("what's up").as_deref(),
+            Some("\"what's\" \"up\"")
+        );
+        assert_eq!(
+            escape_fts5_query("foo:bar AND").as_deref(),
+            Some("\"foo:bar\" \"AND\"")
+        );
+        assert_eq!(
+            escape_fts5_query("say \"hi\"").as_deref(),
+            Some("\"say\" \"\"\"hi\"\"\"")
+        );
+        assert_eq!(escape_fts5_query("   ").as_deref(), None);
+        assert_eq!(escape_fts5_query("roadmap").as_deref(), Some("\"roadmap\""));
+    }
+
+    #[tokio::test]
+    async fn search_all_accepts_plus_and_punctuation() {
+        let (_dir, storage) = setup().await;
+        let id = ready_meeting_with_transcript(
+            &storage,
+            "Lang",
+            &["We use C++ and hello-world examples"],
+        )
+        .await;
+
+        let (results, total) = storage
+            .search_all_transcripts("C++", 50, 0)
+            .await
+            .expect("C++ must not fail FTS5");
+        assert_eq!(total, 1);
+        assert_eq!(results[0].id, id);
+
+        let (results, total) = storage
+            .search_all_transcripts("hello-world", 50, 0)
+            .await
+            .expect("hyphen must not fail FTS5");
+        assert_eq!(total, 1);
+        assert_eq!(results[0].id, id);
+
+        let _ = storage
+            .search_all_transcripts("what's", 50, 0)
+            .await
+            .expect("apostrophe must not fail FTS5");
     }
 }
