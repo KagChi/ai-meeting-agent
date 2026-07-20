@@ -40,6 +40,8 @@ pub struct GenerateSummaryRequest {
     pub meeting_id: String,
     /// key_points, action_items, decisions, or full. Defaults to full.
     pub template: Option<String>,
+    /// markdown or rawtext. Defaults to markdown.
+    pub format: Option<String>,
     pub language: Option<String>,
 }
 
@@ -48,6 +50,8 @@ pub struct GetSummaryRequest {
     pub meeting_id: String,
     /// key_points, action_items, decisions, or full. Defaults to full.
     pub template: Option<String>,
+    /// markdown or rawtext. Defaults to markdown.
+    pub format: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]

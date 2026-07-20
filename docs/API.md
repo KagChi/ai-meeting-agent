@@ -415,6 +415,7 @@ Generate a summary for a meeting. Returns a job ID for async tracking.
 ```json
 {
   "template": "full",
+  "format": "markdown",
   "language": "en"
 }
 ```
@@ -422,6 +423,7 @@ Generate a summary for a meeting. Returns a job ID for async tracking.
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `template` | enum | Yes | `key_points`, `action_items`, `decisions`, or `full` |
+| `format` | enum | No | `markdown` (default) or `rawtext` - output format |
 | `language` | string | No | Override summary language (defaults to config `summary.language`) |
 
 **Response:** `202 Accepted`
@@ -438,7 +440,7 @@ Generate a summary for a meeting. Returns a job ID for async tracking.
 
 ### `GET /meetings/{id}/summary/{template}`
 
-Get a specific summary by template.
+Get a specific summary by template and format.
 
 **Path Parameters:**
 | Name | Type | Description |
@@ -446,11 +448,21 @@ Get a specific summary by template.
 | `id` | string | Meeting ID or prefix |
 | `template` | string | `key_points`, `action_items`, `decisions`, or `full` |
 
+**Query Parameters:**
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| `format` | string | No | `markdown` (default) or `rawtext` - output format |
+
 **Response:** `200 OK` — single summary object
+
+**Example:**
+```
+GET /meetings/550e8400/summary/full?format=rawtext
+```
 
 **Errors:**
 - `404 Not Found` — meeting or summary not found
-- `400 Bad Request` — invalid template name
+- `400 Bad Request` — invalid template name or format
 
 ---
 

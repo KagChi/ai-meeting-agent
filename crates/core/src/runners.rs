@@ -8,7 +8,7 @@
 use crate::audio;
 use crate::config::Config;
 use crate::jobs::{JobRegistry, ProgressEvent};
-use crate::models::{Meeting, SummaryStatus, SummaryTemplate};
+use crate::models::{Meeting, SummaryFormat, SummaryStatus, SummaryTemplate};
 use crate::storage::MeetingStorage;
 use crate::summary::{SummarizeOptions, SummaryClient};
 use crate::transcription::{TranscriptionClient, TranscriptionRequest, TranscriptionResponse};
@@ -216,6 +216,7 @@ pub async fn run_summary(
     job_id: String,
     meeting_id: String,
     template: SummaryTemplate,
+    format: SummaryFormat,
     language: Option<String>,
     config: Config,
     storage: Arc<MeetingStorage>,
@@ -226,6 +227,7 @@ pub async fn run_summary(
         &job_id,
         &meeting_id,
         template,
+        format,
         language,
         &config,
         &storage,
@@ -253,6 +255,7 @@ async fn run_summary_inner(
     job_id: &str,
     meeting_id: &str,
     template: SummaryTemplate,
+    format: SummaryFormat,
     language: Option<String>,
     config: &Config,
     storage: &Arc<MeetingStorage>,
@@ -289,6 +292,7 @@ async fn run_summary_inner(
 
     let options = SummarizeOptions {
         template: template.clone(),
+        format: format.clone(),
         language: language.clone(),
     };
 
@@ -305,6 +309,7 @@ async fn run_summary_inner(
         id: uuid::Uuid::new_v4().to_string(),
         meeting_id: meeting_id.to_string(),
         template,
+        format,
         language,
         status: SummaryStatus::Completed,
         content: result.content,

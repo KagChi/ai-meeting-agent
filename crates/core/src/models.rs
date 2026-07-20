@@ -142,6 +142,23 @@ pub enum SummaryTemplate {
     Full,
 }
 
+/// Output format for summary content.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[serde(rename_all = "lowercase")]
+pub enum SummaryFormat {
+    /// Structured markdown with headings and bullet points (default).
+    Markdown,
+    /// Plain text without markdown formatting.
+    RawText,
+}
+
+impl Default for SummaryFormat {
+    fn default() -> Self {
+        Self::Markdown
+    }
+}
+
 /// Status of a summary generation job.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
@@ -153,27 +170,30 @@ pub enum SummaryStatus {
     Failed,
 }
 
-/// A meeting summary. One per template per meeting.
+/// A meeting summary. One per (template, format) combination per meeting.
 ///
-/// `content` always holds raw LLM output (markdown). The `key_points`,
-/// `action_items`, `decisions` Vec fields hold parsed sections — populated
-/// for `Full` template (all three) or single-template requests (matching
-/// field only); others left empty.
+/// `content` holds formatted output based on `format` field:
+/// - `Markdown`: structured with ## headings and bullet points
+/// - `RawText`: plain text without markdown formatting
+///
+/// The `key_points`, `action_items`, `decisions` Vec fields hold parsed sections
+/// (only populated for markdown format).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct Summary {
     pub id: String,
     pub meeting_id: String,
     pub template: SummaryTemplate,
+    pub format: SummaryFormat,
     pub language: Option<String>,
     pub status: SummaryStatus,
-    /// Raw LLM output (markdown).
+    /// Formatted content (markdown or raw text based on format field).
     pub content: String,
-    /// Parsed key points (Full or KeyPoints template).
+    /// Parsed key points (populated only for markdown format).
     pub key_points: Vec<String>,
-    /// Parsed action items (Full or ActionItems template).
+    /// Parsed action items (populated only for markdown format).
     pub action_items: Vec<String>,
-    /// Parsed decisions (Full or Decisions template).
+    /// Parsed decisions (populated only for markdown format).
     pub decisions: Vec<String>,
     pub provider: String,
     pub model: String,
