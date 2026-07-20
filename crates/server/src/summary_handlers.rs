@@ -5,14 +5,21 @@ use crate::types::{
 };
 use crate::validation;
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::StatusCode,
     response::IntoResponse,
     Json,
 };
 use meeting_agent_core::jobs::JobType;
-use meeting_agent_core::models::MeetingStatus;
+use meeting_agent_core::models::{MeetingStatus, SummaryFormat};
 use meeting_agent_core::runners::run_summary;
+use serde::Deserialize;
+
+#[derive(Debug, Deserialize)]
+pub struct FormatQuery {
+    #[serde(default)]
+    pub format: Option<SummaryFormat>,
+}
 
 #[utoipa::path(
     post,
@@ -50,6 +57,8 @@ pub async fn create_summary(
         state.config.read().await.summary.language.clone()
     };
 
+    let format = req.format.unwrap_or_default(); // Default to markdown
+
     let job_id = state.jobs.create_job(JobType::Summary);
     state
         .jobs
@@ -73,6 +82,7 @@ pub async fn create_summary(
             job_id_clone,
             meeting_id,
             template,
+            format,
             language,
             config,
             storage,
@@ -128,23 +138,26 @@ pub async fn list_summaries(
     tag = "summaries",
     params(
         ("id" = String, Path, description = "Meeting ID or prefix"),
-        ("template" = String, Path, description = "Summary template: key_points, action_items, decisions, or full")
+        ("template" = String, Path, description = "Summary template: key_points, action_items, decisions, or full"),
+        ("format" = Option<String>, Query, description = "Output format: markdown (default) or rawtext")
     ),
     responses(
         (status = 200, description = "Summary content", body = SummaryResponse),
         (status = 404, description = "Meeting or summary not found", body = ErrorResponse),
-        (status = 400, description = "Invalid template", body = ErrorResponse)
+        (status = 400, description = "Invalid template or format", body = ErrorResponse)
     )
 )]
 pub async fn get_summary(
     State(state): State<AppState>,
     Path((meeting_id, template)): Path<(String, String)>,
+    Query(query): Query<FormatQuery>,
 ) -> Result<Json<SummaryResponse>, ApiError> {
     validation::validate_uuid(&meeting_id)?;
     let _meeting = state.storage.get_meeting(&meeting_id).await?;
 
     let template = parse_template(&template)?;
-    let summary = state.storage.get_summary(&meeting_id, template).await?;
+    let format = query.format.unwrap_or_default(); // Default to markdown
+    let summary = state.storage.get_summary(&meeting_id, template, format).await?;
     Ok(Json(SummaryResponse { summary }))
 }
 

@@ -126,14 +126,16 @@ impl ServerHandler for MeetingAgentMcpServer {
             "generateSummary" => {
                 let req: GenerateSummaryRequest = parse_arguments(&request.arguments)?;
                 let template = normalize_template(req.template.as_deref())?;
+                let format = normalize_format(req.format.as_deref())?;
                 self.client
-                    .generate_summary(&req.meeting_id, template, req.language.as_deref())
+                    .generate_summary(&req.meeting_id, template, format, req.language.as_deref())
                     .await?
             }
             "getSummary" => {
                 let req: GetSummaryRequest = parse_arguments(&request.arguments)?;
                 let template = normalize_template(req.template.as_deref())?;
-                self.client.get_summary(&req.meeting_id, template).await?
+                let format = normalize_format(req.format.as_deref())?;
+                self.client.get_summary(&req.meeting_id, template, format).await?
             }
             "updateMeeting" => {
                 let req: UpdateMeetingRequest = parse_arguments(&request.arguments)?;
@@ -244,6 +246,17 @@ fn normalize_template(template: Option<&str>) -> Result<&'static str, McpError> 
         "full" => Ok("full"),
         other => Err(ClientError::InvalidInput(format!(
             "invalid template '{other}'. Use key_points, action_items, decisions, or full"
+        ))
+        .into()),
+    }
+}
+
+fn normalize_format(format: Option<&str>) -> Result<&'static str, McpError> {
+    match format.unwrap_or("markdown").to_lowercase().as_str() {
+        "markdown" => Ok("markdown"),
+        "rawtext" | "raw_text" | "raw-text" => Ok("rawtext"),
+        other => Err(ClientError::InvalidInput(format!(
+            "invalid format '{other}'. Use markdown or rawtext"
         ))
         .into()),
     }

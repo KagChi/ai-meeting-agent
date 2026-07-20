@@ -1,6 +1,6 @@
 use chrono::{DateTime, Utc};
 use meeting_agent_core::jobs::{Job, JobState, JobType};
-use meeting_agent_core::models::{Meeting, MeetingStatus, Summary, SummaryTemplate};
+use meeting_agent_core::models::{Meeting, MeetingStatus, Summary, SummaryFormat, SummaryTemplate};
 use meeting_agent_core::transcription::TranscriptionResponse;
 use serde::{Deserialize, Serialize};
 
@@ -152,6 +152,8 @@ pub struct CreateSummaryRequest {
     pub template: SummaryTemplate,
     #[serde(default)]
     pub language: Option<String>,
+    #[serde(default)]
+    pub format: Option<SummaryFormat>,
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]

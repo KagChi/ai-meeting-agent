@@ -5,8 +5,8 @@
 use crate::db;
 use crate::fs;
 use crate::models::{
-    FileMetadata, Meeting, MeetingStatus, MetadataSource, Summary, SummaryStatus, SummaryTemplate,
-    TranscriptionInfo, TranscriptVersion,
+    FileMetadata, Meeting, MeetingStatus, MetadataSource, Summary, SummaryFormat, SummaryStatus,
+    SummaryTemplate, TranscriptionInfo, TranscriptVersion,
 };
 use crate::transcription::{TranscriptSegment, TranscriptionResponse};
 use anyhow::{Context, Result};
@@ -768,6 +768,21 @@ impl MeetingStorage {
         }
     }
 
+    fn format_to_db(format: &SummaryFormat) -> &'static str {
+        match format {
+            SummaryFormat::Markdown => "markdown",
+            SummaryFormat::RawText => "rawtext",
+        }
+    }
+
+    fn format_from_db(value: &str) -> Result<SummaryFormat> {
+        match value {
+            "markdown" => Ok(SummaryFormat::Markdown),
+            "rawtext" => Ok(SummaryFormat::RawText),
+            _ => anyhow::bail!("Invalid summary format in database: {}", value),
+        }
+    }
+
     fn status_to_db(status: &SummaryStatus) -> &'static str {
         match status {
             SummaryStatus::Pending => "pending",
@@ -789,17 +804,18 @@ impl MeetingStorage {
 
     fn row_to_summary(row: sqlx::sqlite::SqliteRow) -> Result<Summary> {
         let template: String = row.try_get(2)?;
-        let status: String = row.try_get(4)?;
+        let format: String = row.try_get(3)?;
+        let status: String = row.try_get(5)?;
         let key_points = row
-            .try_get::<Option<String>, _>(6)?
-            .and_then(|s| serde_json::from_str(&s).ok())
-            .unwrap_or_default();
-        let action_items = row
             .try_get::<Option<String>, _>(7)?
             .and_then(|s| serde_json::from_str(&s).ok())
             .unwrap_or_default();
-        let decisions = row
+        let action_items = row
             .try_get::<Option<String>, _>(8)?
+            .and_then(|s| serde_json::from_str(&s).ok())
+            .unwrap_or_default();
+        let decisions = row
+            .try_get::<Option<String>, _>(9)?
             .and_then(|s| serde_json::from_str(&s).ok())
             .unwrap_or_default();
 
@@ -807,16 +823,17 @@ impl MeetingStorage {
             id: row.try_get(0)?,
             meeting_id: row.try_get(1)?,
             template: Self::template_from_db(&template)?,
-            language: row.try_get(3)?,
+            format: Self::format_from_db(&format)?,
+            language: row.try_get(4)?,
             status: Self::status_from_db(&status)?,
-            content: row.try_get(5)?,
+            content: row.try_get(6)?,
             key_points,
             action_items,
             decisions,
-            provider: row.try_get(9)?,
-            model: row.try_get(10)?,
-            created_at: row.try_get(11)?,
-            updated_at: row.try_get(12)?,
+            provider: row.try_get(10)?,
+            model: row.try_get(11)?,
+            created_at: row.try_get(12)?,
+            updated_at: row.try_get(13)?,
         })
     }
 
@@ -825,10 +842,10 @@ impl MeetingStorage {
         self.get_meeting(meeting_id).await?;
         sqlx::query(
             "INSERT INTO summaries (
-                id, meeting_id, template, language, status, content,
+                id, meeting_id, template, format, language, status, content,
                 key_points, action_items, decisions, provider, model, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(meeting_id, template) DO UPDATE SET
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(meeting_id, template, format) DO UPDATE SET
                 language = excluded.language,
                 status = excluded.status,
                 content = excluded.content,
@@ -842,6 +859,7 @@ impl MeetingStorage {
         .bind(&summary.id)
         .bind(meeting_id)
         .bind(Self::template_to_db(&summary.template))
+        .bind(Self::format_to_db(&summary.format))
         .bind(summary.language.as_deref())
         .bind(Self::status_to_db(&summary.status))
         .bind(&summary.content)
@@ -858,19 +876,21 @@ impl MeetingStorage {
         Ok(())
     }
 
-    /// Get a specific summary by template for a meeting.
+    /// Get a specific summary by template and format for a meeting.
     pub async fn get_summary(
         &self,
         meeting_id: &str,
         template: SummaryTemplate,
+        format: SummaryFormat,
     ) -> Result<Summary> {
         let row = sqlx::query(
-            "SELECT id, meeting_id, template, language, status, content,
+            "SELECT id, meeting_id, template, format, language, status, content,
                     key_points, action_items, decisions, provider, model, created_at, updated_at
-             FROM summaries WHERE meeting_id = ? AND template = ?",
+             FROM summaries WHERE meeting_id = ? AND template = ? AND format = ?",
         )
         .bind(meeting_id)
         .bind(Self::template_to_db(&template))
+        .bind(Self::format_to_db(&format))
         .fetch_optional(&self.db)
         .await
         .context("Failed to query summary")?
@@ -882,7 +902,7 @@ impl MeetingStorage {
     /// List all summaries for a meeting.
     pub async fn list_summaries(&self, meeting_id: &str) -> Result<Vec<Summary>> {
         let rows = sqlx::query(
-            "SELECT id, meeting_id, template, language, status, content,
+            "SELECT id, meeting_id, template, format, language, status, content,
                     key_points, action_items, decisions, provider, model, created_at, updated_at
              FROM summaries WHERE meeting_id = ? ORDER BY created_at ASC",
         )
@@ -894,11 +914,17 @@ impl MeetingStorage {
         rows.into_iter().map(Self::row_to_summary).collect()
     }
 
-    /// Delete a specific summary by template for a meeting.
-    pub async fn delete_summary(&self, meeting_id: &str, template: SummaryTemplate) -> Result<()> {
-        let result = sqlx::query("DELETE FROM summaries WHERE meeting_id = ? AND template = ?")
+    /// Delete a specific summary by template and format for a meeting.
+    pub async fn delete_summary(
+        &self,
+        meeting_id: &str,
+        template: SummaryTemplate,
+        format: SummaryFormat,
+    ) -> Result<()> {
+        let result = sqlx::query("DELETE FROM summaries WHERE meeting_id = ? AND template = ? AND format = ?")
             .bind(meeting_id)
             .bind(Self::template_to_db(&template))
+            .bind(Self::format_to_db(&format))
             .execute(&self.db)
             .await
             .context("Failed to delete summary")?;

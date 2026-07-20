@@ -74,6 +74,7 @@ impl MeetingAgentClient {
         &self,
         meeting_id: &str,
         template: &str,
+        format: &str,
         language: Option<&str>,
     ) -> Result<Value> {
         let request = self
@@ -83,13 +84,14 @@ impl MeetingAgentClient {
             )
             .json(&json!({
                 "template": template,
+                "format": format,
                 "language": language,
             }));
         self.send_json(request).await
     }
 
-    pub async fn get_summary(&self, meeting_id: &str, template: &str) -> Result<Value> {
-        self.get_json(&format!("/meetings/{meeting_id}/summary/{template}"))
+    pub async fn get_summary(&self, meeting_id: &str, template: &str, format: &str) -> Result<Value> {
+        self.get_json(&format!("/meetings/{meeting_id}/summary/{template}?format={format}"))
             .await
     }
 

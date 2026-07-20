@@ -1,7 +1,7 @@
 //! Summary client for OpenAI-compatible chat completion APIs.
 
 use crate::config::SummaryConfig;
-use crate::models::SummaryTemplate;
+use crate::models::{SummaryFormat, SummaryTemplate};
 use crate::transcription::TranscriptionResponse;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
@@ -17,6 +17,7 @@ pub struct SummaryClient {
 #[derive(Debug, Clone)]
 pub struct SummarizeOptions {
     pub template: SummaryTemplate,
+    pub format: SummaryFormat,
     pub language: Option<String>,
 }
 
@@ -74,6 +75,7 @@ impl SummaryClient {
         let transcript_text = format_transcript(transcript);
         let prompt = build_prompt(
             options.template.clone(),
+            options.format.clone(),
             &transcript_text,
             options
                 .language
@@ -88,7 +90,7 @@ impl SummaryClient {
             messages: vec![
                 ChatMessage {
                     role: "system".to_string(),
-                    content: system_prompt(options.template.clone()),
+                    content: system_prompt(options.template.clone(), options.format.clone()),
                 },
                 ChatMessage {
                     role: "user".to_string(),
@@ -100,16 +102,20 @@ impl SummaryClient {
         };
 
         log::info!(
-            "Sending summary request to {} (model: {}, template: {:?})",
+            "Sending summary request to {} (model: {}, template: {:?}, format: {:?})",
             url,
             self.config.model,
-            options.template
+            options.template,
+            options.format
         );
 
         let content = self.send_chat_request(&url, &request, "summary").await?;
 
-        let (key_points, action_items, decisions) =
-            parse_sections(&content, options.template.clone());
+        // Only parse sections for markdown format
+        let (key_points, action_items, decisions) = match options.format {
+            SummaryFormat::Markdown => parse_sections(&content, options.template.clone()),
+            SummaryFormat::RawText => (Vec::new(), Vec::new(), Vec::new()),
+        };
 
         Ok(SummarizeResult {
             content,
@@ -325,24 +331,38 @@ fn chunk_words(text: &str, max_chars: usize) -> Vec<String> {
     chunks
 }
 
-fn system_prompt(template: SummaryTemplate) -> String {
+fn system_prompt(template: SummaryTemplate, format: SummaryFormat) -> String {
     let section_desc = match template {
         SummaryTemplate::KeyPoints => "key points",
         SummaryTemplate::ActionItems => "action items",
         SummaryTemplate::Decisions => "decisions",
         SummaryTemplate::Full => "key points, action items, and decisions",
     };
-    format!(
-        "You are a meeting notes assistant. Read the transcript and produce a structured summary in Markdown. \
-         Always wrap each section in a Markdown heading using exactly these names: \
-         '## Key Points', '## Action Items', '## Decisions'. Under each heading, list items as \
-         Markdown bullet points (one per line, starting with '- '). \
-         For this request, focus on: {section_desc}. If a section has no content, include the \
-         heading anyway with a single line: '- (none)'. Be concise and factual."
-    )
+    
+    match format {
+        SummaryFormat::Markdown => {
+            format!(
+                "You are a meeting notes assistant. Read the transcript and produce a structured summary in Markdown. \
+                 Always wrap each section in a Markdown heading using exactly these names: \
+                 '## Key Points', '## Action Items', '## Decisions'. Under each heading, list items as \
+                 Markdown bullet points (one per line, starting with '- '). \
+                 For this request, focus on: {section_desc}. If a section has no content, include the \
+                 heading anyway with a single line: '- (none)'. Be concise and factual."
+            )
+        }
+        SummaryFormat::RawText => {
+            format!(
+                "You are a meeting notes assistant. Read the transcript and produce a plain text summary WITHOUT any markdown formatting. \
+                 Organize the summary with clear section labels: 'Key Points:', 'Action Items:', 'Decisions:'. \
+                 List each item on a new line without bullet points or markdown syntax. \
+                 For this request, focus on: {section_desc}. If a section has no content, write '(none)'. \
+                 Use simple, readable plain text formatting only. Be concise and factual."
+            )
+        }
+    }
 }
 
-fn build_prompt(template: SummaryTemplate, transcript: &str, language: Option<&str>) -> String {
+fn build_prompt(template: SummaryTemplate, format: SummaryFormat, transcript: &str, language: Option<&str>) -> String {
     let template_name = match template {
         SummaryTemplate::KeyPoints => "key points only",
         SummaryTemplate::ActionItems => "action items only",
@@ -353,9 +373,13 @@ fn build_prompt(template: SummaryTemplate, transcript: &str, language: Option<&s
         Some(l) => format!("\n\nWrite the summary in this language: {l}."),
         None => String::new(),
     };
+    let format_note = match format {
+        SummaryFormat::Markdown => " Use markdown formatting with headings and bullet points.",
+        SummaryFormat::RawText => " Use plain text without any markdown syntax.",
+    };
     format!(
         "Please summarize the following meeting transcript.\n\n\
-         Sections to include: {template_name}.{lang_note}\n\n\
+         Sections to include: {template_name}.{format_note}{lang_note}\n\n\
          --- TRANSCRIPT START ---\n{transcript}\n--- TRANSCRIPT END ---"
     )
 }
@@ -541,16 +565,23 @@ mod tests {
 
     #[test]
     fn test_build_prompt_key_points() {
-        let p = build_prompt(SummaryTemplate::KeyPoints, "transcript text", None);
+        let p = build_prompt(SummaryTemplate::KeyPoints, SummaryFormat::Markdown, "transcript text", None);
         assert!(p.contains("key points only"));
         assert!(p.contains("transcript text"));
     }
 
     #[test]
     fn test_build_prompt_full() {
-        let p = build_prompt(SummaryTemplate::Full, "t", Some("zh"));
+        let p = build_prompt(SummaryTemplate::Full, SummaryFormat::Markdown, "t", Some("zh"));
         assert!(p.contains("all three sections"));
         assert!(p.contains("language: zh"));
+    }
+
+    #[test]
+    fn test_build_prompt_raw_text() {
+        let p = build_prompt(SummaryTemplate::Full, SummaryFormat::RawText, "t", None);
+        assert!(p.contains("plain text"));
+        assert!(p.contains("without any markdown syntax"));
     }
 
     #[test]
@@ -594,8 +625,15 @@ mod tests {
 
     #[test]
     fn test_system_prompt_full() {
-        let p = system_prompt(SummaryTemplate::Full);
+        let p = system_prompt(SummaryTemplate::Full, SummaryFormat::Markdown);
         assert!(p.contains("key points, action items, and decisions"));
+    }
+
+    #[test]
+    fn test_system_prompt_raw_text() {
+        let p = system_prompt(SummaryTemplate::Full, SummaryFormat::RawText);
+        assert!(p.contains("plain text"));
+        assert!(!p.contains("Markdown"));
     }
 
     #[test]

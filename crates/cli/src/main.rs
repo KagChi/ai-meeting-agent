@@ -101,6 +101,10 @@ enum Commands {
         #[arg(short, long, default_value = "full")]
         template: String,
 
+        /// Output format (markdown, raw-text)
+        #[arg(short, long, default_value = "markdown")]
+        format: String,
+
         /// Summary language (e.g., en, zh, ja)
         #[arg(short, long)]
         language: Option<String>,
@@ -172,8 +176,9 @@ async fn main() -> anyhow::Result<()> {
         Commands::Summarize {
             id,
             template,
+            format,
             language,
-        } => commands::summarize::run(id, template, language).await,
+        } => commands::summarize::run(id, template, Some(format), language).await,
         Commands::Export { id, format, output } => commands::export::run(id, format, output).await,
         Commands::Config { command } => match command {
             ConfigCommands::Show => commands::config::show(),
