@@ -218,6 +218,68 @@ Download the audio recording file for a meeting.
 
 ## Transcripts
 
+### `GET /transcripts/search`
+
+Full-text search across **all ready meetings'** transcripts using SQLite FTS5.
+
+Returns **meetings** that contain matching segments (not a flat segment list), ordered by relevance. Each meeting includes up to 10 top matching segments plus a total match count.
+
+**Query Parameters:**
+| Name | Type | Required | Default | Description |
+|------|------|----------|---------|-------------|
+| `q` | string | Yes | — | Search query (FTS5 syntax, max 500 chars) |
+| `limit` | integer | No | 50 | Max meetings to return (1–500) |
+| `offset` | integer | No | 0 | Meetings to skip |
+
+**Example:**
+```
+GET /transcripts/search?q=roadmap&limit=20
+```
+
+**Response:** `200 OK`
+```json
+{
+  "query": "roadmap",
+  "total_meetings": 3,
+  "limit": 20,
+  "offset": 0,
+  "meetings": [
+    {
+      "id": "550e8400-e29b-41d4-a716-446655440000",
+      "title": "Q3 Planning Meeting",
+      "date": "2026-07-15T10:00:00Z",
+      "duration_seconds": 1800,
+      "status": "ready",
+      "participants": ["Alice", "Bob"],
+      "matched_segments": [
+        {
+          "segment_id": 5,
+          "start": 12.5,
+          "end": 18.2,
+          "text": "The roadmap includes three key initiatives...",
+          "timestamp": "00:12",
+          "speaker": "Alice"
+        }
+      ],
+      "match_count": 47,
+      "relevance_score": -12.34
+    }
+  ]
+}
+```
+
+**Notes:**
+- Only `ready` meetings are searched
+- Only the latest transcript version per meeting is searched
+- `matched_segments` is capped at 10; use `match_count` for the full total
+- Lower `relevance_score` = better FTS5 match
+- FTS5 syntax: `word1 word2`, `"exact phrase"`, `word1 OR word2`, `word1 NOT word2`, `word*`
+
+**Errors:**
+- `400 Bad Request` — missing, empty, or too-long query
+
+---
+
 ### `GET /meetings/{id}/transcript`
 
 Get the transcript for a meeting with optional pagination.

@@ -13,7 +13,7 @@ use crate::error::ApiError;
 use crate::state::AppState;
 use crate::types::{
     CreateMeetingRequest, ListMeetingsResponse, MeetingResponse, PaginationQuery,
-    TranscriptResponse, UpdateMeetingRequest,
+    SearchTranscriptsQuery, SearchTranscriptsResponse, TranscriptResponse, UpdateMeetingRequest,
 };
 use crate::validation;
 
@@ -129,6 +129,55 @@ pub async fn get_recording(
         .headers_mut()
         .insert(header::CONTENT_TYPE, HeaderValue::from_static(mime));
     Ok(response)
+}
+
+/// Global full-text search across all ready meetings' transcripts.
+///
+/// Returns meetings that contain matching segments, ordered by relevance.
+/// Each meeting includes up to 10 top matching segments and a total match count.
+#[utoipa::path(
+    get,
+    path = "/transcripts/search",
+    tag = "transcripts",
+    params(
+        ("q" = String, Query, description = "Search query (FTS5 syntax)"),
+        ("limit" = Option<u32>, Query, description = "Max meetings to return (default 50, max 500)"),
+        ("offset" = Option<u32>, Query, description = "Meetings to skip (default 0)")
+    ),
+    responses(
+        (status = 200, description = "Meetings with matched transcript segments", body = SearchTranscriptsResponse),
+        (status = 400, description = "Invalid or empty query", body = ErrorResponse)
+    )
+)]
+pub async fn search_all_transcripts(
+    State(state): State<AppState>,
+    Query(query): Query<SearchTranscriptsQuery>,
+) -> Result<Json<SearchTranscriptsResponse>, ApiError> {
+    let q = query.q.trim();
+    if q.is_empty() {
+        return Err(ApiError::BadRequest(
+            "Query parameter 'q' must not be empty".to_string(),
+        ));
+    }
+    if q.len() > 500 {
+        return Err(ApiError::BadRequest(
+            "Query parameter 'q' must be at most 500 characters".to_string(),
+        ));
+    }
+
+    let limit = query.limit.clamp(1, 500);
+    let (meetings, total_meetings) = state
+        .storage
+        .search_all_transcripts(q, limit, query.offset)
+        .await?;
+
+    Ok(Json(SearchTranscriptsResponse {
+        query: q.to_string(),
+        total_meetings,
+        limit,
+        offset: query.offset,
+        meetings,
+    }))
 }
 
 /// Get meeting transcript
