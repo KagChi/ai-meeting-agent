@@ -49,6 +49,10 @@ pub fn build_router(state: AppState) -> Router {
             get(config_handlers::get_summary_config).put(config_handlers::update_summary_config),
         )
         .route(
+            "/transcripts/search",
+            get(handlers::search_all_transcripts),
+        )
+        .route(
             "/meetings",
             get(handlers::list_meetings).post(handlers::create_meeting),
         )

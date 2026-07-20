@@ -7,8 +7,8 @@ use crate::summary_handlers;
 use crate::types::*;
 use meeting_agent_core::jobs::{Job, JobState, JobType, ProgressEvent};
 use meeting_agent_core::models::{
-    FileMetadata, Meeting, MeetingStatus, MetadataSource, Summary, SummaryStatus, SummaryTemplate,
-    Transcript, TranscriptSegment, TranscriptionInfo,
+    FileMetadata, MatchedSegment, Meeting, MeetingSearchResult, MeetingStatus, MetadataSource,
+    Summary, SummaryStatus, SummaryTemplate, Transcript, TranscriptSegment, TranscriptionInfo,
 };
 use meeting_agent_core::transcription::TranscriptionResponse;
 use utoipa::OpenApi;
@@ -25,6 +25,7 @@ use utoipa::OpenApi;
         handlers::update_meeting,
         handlers::delete_meeting,
         handlers::get_transcript,
+        handlers::search_all_transcripts,
         // Summary handlers
         summary_handlers::list_summaries,
         summary_handlers::get_summary,
@@ -55,6 +56,7 @@ use utoipa::OpenApi;
             ListMeetingsResponse,
             MeetingResponse,
             TranscriptResponse,
+            SearchTranscriptsResponse,
             ErrorResponse,
             ImportResponse,
             JobStatusResponse,
@@ -74,6 +76,8 @@ use utoipa::OpenApi;
             TranscriptionInfo,
             Transcript,
             TranscriptSegment,
+            MatchedSegment,
+            MeetingSearchResult,
             Summary,
             SummaryTemplate,
             SummaryStatus,

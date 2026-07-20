@@ -1,6 +1,8 @@
 use chrono::{DateTime, Utc};
 use meeting_agent_core::jobs::{Job, JobState, JobType};
-use meeting_agent_core::models::{Meeting, MeetingStatus, Summary, SummaryFormat, SummaryTemplate};
+use meeting_agent_core::models::{
+    Meeting, MeetingSearchResult, MeetingStatus, Summary, SummaryFormat, SummaryTemplate,
+};
 use meeting_agent_core::transcription::TranscriptionResponse;
 use serde::{Deserialize, Serialize};
 
@@ -79,6 +81,31 @@ pub struct PaginationQuery {
 
 fn default_meetings_limit() -> u32 {
     20
+}
+
+fn default_search_limit() -> u32 {
+    50
+}
+
+/// Query params for `GET /transcripts/search`.
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub struct SearchTranscriptsQuery {
+    /// Full-text search query (FTS5 syntax).
+    pub q: String,
+    #[serde(default = "default_search_limit")]
+    pub limit: u32,
+    #[serde(default)]
+    pub offset: u32,
+}
+
+/// Global transcript search response (meetings with matched segments).
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct SearchTranscriptsResponse {
+    pub query: String,
+    pub total_meetings: u64,
+    pub limit: u32,
+    pub offset: u32,
+    pub meetings: Vec<MeetingSearchResult>,
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]

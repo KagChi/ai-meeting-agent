@@ -5,8 +5,8 @@
 use crate::db;
 use crate::fs;
 use crate::models::{
-    FileMetadata, Meeting, MeetingStatus, MetadataSource, Summary, SummaryFormat, SummaryStatus,
-    SummaryTemplate, TranscriptionInfo, TranscriptVersion,
+    FileMetadata, MatchedSegment, Meeting, MeetingSearchResult, MeetingStatus, MetadataSource,
+    Summary, SummaryFormat, SummaryStatus, SummaryTemplate, TranscriptionInfo, TranscriptVersion,
 };
 use crate::transcription::{TranscriptSegment, TranscriptionResponse};
 use anyhow::{Context, Result};
@@ -564,6 +564,139 @@ impl MeetingStorage {
             .collect()
     }
 
+    /// Max matched segments returned per meeting in global search.
+    pub const SEARCH_SEGMENTS_PER_MEETING: usize = 10;
+
+    /// Global transcript search across all ready meetings (latest version only).
+    ///
+    /// Returns meetings ordered by FTS5 relevance (lower score = better match),
+    /// each with up to [`Self::SEARCH_SEGMENTS_PER_MEETING`] top segments.
+    /// `limit`/`offset` paginate meetings, not segments.
+    pub async fn search_all_transcripts(
+        &self,
+        query: &str,
+        limit: u32,
+        offset: u32,
+    ) -> Result<(Vec<MeetingSearchResult>, u64)> {
+        // Count distinct ready meetings with matches
+        let total: i64 = sqlx::query_scalar(
+            "WITH latest_versions AS (
+                SELECT meeting_id, MAX(version) AS version
+                FROM transcript_versions
+                GROUP BY meeting_id
+             )
+             SELECT COUNT(DISTINCT ts.meeting_id)
+             FROM transcript_search ts
+             JOIN latest_versions lv
+               ON ts.meeting_id = lv.meeting_id AND ts.version = lv.version
+             JOIN meetings m ON m.id = ts.meeting_id
+             WHERE m.status = 'ready' AND transcript_search MATCH ?",
+        )
+        .bind(query)
+        .fetch_one(&self.db)
+        .await
+        .context("Failed to count global transcript search results")?;
+
+        if total == 0 {
+            return Ok((Vec::new(), 0));
+        }
+
+        // Rank meetings by sum of segment ranks (FTS5: lower rank = better)
+        let meeting_rows = sqlx::query(
+            "WITH latest_versions AS (
+                SELECT meeting_id, MAX(version) AS version
+                FROM transcript_versions
+                GROUP BY meeting_id
+             ),
+             matching AS (
+                SELECT ts.meeting_id, ts.rank AS rank
+                FROM transcript_search ts
+                JOIN latest_versions lv
+                  ON ts.meeting_id = lv.meeting_id AND ts.version = lv.version
+                JOIN meetings m ON m.id = ts.meeting_id
+                WHERE m.status = 'ready' AND transcript_search MATCH ?
+             )
+             SELECT meeting_id, SUM(rank) AS relevance_score, COUNT(*) AS match_count
+             FROM matching
+             GROUP BY meeting_id
+             ORDER BY relevance_score ASC
+             LIMIT ? OFFSET ?",
+        )
+        .bind(query)
+        .bind(limit as i64)
+        .bind(offset as i64)
+        .fetch_all(&self.db)
+        .await
+        .context("Failed to rank meetings for global transcript search")?;
+
+        if meeting_rows.is_empty() {
+            return Ok((Vec::new(), total as u64));
+        }
+
+        let mut results = Vec::with_capacity(meeting_rows.len());
+        for row in meeting_rows {
+            let meeting_id: String = row.try_get(0)?;
+            let relevance_score: f64 = row.try_get(1)?;
+            let match_count: i64 = row.try_get(2)?;
+
+            let meeting = self.get_meeting(&meeting_id).await?;
+
+            // Latest version for this meeting
+            let latest_version: Option<i64> = sqlx::query_scalar(
+                "SELECT MAX(version) FROM transcript_segments WHERE meeting_id = ?",
+            )
+            .bind(&meeting_id)
+            .fetch_one(&self.db)
+            .await
+            .context("Failed to get latest transcript version")?;
+            let latest_version = latest_version.unwrap_or(1);
+
+            let segment_rows = sqlx::query(
+                "SELECT segment_id, start, end, text, speaker
+                 FROM transcript_search
+                 WHERE meeting_id = ? AND version = ? AND transcript_search MATCH ?
+                 ORDER BY rank
+                 LIMIT ?",
+            )
+            .bind(&meeting_id)
+            .bind(latest_version)
+            .bind(query)
+            .bind(Self::SEARCH_SEGMENTS_PER_MEETING as i64)
+            .fetch_all(&self.db)
+            .await
+            .context("Failed to fetch matched segments for meeting")?;
+
+            let matched_segments = segment_rows
+                .into_iter()
+                .map(|srow| {
+                    let start: f64 = srow.try_get(1)?;
+                    Ok(MatchedSegment {
+                        segment_id: srow.try_get::<i64, _>(0)? as u32,
+                        start,
+                        end: srow.try_get(2)?,
+                        text: srow.try_get(3)?,
+                        timestamp: crate::transcription::format_timestamp_readable(start),
+                        speaker: srow.try_get(4)?,
+                    })
+                })
+                .collect::<Result<Vec<_>>>()?;
+
+            results.push(MeetingSearchResult {
+                id: meeting.id,
+                title: meeting.title,
+                date: meeting.date,
+                duration_seconds: meeting.duration_seconds,
+                status: meeting.status,
+                participants: meeting.participants,
+                matched_segments,
+                match_count: match_count as usize,
+                relevance_score,
+            });
+        }
+
+        Ok((results, total as u64))
+    }
+
     /// Search transcript segments using SQLite FTS5 (searches latest version only).
     pub async fn search_transcripts(
         &self,
@@ -951,5 +1084,170 @@ impl std::fmt::Debug for MeetingStorage {
         f.debug_struct("MeetingStorage")
             .field("base", &self.base)
             .finish()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::MeetingStatus;
+    use crate::transcription::{TranscriptSegment, TranscriptionResponse};
+    use tempfile::TempDir;
+
+    async fn setup() -> (TempDir, MeetingStorage) {
+        let dir = TempDir::new().unwrap();
+        let storage = MeetingStorage::in_memory(dir.path().to_path_buf())
+            .await
+            .unwrap();
+        (dir, storage)
+    }
+
+    fn segment(id: u32, start: f64, text: &str) -> TranscriptSegment {
+        TranscriptSegment {
+            id,
+            start,
+            end: start + 5.0,
+            text: text.to_string(),
+            timestamp: None,
+            tokens: None,
+            temperature: None,
+            avg_logprob: None,
+            compression_ratio: None,
+            no_speech_prob: None,
+            speaker: None,
+        }
+    }
+
+    async fn ready_meeting_with_transcript(
+        storage: &MeetingStorage,
+        title: &str,
+        texts: &[&str],
+    ) -> String {
+        let mut meeting = Meeting::new(title.to_string());
+        meeting.status = MeetingStatus::Ready;
+        storage.create_meeting(&meeting).await.unwrap();
+
+        let segments: Vec<TranscriptSegment> = texts
+            .iter()
+            .enumerate()
+            .map(|(i, t)| segment(i as u32, (i as f64) * 10.0, t))
+            .collect();
+
+        let response = TranscriptionResponse {
+            text: texts.join(" "),
+            language: Some("en".to_string()),
+            duration: Some(segments.last().map(|s| s.end).unwrap_or(0.0)),
+            segments: Some(segments),
+            refined_text: None,
+        };
+
+        storage
+            .save_transcript(&meeting.id, &response, "test", "test-model", 60)
+            .await
+            .unwrap();
+
+        meeting.id
+    }
+
+    #[tokio::test]
+    async fn search_all_returns_meetings_with_matches() {
+        let (_dir, storage) = setup().await;
+        let id1 = ready_meeting_with_transcript(
+            &storage,
+            "Planning",
+            &["We discussed the product roadmap today"],
+        )
+        .await;
+        let _id2 =
+            ready_meeting_with_transcript(&storage, "Standup", &["Daily sync about bugs"]).await;
+        let id3 = ready_meeting_with_transcript(
+            &storage,
+            "Review",
+            &["Finalizing the roadmap for Q4"],
+        )
+        .await;
+
+        let (results, total) = storage
+            .search_all_transcripts("roadmap", 50, 0)
+            .await
+            .unwrap();
+
+        assert_eq!(total, 2);
+        assert_eq!(results.len(), 2);
+        let ids: Vec<&str> = results.iter().map(|r| r.id.as_str()).collect();
+        assert!(ids.contains(&id1.as_str()));
+        assert!(ids.contains(&id3.as_str()));
+        for r in &results {
+            assert!(!r.matched_segments.is_empty());
+            assert!(r.match_count >= 1);
+            assert_eq!(r.status, MeetingStatus::Ready);
+        }
+    }
+
+    #[tokio::test]
+    async fn search_all_excludes_non_ready_meetings() {
+        let (_dir, storage) = setup().await;
+        let mut meeting = Meeting::new("Importing".to_string());
+        meeting.status = MeetingStatus::Importing;
+        storage.create_meeting(&meeting).await.unwrap();
+
+        let segments = vec![segment(0, 0.0, "roadmap discussion")];
+        let response = TranscriptionResponse {
+            text: "roadmap discussion".to_string(),
+            language: None,
+            duration: Some(5.0),
+            segments: Some(segments),
+            refined_text: None,
+        };
+        storage
+            .save_transcript(&meeting.id, &response, "test", "test-model", 5)
+            .await
+            .unwrap();
+
+        let (results, total) = storage
+            .search_all_transcripts("roadmap", 50, 0)
+            .await
+            .unwrap();
+        assert_eq!(total, 0);
+        assert!(results.is_empty());
+    }
+
+    #[tokio::test]
+    async fn search_all_pagination_by_meetings() {
+        let (_dir, storage) = setup().await;
+        for i in 0..3 {
+            ready_meeting_with_transcript(
+                &storage,
+                &format!("M{i}"),
+                &["unique_search_token appears here"],
+            )
+            .await;
+        }
+
+        let (page1, total) = storage
+            .search_all_transcripts("unique_search_token", 2, 0)
+            .await
+            .unwrap();
+        assert_eq!(total, 3);
+        assert_eq!(page1.len(), 2);
+
+        let (page2, _) = storage
+            .search_all_transcripts("unique_search_token", 2, 2)
+            .await
+            .unwrap();
+        assert_eq!(page2.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn search_all_empty_query_match_returns_empty() {
+        let (_dir, storage) = setup().await;
+        ready_meeting_with_transcript(&storage, "A", &["hello world"])
+            .await;
+        let (results, total) = storage
+            .search_all_transcripts("zzzznonexistent", 50, 0)
+            .await
+            .unwrap();
+        assert_eq!(total, 0);
+        assert!(results.is_empty());
     }
 }

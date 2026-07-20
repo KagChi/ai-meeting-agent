@@ -214,3 +214,35 @@ pub struct TranscriptVersion {
     pub segment_count: u32,
     pub created_at: DateTime<Utc>,
 }
+
+/// A transcript segment that matched a global search query.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+pub struct MatchedSegment {
+    pub segment_id: u32,
+    pub start: f64,
+    pub end: f64,
+    pub text: String,
+    pub timestamp: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub speaker: Option<String>,
+}
+
+/// A meeting with matched transcript segments from global search.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+pub struct MeetingSearchResult {
+    pub id: String,
+    pub title: String,
+    pub date: DateTime<Utc>,
+    pub duration_seconds: Option<u64>,
+    pub status: MeetingStatus,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub participants: Option<Vec<String>>,
+    /// Top matching segments (capped; see `match_count` for total).
+    pub matched_segments: Vec<MatchedSegment>,
+    /// Total matching segments in this meeting (may exceed matched_segments.len).
+    pub match_count: usize,
+    /// FTS5 relevance (lower = better match).
+    pub relevance_score: f64,
+}
