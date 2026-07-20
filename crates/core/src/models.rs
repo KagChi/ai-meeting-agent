@@ -21,7 +21,7 @@ pub enum MetadataSource {
     Default,
 }
 
-/// Audio/video file metadata
+/// Audio file metadata
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct FileMetadata {
@@ -60,7 +60,7 @@ pub struct Meeting {
     /// Source of the metadata
     #[serde(skip_serializing_if = "Option::is_none")]
     pub metadata_source: Option<MetadataSource>,
-    /// Audio/video file metadata
+    /// Audio file metadata
     #[serde(skip_serializing_if = "Option::is_none")]
     pub file_metadata: Option<FileMetadata>,
     /// Recording date (may differ from meeting.date)
@@ -69,9 +69,6 @@ pub struct Meeting {
     /// Path to audio file
     #[serde(skip_serializing_if = "Option::is_none")]
     pub audio_file: Option<String>,
-    /// Path to video file
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub video_file: Option<String>,
     /// Platform source (e.g., "Upload", "Teams", "Zoom", "Meet")
     #[serde(skip_serializing_if = "Option::is_none")]
     pub platform: Option<String>,
@@ -113,7 +110,6 @@ impl Meeting {
             file_metadata: None,
             recording_date: None,
             audio_file: None,
-            video_file: None,
             platform: None,
         }
     }

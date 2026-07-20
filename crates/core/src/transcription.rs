@@ -155,16 +155,16 @@ fn parse_response(raw: &str) -> Result<TranscriptionResponse> {
 
     if val.get("segments").is_some() {
         // OpenAI verbose_json shape - deserialize then add timestamps
-        let mut resp: TranscriptionResponse = serde_json::from_value(val)
-            .context("Failed to parse OpenAI transcription response")?;
-        
+        let mut resp: TranscriptionResponse =
+            serde_json::from_value(val).context("Failed to parse OpenAI transcription response")?;
+
         // Add human-readable timestamps to segments
         if let Some(ref mut segments) = resp.segments {
             for seg in segments.iter_mut() {
                 seg.timestamp = Some(format_timestamp_readable(seg.start));
             }
         }
-        
+
         Ok(resp)
     } else if val.get("chunks").is_some() {
         // faster-whisper shape: { text, chunks: [{ text, timestamp: [start, end] }] }

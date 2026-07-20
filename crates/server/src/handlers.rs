@@ -1,17 +1,19 @@
 //! HTTP handlers
 
 use axum::{
-    extract::{Path, State},
-    http::StatusCode,
+    extract::{Path, Query, State},
+    http::{header, HeaderMap, HeaderValue, StatusCode},
+    response::{IntoResponse, Response},
     Json,
 };
+use meeting_agent_core::models::Meeting;
 use serde_json::{json, Value};
 
 use crate::error::ApiError;
 use crate::state::AppState;
 use crate::types::{
-    CreateMeetingRequest, ListMeetingsResponse, MeetingResponse, TranscriptResponse,
-    UpdateMeetingRequest,
+    CreateMeetingRequest, ListMeetingsResponse, MeetingResponse, PaginationQuery,
+    TranscriptResponse, UpdateMeetingRequest,
 };
 use crate::validation;
 
@@ -47,7 +49,7 @@ pub async fn version() -> Json<Value> {
 /// List all meetings
 ///
 /// Returns all meetings with their metadata. Each meeting includes optional metadata fields:
-/// participants, location, organizer, metadata_source, file_metadata, recording_date, audio_file, video_file.
+/// participants, location, organizer, metadata_source, file_metadata, recording_date, audio_file.
 #[utoipa::path(
     get,
     path = "/meetings",
@@ -58,9 +60,24 @@ pub async fn version() -> Json<Value> {
 )]
 pub async fn list_meetings(
     State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(query): Query<PaginationQuery>,
 ) -> Result<Json<ListMeetingsResponse>, ApiError> {
-    let meetings = state.storage.list_meetings()?;
-    Ok(Json(ListMeetingsResponse { meetings }))
+    let limit = query.limit.clamp(1, 100);
+    let meetings = state
+        .storage
+        .list_meetings_paginated(limit, query.offset)
+        .await?
+        .into_iter()
+        .map(|meeting| with_recording_url(meeting, &headers))
+        .collect();
+    let total = state.storage.count_meetings().await?;
+    Ok(Json(ListMeetingsResponse {
+        meetings,
+        total,
+        limit,
+        offset: query.offset,
+    }))
 }
 
 /// Get a specific meeting
@@ -70,10 +87,9 @@ pub async fn list_meetings(
 /// - `location`: Physical or virtual location
 /// - `organizer`: Meeting organizer
 /// - `metadata_source`: Source of metadata (user_provided, calendar_bot, filename, ffprobe, default)
-/// - `file_metadata`: Audio/video file metadata (codec, sample_rate, bit_rate, channels, file_size_bytes)
+/// - `file_metadata`: Audio file metadata (codec, sample_rate, bit_rate, channels, file_size_bytes)
 /// - `recording_date`: Recording date (may differ from meeting date)
 /// - `audio_file`: Path to audio file
-/// - `video_file`: Path to video file
 #[utoipa::path(
     get,
     path = "/meetings/{id}",
@@ -88,11 +104,31 @@ pub async fn list_meetings(
 )]
 pub async fn get_meeting(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Path(id): Path<String>,
 ) -> Result<Json<MeetingResponse>, ApiError> {
     validation::validate_uuid(&id)?;
-    let meeting = state.storage.get_meeting(&id)?;
+    let meeting = with_recording_url(state.storage.get_meeting(&id).await?, &headers);
     Ok(Json(MeetingResponse { meeting }))
+}
+
+/// Get meeting recording file.
+pub async fn get_recording(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Response, ApiError> {
+    validation::validate_uuid(&id)?;
+    let path = state.storage.get_recording_path(&id).await?;
+    let mime = meeting_agent_core::storage::MeetingStorage::recording_mime_type(&path);
+    let bytes = tokio::fs::read(&path)
+        .await
+        .map_err(|e| ApiError::InternalServerError(format!("Failed to read recording: {e}")))?;
+
+    let mut response = bytes.into_response();
+    response
+        .headers_mut()
+        .insert(header::CONTENT_TYPE, HeaderValue::from_static(mime));
+    Ok(response)
 }
 
 /// Get meeting transcript
@@ -115,10 +151,10 @@ pub async fn get_transcript(
     validation::validate_uuid(&id)?;
 
     // Check if meeting exists first
-    let meeting = state.storage.get_meeting(&id)?;
+    let meeting = state.storage.get_meeting(&id).await?;
 
     // Try to get transcript
-    let transcript = state.storage.get_transcript(&id).ok();
+    let transcript = state.storage.get_transcript(&id).await.ok();
 
     Ok(Json(TranscriptResponse {
         meeting_id: meeting.id.clone(),
@@ -159,7 +195,7 @@ pub async fn create_meeting(
     }
 
     // Save to storage
-    state.storage.create_meeting(&meeting)?;
+    state.storage.create_meeting(&meeting).await?;
 
     Ok((StatusCode::CREATED, Json(MeetingResponse { meeting })))
 }
@@ -191,7 +227,7 @@ pub async fn update_meeting(
     validation::validate_update_request(&req.title, &req.date)?;
 
     // Load existing meeting
-    let mut meeting = state.storage.get_meeting(&id)?;
+    let mut meeting = state.storage.get_meeting(&id).await?;
 
     // Apply updates
     if let Some(title) = req.title {
@@ -205,7 +241,7 @@ pub async fn update_meeting(
     meeting.updated_at = chrono::Utc::now();
 
     // Save changes
-    state.storage.update_meeting(&meeting)?;
+    state.storage.update_meeting(&meeting).await?;
 
     Ok(Json(MeetingResponse { meeting }))
 }
@@ -231,7 +267,26 @@ pub async fn delete_meeting(
     validation::validate_uuid(&id)?;
 
     // Delete meeting and all associated files
-    state.storage.delete_meeting(&id)?;
+    state.storage.delete_meeting(&id).await?;
 
     Ok(StatusCode::NO_CONTENT)
+}
+
+fn with_recording_url(mut meeting: Meeting, headers: &HeaderMap) -> Meeting {
+    if meeting.audio_file.is_some() {
+        let proto = headers
+            .get("x-forwarded-proto")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("http");
+        let host = headers
+            .get("x-forwarded-host")
+            .or_else(|| headers.get(header::HOST))
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("localhost");
+        meeting.audio_file = Some(format!(
+            "{proto}://{host}/meetings/{}/recording",
+            meeting.id
+        ));
+    }
+    meeting
 }

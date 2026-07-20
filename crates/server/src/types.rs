@@ -43,7 +43,7 @@ pub struct UpdateMeetingRequest {
 ///     "file_size_bytes": 5242880
 ///   },
 ///   "recording_date": "2024-03-15T09:00:00",
-///   "audio_file": "meeting.m4a",
+///   "audio_file": "http://localhost/meetings/550e8400-e29b-41d4-a716-446655440000/recording",
 ///   "created_at": "2024-03-15T08:50:00Z",
 ///   "updated_at": "2024-03-15T09:30:00Z"
 /// }
@@ -51,6 +51,9 @@ pub struct UpdateMeetingRequest {
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ListMeetingsResponse {
     pub meetings: Vec<Meeting>,
+    pub total: u64,
+    pub limit: u32,
+    pub offset: u32,
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -64,6 +67,18 @@ pub struct TranscriptResponse {
     pub meeting_id: String,
     pub status: MeetingStatus,
     pub transcript: Option<TranscriptionResponse>,
+}
+
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub struct PaginationQuery {
+    #[serde(default = "default_meetings_limit")]
+    pub limit: u32,
+    #[serde(default)]
+    pub offset: u32,
+}
+
+fn default_meetings_limit() -> u32 {
+    20
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]

@@ -11,9 +11,11 @@ use tokio::sync::RwLock;
 use tower::ServiceExt;
 
 /// Build an AppState with the given API key and a temp data dir.
-fn app_state_with_key(api_key: Option<&str>) -> (AppState, tempfile::TempDir) {
+async fn app_state_with_key(api_key: Option<&str>) -> (AppState, tempfile::TempDir) {
     let temp_dir = tempfile::tempdir().unwrap();
-    let storage = MeetingStorage::with_base(temp_dir.path().to_path_buf());
+    let storage = MeetingStorage::with_base(temp_dir.path().to_path_buf())
+        .await
+        .unwrap();
     let config_path = temp_dir.path().join("config.json");
     let mut config = Config::default();
     config.server.api_key = api_key.map(|k| k.to_string());
@@ -31,7 +33,7 @@ fn app_state_with_key(api_key: Option<&str>) -> (AppState, tempfile::TempDir) {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_health_accessible_without_auth_when_key_set() {
-    let (state, _temp_dir) = app_state_with_key(Some("secret-key"));
+    let (state, _temp_dir) = app_state_with_key(Some("secret-key")).await;
     let app = meeting_agent_server::build_router(state);
 
     let request = Request::builder()
@@ -50,7 +52,7 @@ async fn test_health_accessible_without_auth_when_key_set() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_version_accessible_without_auth_when_key_set() {
-    let (state, _temp_dir) = app_state_with_key(Some("secret-key"));
+    let (state, _temp_dir) = app_state_with_key(Some("secret-key")).await;
     let app = meeting_agent_server::build_router(state);
 
     let request = Request::builder()
@@ -69,7 +71,7 @@ async fn test_version_accessible_without_auth_when_key_set() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_protected_endpoint_requires_auth() {
-    let (state, _temp_dir) = app_state_with_key(Some("secret-key"));
+    let (state, _temp_dir) = app_state_with_key(Some("secret-key")).await;
     let app = meeting_agent_server::build_router(state);
 
     // /meetings is a protected endpoint
@@ -89,7 +91,7 @@ async fn test_protected_endpoint_requires_auth() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_protected_endpoint_accepts_valid_key() {
-    let (state, _temp_dir) = app_state_with_key(Some("secret-key"));
+    let (state, _temp_dir) = app_state_with_key(Some("secret-key")).await;
     let app = meeting_agent_server::build_router(state);
 
     let request = Request::builder()
@@ -110,7 +112,7 @@ async fn test_protected_endpoint_accepts_valid_key() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_health_accessible_with_auth_disabled() {
     // No API key configured — everything is open
-    let (state, _temp_dir) = app_state_with_key(None);
+    let (state, _temp_dir) = app_state_with_key(None).await;
     let app = meeting_agent_server::build_router(state);
 
     let request = Request::builder()
@@ -130,7 +132,7 @@ async fn test_health_accessible_with_auth_disabled() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_config_endpoint_still_requires_auth() {
     // Config endpoint is sensitive — must remain protected
-    let (state, _temp_dir) = app_state_with_key(Some("secret-key"));
+    let (state, _temp_dir) = app_state_with_key(Some("secret-key")).await;
     let app = meeting_agent_server::build_router(state);
 
     let request = Request::builder()

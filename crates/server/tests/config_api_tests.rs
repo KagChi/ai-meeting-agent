@@ -9,9 +9,11 @@ use tokio::sync::RwLock;
 use tower::ServiceExt;
 
 /// Helper to build test AppState with temp storage and config
-fn test_app_state() -> (AppState, tempfile::TempDir) {
+async fn test_app_state() -> (AppState, tempfile::TempDir) {
     let temp_dir = tempfile::tempdir().unwrap();
-    let storage = MeetingStorage::with_base(temp_dir.path().to_path_buf());
+    let storage = MeetingStorage::with_base(temp_dir.path().to_path_buf())
+        .await
+        .unwrap();
 
     // Create a temp config file so handlers can save to it
     let config_path = temp_dir.path().join("config.json");
@@ -31,7 +33,7 @@ fn test_app_state() -> (AppState, tempfile::TempDir) {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_get_config_masks_secrets() {
     eprintln!("Starting test_get_config_masks_secrets");
-    let (state, _temp_dir) = test_app_state();
+    let (state, _temp_dir) = test_app_state().await;
     eprintln!("Created test app state");
 
     // Set API keys in config
@@ -79,7 +81,7 @@ async fn test_get_config_masks_secrets() {
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "hangs under tower::oneshot; see comment above"]
 async fn test_update_config_validates() {
-    let (state, _temp_dir) = test_app_state();
+    let (state, _temp_dir) = test_app_state().await;
 
     {
         let mut config = state.config.write().await;
@@ -122,7 +124,7 @@ async fn test_update_config_validates() {
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "hangs under tower::oneshot; see comment above"]
 async fn test_update_transcription_config() {
-    let (state, _temp_dir) = test_app_state();
+    let (state, _temp_dir) = test_app_state().await;
 
     {
         let mut config = state.config.write().await;
@@ -159,7 +161,7 @@ async fn test_update_transcription_config() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_config_auth_required() {
-    let (state, _temp_dir) = test_app_state();
+    let (state, _temp_dir) = test_app_state().await;
 
     {
         let mut config = state.config.write().await;

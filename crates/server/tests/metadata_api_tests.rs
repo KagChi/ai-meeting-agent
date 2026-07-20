@@ -12,9 +12,11 @@ use tokio::sync::RwLock;
 use tower::ServiceExt;
 
 /// Helper to build test AppState with temp storage and config
-fn test_app_state() -> (AppState, tempfile::TempDir) {
+async fn test_app_state() -> (AppState, tempfile::TempDir) {
     let temp_dir = tempfile::tempdir().unwrap();
-    let storage = MeetingStorage::with_base(temp_dir.path().to_path_buf());
+    let storage = MeetingStorage::with_base(temp_dir.path().to_path_buf())
+        .await
+        .unwrap();
 
     let config_path = temp_dir.path().join("config.json");
     let mut config = Config::default();
@@ -33,7 +35,7 @@ fn test_app_state() -> (AppState, tempfile::TempDir) {
 
 #[tokio::test]
 async fn test_get_meeting_includes_metadata() {
-    let (state, _temp_dir) = test_app_state();
+    let (state, _temp_dir) = test_app_state().await;
 
     // Create meeting with metadata
     let mut meeting = Meeting::new("Test Meeting with Metadata".to_string());
@@ -58,7 +60,7 @@ async fn test_get_meeting_includes_metadata() {
     meeting.audio_file = Some("meeting.m4a".to_string());
 
     let meeting_id = meeting.id.clone();
-    state.storage.create_meeting(&meeting).unwrap();
+    state.storage.create_meeting(&meeting).await.unwrap();
 
     let app = meeting_agent_server::build_router(state);
 
@@ -93,12 +95,15 @@ async fn test_get_meeting_includes_metadata() {
     assert_eq!(json["file_metadata"]["channels"], 2);
     assert_eq!(json["file_metadata"]["file_size_bytes"], 5242880);
     assert!(json["recording_date"].is_string());
-    assert_eq!(json["audio_file"], "meeting.m4a");
+    assert!(json["audio_file"]
+        .as_str()
+        .unwrap()
+        .ends_with(&format!("/meetings/{}/recording", meeting_id)));
 }
 
 #[tokio::test]
 async fn test_post_meeting_response_includes_metadata_fields() {
-    let (state, _temp_dir) = test_app_state();
+    let (state, _temp_dir) = test_app_state().await;
 
     let app = meeting_agent_server::build_router(state);
 
@@ -143,17 +148,17 @@ async fn test_post_meeting_response_includes_metadata_fields() {
 
 #[tokio::test]
 async fn test_list_meetings_includes_metadata() {
-    let (state, _temp_dir) = test_app_state();
+    let (state, _temp_dir) = test_app_state().await;
 
     // Create meeting with metadata
     let mut meeting1 = Meeting::new("Meeting 1".to_string());
     meeting1.participants = Some(vec!["Alice".to_string()]);
     meeting1.location = Some("Room A".to_string());
-    state.storage.create_meeting(&meeting1).unwrap();
+    state.storage.create_meeting(&meeting1).await.unwrap();
 
     // Create meeting without metadata
     let meeting2 = Meeting::new("Meeting 2".to_string());
-    state.storage.create_meeting(&meeting2).unwrap();
+    state.storage.create_meeting(&meeting2).await.unwrap();
 
     let app = meeting_agent_server::build_router(state);
 
@@ -194,7 +199,7 @@ async fn test_list_meetings_includes_metadata() {
 
 #[tokio::test]
 async fn test_metadata_source_serialization() {
-    let (state, _temp_dir) = test_app_state();
+    let (state, _temp_dir) = test_app_state().await;
 
     // Test all metadata source variants
     let sources = vec![
@@ -209,7 +214,7 @@ async fn test_metadata_source_serialization() {
         let mut meeting = Meeting::new(format!("Test {}", expected_json));
         meeting.metadata_source = Some(source);
         let meeting_id = meeting.id.clone();
-        state.storage.create_meeting(&meeting).unwrap();
+        state.storage.create_meeting(&meeting).await.unwrap();
 
         let app = meeting_agent_server::build_router(state.clone());
 
@@ -234,7 +239,7 @@ async fn test_metadata_source_serialization() {
 
 #[tokio::test]
 async fn test_file_metadata_all_fields() {
-    let (state, _temp_dir) = test_app_state();
+    let (state, _temp_dir) = test_app_state().await;
 
     let mut meeting = Meeting::new("Test File Metadata".to_string());
     meeting.file_metadata = Some(FileMetadata {
@@ -245,7 +250,7 @@ async fn test_file_metadata_all_fields() {
         file_size_bytes: Some(1024768),
     });
     let meeting_id = meeting.id.clone();
-    state.storage.create_meeting(&meeting).unwrap();
+    state.storage.create_meeting(&meeting).await.unwrap();
 
     let app = meeting_agent_server::build_router(state);
 

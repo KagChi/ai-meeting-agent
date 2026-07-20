@@ -119,7 +119,7 @@ async fn run_import_inner(
     });
 
     let meeting = Meeting::new(meeting_title);
-    storage.create_meeting(&meeting)?;
+    storage.create_meeting(&meeting).await?;
     registry.set_meeting_id(job_id, meeting.id.clone());
 
     check_cancelled(cancel_token)?;
@@ -184,16 +184,20 @@ async fn run_import_inner(
         ProgressEvent::new("saving", "Saving transcript and audio").with_percent(90.0),
     );
 
-    storage.save_audio(&meeting.id, &final_audio.to_path_buf())?;
-    storage.save_transcript(&meeting.id, &transcription)?;
+    storage
+        .save_audio(&meeting.id, &final_audio.to_path_buf())
+        .await?;
+    storage.save_transcript(&meeting.id, &transcription).await?;
 
     let duration_seconds = transcription.duration.map(|d| d as u64);
-    storage.mark_transcription_complete(
-        &meeting.id,
-        &config.transcription.provider,
-        &config.transcription.model,
-        duration_seconds,
-    )?;
+    storage
+        .mark_transcription_complete(
+            &meeting.id,
+            &config.transcription.provider,
+            &config.transcription.model,
+            duration_seconds,
+        )
+        .await?;
 
     Ok(())
 }
@@ -259,6 +263,7 @@ async fn run_summary_inner(
     );
     let transcript = storage
         .get_transcript(meeting_id)
+        .await
         .context("Failed to load transcript")?;
 
     check_cancelled(cancel_token)?;
@@ -305,6 +310,7 @@ async fn run_summary_inner(
 
     storage
         .save_summary(meeting_id, &summary)
+        .await
         .context("Failed to save summary")?;
 
     registry.update_progress_with_percent(job_id, "done", "Summary complete", 100.0);
@@ -357,7 +363,8 @@ async fn run_import_memory_inner(cfg: &ImportMemoryConfig) -> Result<()> {
     );
 
     // Check if conversion is needed based on filename
-    let working_audio = if audio::needs_conversion_by_filename(&cfg.audio_filename) {
+    let needs_conversion = audio::needs_conversion_by_filename(&cfg.audio_filename);
+    let working_audio = if needs_conversion {
         check_cancelled(&cfg.cancel_token)?;
         log::info!(
             "[import_memory] converting {} bytes to WAV in memory",
@@ -411,7 +418,7 @@ async fn run_import_memory_inner(cfg: &ImportMemoryConfig) -> Result<()> {
     let filename_path = std::path::Path::new(&cfg.audio_filename);
     crate::metadata::enrich_meeting_with_metadata(&mut meeting, filename_path, user_metadata)?;
 
-    cfg.storage.create_meeting(&meeting)?;
+    cfg.storage.create_meeting(&meeting).await?;
     cfg.registry.set_meeting_id(&cfg.job_id, meeting.id.clone());
 
     check_cancelled(&cfg.cancel_token)?;
@@ -542,17 +549,32 @@ async fn run_import_memory_inner(cfg: &ImportMemoryConfig) -> Result<()> {
         ProgressEvent::new("saving", "Saving transcript and audio").with_percent(90.0),
     );
 
+    let saved_audio_filename = if needs_conversion {
+        let stem = std::path::Path::new(&cfg.audio_filename)
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("recording");
+        format!("{stem}.wav")
+    } else {
+        cfg.audio_filename.clone()
+    };
+
     cfg.storage
-        .save_audio_from_bytes(&meeting.id, &working_audio, &cfg.audio_filename)?;
-    cfg.storage.save_transcript(&meeting.id, &transcription)?;
+        .save_audio_from_bytes(&meeting.id, &working_audio, &saved_audio_filename)
+        .await?;
+    cfg.storage
+        .save_transcript(&meeting.id, &transcription)
+        .await?;
 
     let duration_seconds = transcription.duration.map(|d| d as u64);
-    cfg.storage.mark_transcription_complete(
-        &meeting.id,
-        &cfg.config.transcription.provider,
-        &cfg.config.transcription.model,
-        duration_seconds,
-    )?;
+    cfg.storage
+        .mark_transcription_complete(
+            &meeting.id,
+            &cfg.config.transcription.provider,
+            &cfg.config.transcription.model,
+            duration_seconds,
+        )
+        .await?;
 
     Ok(())
 }

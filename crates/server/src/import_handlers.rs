@@ -27,8 +27,8 @@ use std::path::PathBuf;
 use tokio_stream::wrappers::BroadcastStream;
 use tokio_stream::StreamExt;
 
-/// Supported audio and video file extensions for import. Video files will have their audio track extracted.
-const AUDIO_VIDEO_EXTENSIONS: &[&str] = &[
+/// Supported recording extensions for import. Non-WAV/MP3 inputs are converted to WAV.
+const RECORDING_EXTENSIONS: &[&str] = &[
     "mp3", "wav", "m4a", "flac", "webm", "ogg", "opus", "aac", "wma", "mp4", "mkv", "avi", "mov",
 ];
 
@@ -177,7 +177,7 @@ pub async fn validate_import(
                 .map(|s| s.to_lowercase())
                 .unwrap_or_default();
 
-            let valid = !format.is_empty() && AUDIO_VIDEO_EXTENSIONS.contains(&format.as_str());
+            let valid = !format.is_empty() && RECORDING_EXTENSIONS.contains(&format.as_str());
 
             return Ok(Json(ImportValidationResponse {
                 valid,
@@ -322,10 +322,10 @@ fn validate_audio_extension(filename: &str) -> Result<(), ApiError> {
         .map(|s| s.to_lowercase());
 
     match ext {
-        Some(e) if AUDIO_VIDEO_EXTENSIONS.contains(&e.as_str()) => Ok(()),
+        Some(e) if RECORDING_EXTENSIONS.contains(&e.as_str()) => Ok(()),
         Some(e) => Err(ApiError::BadRequest(format!(
             "Unsupported format: '{e}'. Supported: {}",
-            AUDIO_VIDEO_EXTENSIONS.join(", ")
+            RECORDING_EXTENSIONS.join(", ")
         ))),
         None => Err(ApiError::BadRequest(
             "File has no extension. Cannot determine audio format.".to_string(),
