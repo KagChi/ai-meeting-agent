@@ -20,6 +20,7 @@ const EVENT_CHANNEL_CAPACITY: usize = 16;
 pub enum JobType {
     Import,
     Summary,
+    Retranscribe,
 }
 
 /// State of a background job.

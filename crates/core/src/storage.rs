@@ -6,7 +6,7 @@ use crate::db;
 use crate::fs;
 use crate::models::{
     FileMetadata, Meeting, MeetingStatus, MetadataSource, Summary, SummaryStatus, SummaryTemplate,
-    TranscriptionInfo,
+    TranscriptionInfo, TranscriptVersion,
 };
 use crate::transcription::{TranscriptSegment, TranscriptionResponse};
 use anyhow::{Context, Result};
@@ -398,25 +398,33 @@ impl MeetingStorage {
         &self,
         meeting_id: &str,
         response: &TranscriptionResponse,
+        provider: &str,
+        model: &str,
+        duration_seconds: u64,
     ) -> Result<()> {
         // Ensure meeting exists and fail with existing message shape.
         self.get_meeting(meeting_id).await?;
 
-        sqlx::query("DELETE FROM transcript_segments WHERE meeting_id = ?")
-            .bind(meeting_id)
-            .execute(&self.db)
-            .await
-            .context("Failed to delete existing transcript segments")?;
+        // Compute next version number
+        let version: i64 = sqlx::query_scalar(
+            "SELECT COALESCE(MAX(version), 0) + 1 FROM transcript_versions WHERE meeting_id = ?",
+        )
+        .bind(meeting_id)
+        .fetch_one(&self.db)
+        .await
+        .context("Failed to compute transcript version")?;
 
+        // Insert new segments with version number (old versions are preserved)
         if let Some(segments) = &response.segments {
             for segment in segments {
                 sqlx::query(
                     "INSERT INTO transcript_segments (
-                        meeting_id, segment_id, start, end, text, speaker,
+                        meeting_id, version, segment_id, start, end, text, speaker,
                         tokens, temperature, avg_logprob, compression_ratio, no_speech_prob
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 )
                 .bind(meeting_id)
+                .bind(version)
                 .bind(segment.id as i64)
                 .bind(segment.start)
                 .bind(segment.end)
@@ -438,22 +446,15 @@ impl MeetingStorage {
             }
         }
 
-        let version: i64 = sqlx::query_scalar(
-            "SELECT COALESCE(MAX(version), 0) + 1 FROM transcript_versions WHERE meeting_id = ?",
-        )
-        .bind(meeting_id)
-        .fetch_one(&self.db)
-        .await
-        .context("Failed to compute transcript version")?;
-
+        // Record version metadata
         sqlx::query(
             "INSERT INTO transcript_versions (meeting_id, version, provider, model, language, segment_count)
              VALUES (?, ?, ?, ?, ?, ?)",
         )
         .bind(meeting_id)
         .bind(version)
-        .bind("")
-        .bind("")
+        .bind(provider)
+        .bind(model)
         .bind(response.language.as_deref())
         .bind(response.segments.as_ref().map(|s| s.len()).unwrap_or(0) as i64)
         .execute(&self.db)
@@ -463,10 +464,10 @@ impl MeetingStorage {
         Ok(())
     }
 
-    /// Get transcript for a meeting.
-    pub async fn get_transcript(&self, meeting_id: &str) -> Result<TranscriptionResponse> {
+    /// Get transcript for a meeting (latest version by default, or specific version).
+    pub async fn get_transcript(&self, meeting_id: &str, version: Option<u32>) -> Result<TranscriptionResponse> {
         let segments = self
-            .get_transcript_paginated(meeting_id, u32::MAX, 0)
+            .get_transcript_paginated(meeting_id, version, u32::MAX, 0)
             .await?;
         if segments.is_empty() {
             anyhow::bail!("Transcript not found for meeting: {}", meeting_id);
@@ -488,27 +489,46 @@ impl MeetingStorage {
         })
     }
 
-    /// Get transcript segments with pagination.
+    /// Get transcript segments with pagination and optional version.
+    /// If version is None, returns the latest version.
     pub async fn get_transcript_paginated(
         &self,
         meeting_id: &str,
+        version: Option<u32>,
         limit: u32,
         offset: u32,
     ) -> Result<Vec<TranscriptSegment>> {
-        let rows = sqlx::query(
+        let version_clause = if let Some(v) = version {
+            format!("AND version = {}", v)
+        } else {
+            format!(
+                "AND version = (SELECT COALESCE(MAX(version), 1) FROM transcript_segments WHERE meeting_id = ?)"
+            )
+        };
+
+        let query = format!(
             "SELECT segment_id, start, end, text, speaker, tokens, temperature,
                     avg_logprob, compression_ratio, no_speech_prob
              FROM transcript_segments
-             WHERE meeting_id = ?
+             WHERE meeting_id = ? {}
              ORDER BY segment_id ASC
              LIMIT ? OFFSET ?",
-        )
-        .bind(meeting_id)
-        .bind(limit as i64)
-        .bind(offset as i64)
-        .fetch_all(&self.db)
-        .await
-        .context("Failed to query transcript segments")?;
+            version_clause
+        );
+
+        let mut q = sqlx::query(&query).bind(meeting_id);
+        
+        // Bind meeting_id again for subquery if version is None
+        if version.is_none() {
+            q = q.bind(meeting_id);
+        }
+        
+        let rows = q
+            .bind(limit as i64)
+            .bind(offset as i64)
+            .fetch_all(&self.db)
+            .await
+            .context("Failed to query transcript segments")?;
 
         rows.into_iter()
             .map(|row| {
@@ -533,20 +553,38 @@ impl MeetingStorage {
             .collect()
     }
 
-    /// Search transcript segments using SQLite FTS5.
+    /// Search transcript segments using SQLite FTS5 (searches latest version only).
     pub async fn search_transcripts(
         &self,
+        meeting_id: &str,
         query: &str,
         limit: u32,
         offset: u32,
     ) -> Result<Vec<TranscriptSegment>> {
+        // Get latest version for this meeting
+        let latest_version: Option<i64> = sqlx::query_scalar(
+            "SELECT MAX(version) FROM transcript_segments WHERE meeting_id = ?"
+        )
+        .bind(meeting_id)
+        .fetch_optional(&self.db)
+        .await
+        .context("Failed to get latest version")?
+        .flatten();
+
+        let version = match latest_version {
+            Some(v) => v,
+            None => return Ok(Vec::new()), // No transcript exists
+        };
+
         let rows = sqlx::query(
             "SELECT segment_id, start, end, text, speaker
              FROM transcript_search
-             WHERE transcript_search MATCH ?
+             WHERE meeting_id = ? AND version = ? AND transcript_search MATCH ?
              ORDER BY rank
              LIMIT ? OFFSET ?",
         )
+        .bind(meeting_id)
+        .bind(version)
         .bind(query)
         .bind(limit as i64)
         .bind(offset as i64)
@@ -569,6 +607,38 @@ impl MeetingStorage {
                     avg_logprob: None,
                     compression_ratio: None,
                     no_speech_prob: None,
+                })
+            })
+            .collect()
+    }
+
+    /// List all transcript versions for a meeting.
+    pub async fn list_transcript_versions(
+        &self,
+        meeting_id: &str,
+    ) -> Result<Vec<TranscriptVersion>> {
+        let rows = sqlx::query(
+            "SELECT id, meeting_id, version, provider, model, language, segment_count, created_at
+             FROM transcript_versions
+             WHERE meeting_id = ?
+             ORDER BY version DESC",
+        )
+        .bind(meeting_id)
+        .fetch_all(&self.db)
+        .await
+        .context("Failed to fetch transcript versions")?;
+
+        rows.into_iter()
+            .map(|row| {
+                Ok(TranscriptVersion {
+                    id: row.try_get(0)?,
+                    meeting_id: row.try_get(1)?,
+                    version: row.try_get::<i64, _>(2)? as u32,
+                    provider: row.try_get(3)?,
+                    model: row.try_get(4)?,
+                    language: row.try_get(5)?,
+                    segment_count: row.try_get::<i64, _>(6)? as u32,
+                    created_at: row.try_get(7)?,
                 })
             })
             .collect()

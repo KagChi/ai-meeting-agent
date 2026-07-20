@@ -217,15 +217,24 @@ pub async fn run(
 
     storage.create_meeting(&meeting).await?;
     storage.save_audio(&meeting.id, &file_path).await?;
-    storage.save_transcript(&meeting.id, &response).await?;
+    
+    let duration_seconds = response.duration.map(|d| d as u64).unwrap_or(0);
+    storage
+        .save_transcript(
+            &meeting.id,
+            &response,
+            &config.transcription.provider,
+            &config.transcription.model,
+            duration_seconds,
+        )
+        .await?;
 
-    let duration_seconds = response.duration.map(|d| d as u64);
     storage
         .mark_transcription_complete(
             &meeting.id,
             &config.transcription.provider,
             &config.transcription.model,
-            duration_seconds,
+            Some(duration_seconds),
         )
         .await?;
 

@@ -180,3 +180,17 @@ pub struct Summary {
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
+
+/// Transcript version metadata for tracking retranscriptions.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+pub struct TranscriptVersion {
+    pub id: i64,
+    pub meeting_id: String,
+    pub version: u32,
+    pub provider: String,
+    pub model: String,
+    pub language: Option<String>,
+    pub segment_count: u32,
+    pub created_at: DateTime<Utc>,
+}

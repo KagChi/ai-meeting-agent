@@ -8,7 +8,7 @@ pub async fn run(id: String, format: String, output: Option<String>) -> Result<(
         .resolve_meeting_id(&id)
         .await?
         .ok_or_else(|| anyhow::anyhow!("Meeting not found: {}", id))?;
-    let resp = storage.get_transcript(&full_id).await?;
+    let resp = storage.get_transcript(&full_id, None).await?;
 
     let content = match format.as_str() {
         "srt" => to_srt(&resp),

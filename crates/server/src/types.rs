@@ -228,6 +228,12 @@ pub struct UpdateConfigRequest {
     pub summary: UpdateSummaryConfigRequest,
 }
 
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct TranscriptVersionsResponse {
+    pub meeting_id: String,
+    pub versions: Vec<meeting_agent_core::models::TranscriptVersion>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

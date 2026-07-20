@@ -187,15 +187,24 @@ async fn run_import_inner(
     storage
         .save_audio(&meeting.id, &final_audio.to_path_buf())
         .await?;
-    storage.save_transcript(&meeting.id, &transcription).await?;
+    
+    let duration_seconds = transcription.duration.map(|d| d as u64).unwrap_or(0);
+    storage
+        .save_transcript(
+            &meeting.id,
+            &transcription,
+            &config.transcription.provider,
+            &config.transcription.model,
+            duration_seconds,
+        )
+        .await?;
 
-    let duration_seconds = transcription.duration.map(|d| d as u64);
     storage
         .mark_transcription_complete(
             &meeting.id,
             &config.transcription.provider,
             &config.transcription.model,
-            duration_seconds,
+            Some(duration_seconds),
         )
         .await?;
 
@@ -262,7 +271,7 @@ async fn run_summary_inner(
         ProgressEvent::new("loading_transcript", "Loading meeting transcript"),
     );
     let transcript = storage
-        .get_transcript(meeting_id)
+        .get_transcript(meeting_id, None)
         .await
         .context("Failed to load transcript")?;
 
@@ -562,17 +571,24 @@ async fn run_import_memory_inner(cfg: &ImportMemoryConfig) -> Result<()> {
     cfg.storage
         .save_audio_from_bytes(&meeting.id, &working_audio, &saved_audio_filename)
         .await?;
+    
+    let duration_seconds = transcription.duration.map(|d| d as u64).unwrap_or(0);
     cfg.storage
-        .save_transcript(&meeting.id, &transcription)
+        .save_transcript(
+            &meeting.id,
+            &transcription,
+            &cfg.config.transcription.provider,
+            &cfg.config.transcription.model,
+            duration_seconds,
+        )
         .await?;
 
-    let duration_seconds = transcription.duration.map(|d| d as u64);
     cfg.storage
         .mark_transcription_complete(
             &meeting.id,
             &cfg.config.transcription.provider,
             &cfg.config.transcription.model,
-            duration_seconds,
+            Some(duration_seconds),
         )
         .await?;
 
@@ -622,3 +638,114 @@ async fn refine_transcript(
         }
     }
 }
+
+/// Configuration for retranscribe jobs.
+pub struct RetranscribeConfig {
+    pub job_id: String,
+    pub meeting_id: String,
+    pub audio_path: PathBuf,
+    pub config: Config,
+    pub storage: Arc<MeetingStorage>,
+    pub registry: Arc<JobRegistry>,
+    pub cancel_token: CancellationToken,
+}
+
+pub async fn run_retranscribe(cfg: RetranscribeConfig) {
+    log::info!("Starting retranscribe job {}", cfg.job_id);
+
+    let result = run_retranscribe_inner(&cfg).await;
+
+    match result {
+        Ok(_) => {
+            log::info!("Retranscribe job {} completed successfully", cfg.job_id);
+            cfg.registry.complete_job(&cfg.job_id);
+        }
+        Err(e) if cfg.cancel_token.is_cancelled() => {
+            log::warn!("Retranscribe job {} cancelled: {:#}", cfg.job_id, e);
+            cfg.registry.cancel_job(&cfg.job_id);
+        }
+        Err(e) => {
+            log::error!("Retranscribe job {} failed: {:#}", cfg.job_id, e);
+            cfg.registry
+                .fail_job(&cfg.job_id, format!("Retranscription failed: {:#}", e));
+        }
+    }
+}
+
+async fn run_retranscribe_inner(cfg: &RetranscribeConfig) -> Result<()> {
+    // Check cancellation
+    if cfg.cancel_token.is_cancelled() {
+        anyhow::bail!("Job cancelled before starting");
+    }
+
+    cfg.registry.update_progress(
+        &cfg.job_id,
+        ProgressEvent::new("loading", "Loading audio file"),
+    );
+
+    // Load audio metadata to get duration
+    let duration_seconds = audio::probe_duration(&cfg.audio_path)
+        .context("Failed to get audio duration")? as u64;
+
+    cfg.registry.update_progress(
+        &cfg.job_id,
+        ProgressEvent::new("transcribing", "Starting transcription").with_percent(10.0),
+    );
+
+    // Create transcription client
+    let transcription_client = TranscriptionClient::new(cfg.config.transcription.clone())?;
+    let transcription_request = TranscriptionRequest {
+        file_path: cfg.audio_path.to_string_lossy().to_string(),
+        response_format: Some("verbose_json".to_string()),
+        language: None,
+        prompt: None,
+        temperature: None,
+    };
+
+    // Transcribe audio
+    let transcription = transcription_client
+        .transcribe_chunked(
+            transcription_request,
+            cfg.config.transcription.chunk_seconds,
+            cfg.config.transcription.chunk_concurrency,
+        )
+        .await?;
+
+    // Check cancellation before refining
+    if cfg.cancel_token.is_cancelled() {
+        anyhow::bail!("Job cancelled before refinement");
+    }
+
+    // Refine transcript
+    let transcription = refine_transcript(
+        transcription,
+        &cfg.config,
+        &cfg.registry,
+        &cfg.job_id,
+    )
+    .await;
+
+    // Check cancellation before saving
+    if cfg.cancel_token.is_cancelled() {
+        anyhow::bail!("Job cancelled before saving");
+    }
+
+    cfg.registry.update_progress(
+        &cfg.job_id,
+        ProgressEvent::new("saving", "Saving new transcript version").with_percent(95.0),
+    );
+
+    // Save new transcript version
+    cfg.storage
+        .save_transcript(
+            &cfg.meeting_id,
+            &transcription,
+            &cfg.config.transcription.provider,
+            &cfg.config.transcription.model,
+            duration_seconds,
+        )
+        .await?;
+
+    Ok(())
+}
+

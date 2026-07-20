@@ -59,7 +59,12 @@ pub fn build_router(state: AppState) -> Router {
                 .delete(handlers::delete_meeting),
         )
         .route("/meetings/:id/recording", get(handlers::get_recording))
+        .route("/meetings/:id/retranscribe", post(handlers::retranscribe_meeting))
         .route("/meetings/:id/transcript", get(handlers::get_transcript))
+        .route(
+            "/meetings/:id/transcript/versions",
+            get(handlers::list_transcript_versions),
+        )
         .route(
             "/meetings/:id/summary",
             get(summary_handlers::list_summaries).post(summary_handlers::create_summary),
