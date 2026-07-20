@@ -213,19 +213,21 @@ pub async fn run(
         user_metadata,
     )?;
 
-    let storage = MeetingStorage::new();
+    let storage = MeetingStorage::new().await?;
 
-    storage.create_meeting(&meeting)?;
-    storage.save_audio(&meeting.id, &file_path)?;
-    storage.save_transcript(&meeting.id, &response)?;
+    storage.create_meeting(&meeting).await?;
+    storage.save_audio(&meeting.id, &file_path).await?;
+    storage.save_transcript(&meeting.id, &response).await?;
 
     let duration_seconds = response.duration.map(|d| d as u64);
-    storage.mark_transcription_complete(
-        &meeting.id,
-        &config.transcription.provider,
-        &config.transcription.model,
-        duration_seconds,
-    )?;
+    storage
+        .mark_transcription_complete(
+            &meeting.id,
+            &config.transcription.provider,
+            &config.transcription.model,
+            duration_seconds,
+        )
+        .await?;
 
     println!(
         "\n{} Meeting saved with ID: {}",

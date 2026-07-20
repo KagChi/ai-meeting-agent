@@ -49,11 +49,11 @@ impl ServerHandler for MeetingAgentMcpServer {
         Ok(ListToolsResult::with_all_items(vec![
             tool::<ImportFromFileRequest>(
                 "importFromFile",
-                "Import a meeting audio/video file from a local path or OpenClaw media://inbound/… URI (resolved via OPENCLAW_MEDIA_INBOUND_DIR, default ~/.openclaw/media/inbound).",
+                "Import a meeting recording file from a local path or OpenClaw media://inbound/… URI (resolved via OPENCLAW_MEDIA_INBOUND_DIR, default ~/.openclaw/media/inbound).",
             ),
             tool::<ImportFromUrlRequest>(
                 "importFromUrl",
-                "Import a meeting audio/video file by downloading from an HTTP(S) URL.",
+                "Import a meeting recording file by downloading from an HTTP(S) URL.",
             ),
 
             tool::<JobIdRequest>("getJobStatus", "Get current import or summary job status."),

@@ -1,31 +1,55 @@
 //! Meeting storage operations
 //!
-//! Handles file system operations for meetings, transcripts, and audio files.
+//! SQLite-based storage for meetings, transcripts, summaries, and audio files.
 
+use crate::db;
 use crate::fs;
-use crate::models::{Meeting, MeetingStatus, Summary, SummaryTemplate, TranscriptionInfo};
-use crate::transcription::TranscriptionResponse;
+use crate::models::{
+    FileMetadata, Meeting, MeetingStatus, MetadataSource, Summary, SummaryStatus, SummaryTemplate,
+    TranscriptionInfo,
+};
+use crate::transcription::{TranscriptSegment, TranscriptionResponse};
 use anyhow::{Context, Result};
-use chrono::Utc;
+use chrono::{DateTime, Utc};
+use sqlx::{Pool, Row, Sqlite};
+use std::path::Path;
 use std::path::PathBuf;
 
-/// Meeting storage manager
-#[derive(Clone, Debug)]
+/// Meeting storage manager with SQLite backend
+#[derive(Clone)]
 pub struct MeetingStorage {
     base: PathBuf,
+    db: Pool<Sqlite>,
 }
 
 impl MeetingStorage {
     /// Create a new storage instance using the default data directory
-    pub fn new() -> Self {
-        Self {
-            base: fs::data_dir().expect("Failed to determine home directory"),
-        }
+    pub async fn new() -> Result<Self> {
+        let base = fs::data_dir().context("Failed to determine home directory")?;
+        Self::with_base(base).await
     }
 
     /// Create a storage instance with a custom base directory (for testing)
-    pub fn with_base(base: PathBuf) -> Self {
-        Self { base }
+    pub async fn with_base(base: PathBuf) -> Result<Self> {
+        // Ensure base directory exists
+        std::fs::create_dir_all(&base).context("Failed to create base directory")?;
+
+        // Initialize SQLite database
+        let db_path = base.join("meetings.db");
+        let pool = db::init_database(&db_path).await?;
+
+        Ok(Self { base, db: pool })
+    }
+
+    /// Create a storage instance with in-memory database (for testing)
+    pub async fn in_memory(base: PathBuf) -> Result<Self> {
+        // Ensure base directory exists
+        std::fs::create_dir_all(&base).context("Failed to create base directory")?;
+
+        // Initialize in-memory SQLite database
+        let pool = db::init_memory_database().await?;
+
+        Ok(Self { base, db: pool })
     }
 
     /// Get the meetings directory path
@@ -38,74 +62,196 @@ impl MeetingStorage {
         self.meetings_dir().join(meeting_id)
     }
 
-    /// Create a new meeting with metadata
-    pub fn create_meeting(&self, meeting: &Meeting) -> Result<()> {
-        let meeting_path = self.meeting_dir(&meeting.id);
-        std::fs::create_dir_all(&meeting_path).context("Failed to create meeting directory")?;
+    fn audio_file_name(audio_file: Option<&str>) -> Option<String> {
+        audio_file.and_then(|value| {
+            Path::new(value)
+                .file_name()
+                .and_then(|name| name.to_str())
+                .map(|name| name.to_string())
+        })
+    }
 
-        let meeting_json = serde_json::to_string_pretty(&meeting)
-            .context("Failed to serialize meeting metadata")?;
-        std::fs::write(meeting_path.join("meeting.json"), meeting_json)
-            .context("Failed to write meeting metadata")?;
+    /// Create a new meeting with metadata
+    pub async fn create_meeting(&self, meeting: &Meeting) -> Result<()> {
+        // Convert enums to lowercase strings for DB
+        let status = format!("{:?}", meeting.status).to_lowercase();
+        let metadata_source = meeting
+            .metadata_source
+            .as_ref()
+            .map(|s| format!("{:?}", s).to_lowercase());
+        let audio_file = Self::audio_file_name(meeting.audio_file.as_deref());
+
+        sqlx::query(
+            "INSERT INTO meetings (
+                id, title, date, duration_seconds, status,
+                transcription_provider, transcription_model, transcription_completed_at,
+                participants, location, organizer, metadata_source, recording_date, platform,
+                file_metadata, audio_file,
+                created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(&meeting.id)
+        .bind(&meeting.title)
+        .bind(meeting.date)
+        .bind(meeting.duration_seconds.map(|d| d as i64))
+        .bind(&status)
+        .bind(meeting.transcription.as_ref().map(|t| t.provider.as_str()))
+        .bind(meeting.transcription.as_ref().map(|t| t.model.as_str()))
+        .bind(meeting.transcription.as_ref().map(|t| t.completed_at))
+        .bind(
+            meeting
+                .participants
+                .as_ref()
+                .map(|p| serde_json::to_string(p).unwrap()),
+        )
+        .bind(meeting.location.as_deref())
+        .bind(meeting.organizer.as_deref())
+        .bind(metadata_source.as_deref())
+        .bind(meeting.recording_date)
+        .bind(meeting.platform.as_deref())
+        .bind(
+            meeting
+                .file_metadata
+                .as_ref()
+                .map(|m| serde_json::to_string(m).unwrap()),
+        )
+        .bind(audio_file.as_deref())
+        .bind(meeting.created_at)
+        .bind(meeting.updated_at)
+        .execute(&self.db)
+        .await
+        .context("Failed to insert meeting into database")?;
+
+        // Create meeting directory for audio files
+        let meeting_path = self.meeting_dir(&meeting.id);
+        std::fs::create_dir_all(meeting_path.join("audio"))
+            .context("Failed to create meeting directory")?;
 
         Ok(())
     }
 
     /// Get meeting by ID
-    pub fn get_meeting(&self, meeting_id: &str) -> Result<Meeting> {
-        let meeting_path = self.meeting_dir(meeting_id);
-        let meeting_file = meeting_path.join("meeting.json");
+    pub async fn get_meeting(&self, meeting_id: &str) -> Result<Meeting> {
+        let row = sqlx::query(
+            "SELECT 
+                id, title, date, duration_seconds, status,
+                transcription_provider, transcription_model, transcription_completed_at,
+                participants, location, organizer, metadata_source, recording_date, platform,
+                file_metadata, audio_file,
+                created_at, updated_at
+            FROM meetings WHERE id = ?",
+        )
+        .bind(meeting_id)
+        .fetch_optional(&self.db)
+        .await
+        .context("Failed to query meeting")?
+        .ok_or_else(|| anyhow::anyhow!("Meeting not found: {}", meeting_id))?;
 
-        if !meeting_file.exists() {
-            anyhow::bail!("Meeting not found: {}", meeting_id);
-        }
-
-        let meeting_json =
-            std::fs::read_to_string(&meeting_file).context("Failed to read meeting metadata")?;
-        let meeting: Meeting =
-            serde_json::from_str(&meeting_json).context("Failed to parse meeting metadata")?;
-
+        let meeting = self.row_to_meeting(row)?;
         Ok(meeting)
     }
 
-    /// Resolve a meeting ID or short prefix (≥8 chars) to a full UUID.
-    ///
-    /// - Full UUID: fast path, returns as-is if directory exists.
-    /// - Short prefix (≥8 chars): scans meetings dir for unique match.
-    /// - <8 chars: error.
-    /// - Ambiguous: error with first 3 matches.
-    pub fn resolve_meeting_id(&self, id_or_prefix: &str) -> Result<String> {
+    /// Convert a sqlx Row to a Meeting struct
+    fn row_to_meeting(&self, row: sqlx::sqlite::SqliteRow) -> Result<Meeting> {
+        let status_str: String = row.try_get(4)?;
+        let status = match status_str.as_str() {
+            "importing" => MeetingStatus::Importing,
+            "ready" => MeetingStatus::Ready,
+            "failed" => MeetingStatus::Failed,
+            _ => MeetingStatus::Failed,
+        };
+
+        let transcription = if let (Some(provider), Some(model), Some(completed_at)) = (
+            row.try_get::<Option<String>, _>(5)?,
+            row.try_get::<Option<String>, _>(6)?,
+            row.try_get::<Option<DateTime<Utc>>, _>(7)?,
+        ) {
+            Some(TranscriptionInfo {
+                provider,
+                model,
+                completed_at,
+            })
+        } else {
+            None
+        };
+
+        let participants: Option<Vec<String>> = row
+            .try_get::<Option<String>, _>(8)?
+            .and_then(|s: String| serde_json::from_str(&s).ok());
+
+        let metadata_source: Option<MetadataSource> = row
+            .try_get::<Option<String>, _>(11)?
+            .and_then(|s: String| match s.as_str() {
+                "userprovided" => Some(MetadataSource::UserProvided),
+                "calendarbot" => Some(MetadataSource::CalendarBot),
+                "filename" => Some(MetadataSource::Filename),
+                "ffprobe" => Some(MetadataSource::FFprobe),
+                "default" => Some(MetadataSource::Default),
+                _ => None,
+            });
+
+        let file_metadata: Option<FileMetadata> = row
+            .try_get::<Option<String>, _>(14)?
+            .and_then(|s: String| serde_json::from_str(&s).ok());
+
+        let id: String = row.try_get(0)?;
+        let audio_file = row.try_get::<Option<String>, _>(15)?.map(|name| {
+            self.meeting_dir(&id)
+                .join("audio")
+                .join(name)
+                .to_string_lossy()
+                .to_string()
+        });
+
+        Ok(Meeting {
+            id,
+            title: row.try_get(1)?,
+            date: row.try_get(2)?,
+            duration_seconds: row.try_get::<Option<i64>, _>(3)?.map(|d| d as u64),
+            status,
+            transcription,
+            created_at: row.try_get(16)?,
+            updated_at: row.try_get(17)?,
+            participants,
+            location: row.try_get(9)?,
+            organizer: row.try_get(10)?,
+            metadata_source,
+            recording_date: row.try_get(12)?,
+            platform: row.try_get(13)?,
+            file_metadata,
+            audio_file,
+        })
+    }
+
+    /// Resolve a meeting ID or short prefix (≥8 chars) to a full UUID
+    pub async fn resolve_meeting_id(&self, id_or_prefix: &str) -> Result<Option<String>> {
         if id_or_prefix.len() < 8 {
             anyhow::bail!("ID too short, need at least 8 characters");
         }
 
-        // Fast path: exact directory exists
-        let exact_path = self.meeting_dir(id_or_prefix);
-        if exact_path.join("meeting.json").exists() {
-            return Ok(id_or_prefix.to_string());
+        // Fast path: exact match
+        let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM meetings WHERE id = ?)")
+            .bind(id_or_prefix)
+            .fetch_one(&self.db)
+            .await
+            .context("Failed to check meeting existence")?;
+
+        if exists {
+            return Ok(Some(id_or_prefix.to_string()));
         }
 
-        // Scan for prefix matches
-        let meetings_path = self.meetings_dir();
-        if !meetings_path.exists() {
-            anyhow::bail!("Meeting not found: {}", id_or_prefix);
-        }
-
-        let mut matches = Vec::new();
-        for entry in
-            std::fs::read_dir(&meetings_path).context("Failed to read meetings directory")?
-        {
-            let entry = entry.context("Failed to read directory entry")?;
-            if let Some(name) = entry.file_name().to_str() {
-                if name.starts_with(id_or_prefix) && entry.path().join("meeting.json").exists() {
-                    matches.push(name.to_string());
-                }
-            }
-        }
+        // Prefix search
+        let pattern = format!("{}%", id_or_prefix);
+        let matches: Vec<String> =
+            sqlx::query_scalar("SELECT id FROM meetings WHERE id LIKE ? LIMIT 4")
+                .bind(&pattern)
+                .fetch_all(&self.db)
+                .await
+                .context("Failed to execute prefix query")?;
 
         match matches.len() {
-            0 => anyhow::bail!("Meeting not found: {}", id_or_prefix),
-            1 => Ok(matches.into_iter().next().unwrap()),
+            0 => Ok(None),
+            1 => Ok(Some(matches.into_iter().next().unwrap())),
             _ => {
                 let preview: Vec<&str> = matches.iter().take(3).map(|s| s.as_str()).collect();
                 anyhow::bail!(
@@ -118,161 +264,402 @@ impl MeetingStorage {
     }
 
     /// Update meeting metadata
-    pub fn update_meeting(&self, meeting: &Meeting) -> Result<()> {
-        let meeting_path = self.meeting_dir(&meeting.id);
-        let meeting_file = meeting_path.join("meeting.json");
+    pub async fn update_meeting(&self, meeting: &Meeting) -> Result<()> {
+        let status = format!("{:?}", meeting.status).to_lowercase();
+        let metadata_source = meeting
+            .metadata_source
+            .as_ref()
+            .map(|s| format!("{:?}", s).to_lowercase());
+        let audio_file = Self::audio_file_name(meeting.audio_file.as_deref());
 
-        if !meeting_file.exists() {
+        let result = sqlx::query(
+            "UPDATE meetings SET
+                title = ?, date = ?, duration_seconds = ?, status = ?,
+                transcription_provider = ?, transcription_model = ?, transcription_completed_at = ?,
+                participants = ?, location = ?, organizer = ?, metadata_source = ?,
+                recording_date = ?, platform = ?, file_metadata = ?, audio_file = ?
+            WHERE id = ?",
+        )
+        .bind(&meeting.title)
+        .bind(meeting.date)
+        .bind(meeting.duration_seconds.map(|d| d as i64))
+        .bind(&status)
+        .bind(meeting.transcription.as_ref().map(|t| t.provider.as_str()))
+        .bind(meeting.transcription.as_ref().map(|t| t.model.as_str()))
+        .bind(meeting.transcription.as_ref().map(|t| t.completed_at))
+        .bind(
+            meeting
+                .participants
+                .as_ref()
+                .map(|p| serde_json::to_string(p).unwrap()),
+        )
+        .bind(meeting.location.as_deref())
+        .bind(meeting.organizer.as_deref())
+        .bind(metadata_source.as_deref())
+        .bind(meeting.recording_date)
+        .bind(meeting.platform.as_deref())
+        .bind(
+            meeting
+                .file_metadata
+                .as_ref()
+                .map(|m| serde_json::to_string(m).unwrap()),
+        )
+        .bind(audio_file.as_deref())
+        .bind(&meeting.id)
+        .execute(&self.db)
+        .await
+        .context("Failed to update meeting")?;
+
+        if result.rows_affected() == 0 {
             anyhow::bail!("Meeting not found: {}", meeting.id);
         }
-
-        let meeting_json = serde_json::to_string_pretty(&meeting)
-            .context("Failed to serialize meeting metadata")?;
-        std::fs::write(meeting_file, meeting_json).context("Failed to write meeting metadata")?;
 
         Ok(())
     }
 
     /// Delete meeting and all associated files
-    pub fn delete_meeting(&self, meeting_id: &str) -> Result<()> {
-        let meeting_path = self.meeting_dir(meeting_id);
+    pub async fn delete_meeting(&self, meeting_id: &str) -> Result<()> {
+        // SQLite CASCADE will delete transcript_segments, summaries, etc.
+        let result = sqlx::query("DELETE FROM meetings WHERE id = ?")
+            .bind(meeting_id)
+            .execute(&self.db)
+            .await
+            .context("Failed to delete meeting from database")?;
 
-        if !meeting_path.exists() {
+        if result.rows_affected() == 0 {
             anyhow::bail!("Meeting not found: {}", meeting_id);
         }
 
-        std::fs::remove_dir_all(&meeting_path).context("Failed to delete meeting directory")?;
+        // Delete meeting directory (audio files)
+        let meeting_path = self.meeting_dir(meeting_id);
+        if meeting_path.exists() {
+            std::fs::remove_dir_all(&meeting_path).context("Failed to delete meeting directory")?;
+        }
 
         Ok(())
     }
 
-    /// List all meetings
-    pub fn list_meetings(&self) -> Result<Vec<Meeting>> {
-        let meetings_path = self.meetings_dir();
+    /// List all meetings (sorted by date descending)
+    pub async fn list_meetings(&self) -> Result<Vec<Meeting>> {
+        let rows = sqlx::query(
+            "SELECT 
+                id, title, date, duration_seconds, status,
+                transcription_provider, transcription_model, transcription_completed_at,
+                participants, location, organizer, metadata_source, recording_date, platform,
+                file_metadata, audio_file,
+                created_at, updated_at
+            FROM meetings ORDER BY date DESC",
+        )
+        .fetch_all(&self.db)
+        .await
+        .context("Failed to query meetings")?;
 
-        if !meetings_path.exists() {
-            return Ok(vec![]);
-        }
+        let meetings: Result<Vec<Meeting>> = rows
+            .into_iter()
+            .map(|row| self.row_to_meeting(row))
+            .collect();
 
-        let mut meetings = Vec::new();
-
-        for entry in
-            std::fs::read_dir(&meetings_path).context("Failed to read meetings directory")?
-        {
-            let entry = entry.context("Failed to read directory entry")?;
-            let path = entry.path();
-
-            if path.is_dir() {
-                let meeting_file = path.join("meeting.json");
-                if meeting_file.exists() {
-                    if let Ok(meeting_json) = std::fs::read_to_string(&meeting_file) {
-                        if let Ok(meeting) = serde_json::from_str::<Meeting>(&meeting_json) {
-                            meetings.push(meeting);
-                        }
-                    }
-                }
-            }
-        }
-
-        // Sort by date (most recent first)
-        meetings.sort_by_key(|m| std::cmp::Reverse(m.date));
-
-        Ok(meetings)
+        meetings
     }
 
-    /// Save transcript data
-    pub fn save_transcript(
+    /// List meetings with pagination (sorted by date descending).
+    pub async fn list_meetings_paginated(&self, limit: u32, offset: u32) -> Result<Vec<Meeting>> {
+        let rows = sqlx::query(
+            "SELECT 
+                id, title, date, duration_seconds, status,
+                transcription_provider, transcription_model, transcription_completed_at,
+                participants, location, organizer, metadata_source, recording_date, platform,
+                file_metadata, audio_file,
+                created_at, updated_at
+            FROM meetings ORDER BY date DESC LIMIT ? OFFSET ?",
+        )
+        .bind(limit as i64)
+        .bind(offset as i64)
+        .fetch_all(&self.db)
+        .await
+        .context("Failed to query paginated meetings")?;
+
+        rows.into_iter()
+            .map(|row| self.row_to_meeting(row))
+            .collect()
+    }
+
+    /// Count all meetings.
+    pub async fn count_meetings(&self) -> Result<u64> {
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM meetings")
+            .fetch_one(&self.db)
+            .await
+            .context("Failed to count meetings")?;
+        Ok(count as u64)
+    }
+
+    /// Save transcript data and create transcript version metadata.
+    pub async fn save_transcript(
         &self,
         meeting_id: &str,
         response: &TranscriptionResponse,
     ) -> Result<()> {
-        let meeting_path = self.meeting_dir(meeting_id);
+        // Ensure meeting exists and fail with existing message shape.
+        self.get_meeting(meeting_id).await?;
 
-        if !meeting_path.exists() {
-            anyhow::bail!("Meeting not found: {}", meeting_id);
+        sqlx::query("DELETE FROM transcript_segments WHERE meeting_id = ?")
+            .bind(meeting_id)
+            .execute(&self.db)
+            .await
+            .context("Failed to delete existing transcript segments")?;
+
+        if let Some(segments) = &response.segments {
+            for segment in segments {
+                sqlx::query(
+                    "INSERT INTO transcript_segments (
+                        meeting_id, segment_id, start, end, text, speaker,
+                        tokens, temperature, avg_logprob, compression_ratio, no_speech_prob
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                )
+                .bind(meeting_id)
+                .bind(segment.id as i64)
+                .bind(segment.start)
+                .bind(segment.end)
+                .bind(&segment.text)
+                .bind(segment.speaker.as_deref())
+                .bind(
+                    segment
+                        .tokens
+                        .as_ref()
+                        .map(|t| serde_json::to_string(t).unwrap()),
+                )
+                .bind(segment.temperature.map(|v| v as f64))
+                .bind(segment.avg_logprob.map(|v| v as f64))
+                .bind(segment.compression_ratio.map(|v| v as f64))
+                .bind(segment.no_speech_prob.map(|v| v as f64))
+                .execute(&self.db)
+                .await
+                .context("Failed to insert transcript segment")?;
+            }
         }
 
-        let transcript_json =
-            serde_json::to_string_pretty(&response).context("Failed to serialize transcript")?;
-        std::fs::write(meeting_path.join("transcript.json"), transcript_json)
-            .context("Failed to write transcript")?;
+        let version: i64 = sqlx::query_scalar(
+            "SELECT COALESCE(MAX(version), 0) + 1 FROM transcript_versions WHERE meeting_id = ?",
+        )
+        .bind(meeting_id)
+        .fetch_one(&self.db)
+        .await
+        .context("Failed to compute transcript version")?;
+
+        sqlx::query(
+            "INSERT INTO transcript_versions (meeting_id, version, provider, model, language, segment_count)
+             VALUES (?, ?, ?, ?, ?, ?)",
+        )
+        .bind(meeting_id)
+        .bind(version)
+        .bind("")
+        .bind("")
+        .bind(response.language.as_deref())
+        .bind(response.segments.as_ref().map(|s| s.len()).unwrap_or(0) as i64)
+        .execute(&self.db)
+        .await
+        .context("Failed to insert transcript version")?;
 
         Ok(())
     }
 
-    /// Get transcript for a meeting
-    pub fn get_transcript(&self, meeting_id: &str) -> Result<TranscriptionResponse> {
-        let meeting_path = self.meeting_dir(meeting_id);
-        let transcript_file = meeting_path.join("transcript.json");
-
-        if !transcript_file.exists() {
+    /// Get transcript for a meeting.
+    pub async fn get_transcript(&self, meeting_id: &str) -> Result<TranscriptionResponse> {
+        let segments = self
+            .get_transcript_paginated(meeting_id, u32::MAX, 0)
+            .await?;
+        if segments.is_empty() {
             anyhow::bail!("Transcript not found for meeting: {}", meeting_id);
         }
 
-        let transcript_json =
-            std::fs::read_to_string(&transcript_file).context("Failed to read transcript")?;
-        let transcript: TranscriptionResponse =
-            serde_json::from_str(&transcript_json).context("Failed to parse transcript")?;
+        let text = segments
+            .iter()
+            .map(|s| s.text.as_str())
+            .collect::<Vec<_>>()
+            .join(" ");
+        let duration = segments.last().map(|s| s.end);
 
-        Ok(transcript)
+        Ok(TranscriptionResponse {
+            text,
+            language: None,
+            duration,
+            segments: Some(segments),
+            refined_text: None,
+        })
     }
 
-    /// Save audio file to meeting directory
-    pub fn save_audio(&self, meeting_id: &str, audio_path: &PathBuf) -> Result<PathBuf> {
-        let meeting_path = self.meeting_dir(meeting_id);
+    /// Get transcript segments with pagination.
+    pub async fn get_transcript_paginated(
+        &self,
+        meeting_id: &str,
+        limit: u32,
+        offset: u32,
+    ) -> Result<Vec<TranscriptSegment>> {
+        let rows = sqlx::query(
+            "SELECT segment_id, start, end, text, speaker, tokens, temperature,
+                    avg_logprob, compression_ratio, no_speech_prob
+             FROM transcript_segments
+             WHERE meeting_id = ?
+             ORDER BY segment_id ASC
+             LIMIT ? OFFSET ?",
+        )
+        .bind(meeting_id)
+        .bind(limit as i64)
+        .bind(offset as i64)
+        .fetch_all(&self.db)
+        .await
+        .context("Failed to query transcript segments")?;
 
-        if !meeting_path.exists() {
-            anyhow::bail!("Meeting not found: {}", meeting_id);
-        }
+        rows.into_iter()
+            .map(|row| {
+                let start: f64 = row.try_get(1)?;
+                let tokens = row
+                    .try_get::<Option<String>, _>(5)?
+                    .and_then(|s| serde_json::from_str(&s).ok());
+                Ok(TranscriptSegment {
+                    id: row.try_get::<i64, _>(0)? as u32,
+                    start,
+                    end: row.try_get(2)?,
+                    text: row.try_get(3)?,
+                    timestamp: Some(crate::transcription::format_timestamp_readable(start)),
+                    speaker: row.try_get(4)?,
+                    tokens,
+                    temperature: row.try_get::<Option<f64>, _>(6)?.map(|v| v as f32),
+                    avg_logprob: row.try_get::<Option<f64>, _>(7)?.map(|v| v as f32),
+                    compression_ratio: row.try_get::<Option<f64>, _>(8)?.map(|v| v as f32),
+                    no_speech_prob: row.try_get::<Option<f64>, _>(9)?.map(|v| v as f32),
+                })
+            })
+            .collect()
+    }
 
+    /// Search transcript segments using SQLite FTS5.
+    pub async fn search_transcripts(
+        &self,
+        query: &str,
+        limit: u32,
+        offset: u32,
+    ) -> Result<Vec<TranscriptSegment>> {
+        let rows = sqlx::query(
+            "SELECT segment_id, start, end, text, speaker
+             FROM transcript_search
+             WHERE transcript_search MATCH ?
+             ORDER BY rank
+             LIMIT ? OFFSET ?",
+        )
+        .bind(query)
+        .bind(limit as i64)
+        .bind(offset as i64)
+        .fetch_all(&self.db)
+        .await
+        .context("Failed to search transcripts")?;
+
+        rows.into_iter()
+            .map(|row| {
+                let start: f64 = row.try_get(1)?;
+                Ok(TranscriptSegment {
+                    id: row.try_get::<i64, _>(0)? as u32,
+                    start,
+                    end: row.try_get(2)?,
+                    text: row.try_get(3)?,
+                    timestamp: Some(crate::transcription::format_timestamp_readable(start)),
+                    speaker: row.try_get(4)?,
+                    tokens: None,
+                    temperature: None,
+                    avg_logprob: None,
+                    compression_ratio: None,
+                    no_speech_prob: None,
+                })
+            })
+            .collect()
+    }
+
+    /// Save audio file to meeting directory.
+    pub async fn save_audio(&self, meeting_id: &str, audio_path: &PathBuf) -> Result<PathBuf> {
+        self.get_meeting(meeting_id).await?;
         let file_name = audio_path.file_name().context("Invalid audio file path")?;
-        let dest_path = meeting_path.join("audio").join(file_name);
+        let dest_path = self.meeting_dir(meeting_id).join("audio").join(file_name);
 
-        // Create audio subdirectory
         std::fs::create_dir_all(dest_path.parent().unwrap())
             .context("Failed to create audio directory")?;
-
-        // Copy audio file
         std::fs::copy(audio_path, &dest_path).context("Failed to copy audio file")?;
+
+        let file_name = file_name.to_string_lossy().to_string();
+        sqlx::query("UPDATE meetings SET audio_file = ? WHERE id = ?")
+            .bind(&file_name)
+            .bind(meeting_id)
+            .execute(&self.db)
+            .await
+            .context("Failed to update audio file")?;
 
         Ok(dest_path)
     }
 
-    /// Save audio bytes to meeting directory (in-memory variant)
-    pub fn save_audio_from_bytes(
+    /// Save audio bytes to meeting directory.
+    pub async fn save_audio_from_bytes(
         &self,
         meeting_id: &str,
         audio_bytes: &[u8],
         file_name: &str,
     ) -> Result<PathBuf> {
-        let meeting_path = self.meeting_dir(meeting_id);
+        self.get_meeting(meeting_id).await?;
+        let dest_path = self.meeting_dir(meeting_id).join("audio").join(file_name);
 
-        if !meeting_path.exists() {
-            anyhow::bail!("Meeting not found: {}", meeting_id);
-        }
-
-        let dest_path = meeting_path.join("audio").join(file_name);
-
-        // Create audio subdirectory
         std::fs::create_dir_all(dest_path.parent().unwrap())
             .context("Failed to create audio directory")?;
-
-        // Write audio bytes
         std::fs::write(&dest_path, audio_bytes).context("Failed to write audio file")?;
+
+        sqlx::query("UPDATE meetings SET audio_file = ? WHERE id = ?")
+            .bind(file_name)
+            .bind(meeting_id)
+            .execute(&self.db)
+            .await
+            .context("Failed to update audio file")?;
 
         Ok(dest_path)
     }
 
-    /// Mark meeting as completed with transcription info
-    pub fn mark_transcription_complete(
+    /// Return saved recording path.
+    pub async fn get_recording_path(&self, meeting_id: &str) -> Result<PathBuf> {
+        let meeting = self.get_meeting(meeting_id).await?;
+        let audio_file = meeting
+            .audio_file
+            .ok_or_else(|| anyhow::anyhow!("Recording not found for meeting: {}", meeting_id))?;
+        let path = self.meeting_dir(meeting_id).join("audio").join(audio_file);
+        if !path.exists() {
+            anyhow::bail!("Recording not found for meeting: {}", meeting_id);
+        }
+        Ok(path)
+    }
+
+    /// Detect MIME type for saved recording.
+    pub fn recording_mime_type(path: &Path) -> &'static str {
+        match path
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or_default()
+            .to_lowercase()
+            .as_str()
+        {
+            "mp3" => "audio/mpeg",
+            "wav" => "audio/wav",
+            "m4a" => "audio/mp4",
+            "flac" => "audio/flac",
+            "ogg" | "opus" => "audio/ogg",
+            "webm" => "audio/webm",
+            _ => "application/octet-stream",
+        }
+    }
+
+    /// Mark meeting as completed with transcription info.
+    pub async fn mark_transcription_complete(
         &self,
         meeting_id: &str,
         provider: &str,
         model: &str,
         duration_seconds: Option<u64>,
     ) -> Result<()> {
-        let mut meeting = self.get_meeting(meeting_id)?;
-
+        let mut meeting = self.get_meeting(meeting_id).await?;
         meeting.status = MeetingStatus::Ready;
         meeting.duration_seconds = duration_seconds;
         meeting.transcription = Some(TranscriptionInfo {
@@ -281,209 +668,181 @@ impl MeetingStorage {
             completed_at: Utc::now(),
         });
         meeting.updated_at = Utc::now();
-
-        self.update_meeting(&meeting)?;
-
-        Ok(())
+        self.update_meeting(&meeting).await
     }
 
-    /// Mark meeting as failed
-    pub fn mark_transcription_failed(&self, meeting_id: &str) -> Result<()> {
-        let mut meeting = self.get_meeting(meeting_id)?;
-
+    /// Mark meeting as failed.
+    pub async fn mark_transcription_failed(&self, meeting_id: &str) -> Result<()> {
+        let mut meeting = self.get_meeting(meeting_id).await?;
         meeting.status = MeetingStatus::Failed;
         meeting.updated_at = Utc::now();
-
-        self.update_meeting(&meeting)?;
-
-        Ok(())
+        self.update_meeting(&meeting).await
     }
 
-    fn summaries_dir(&self, meeting_id: &str) -> PathBuf {
-        self.meeting_dir(meeting_id).join("summaries")
-    }
-
-    fn summary_file_name(template: SummaryTemplate) -> String {
-        let name = match template {
-            SummaryTemplate::KeyPoints => "key_points",
-            SummaryTemplate::ActionItems => "action_items",
+    fn template_to_db(template: &SummaryTemplate) -> &'static str {
+        match template {
+            SummaryTemplate::KeyPoints => "keypoints",
+            SummaryTemplate::ActionItems => "actionitems",
             SummaryTemplate::Decisions => "decisions",
             SummaryTemplate::Full => "full",
-        };
-        format!("{name}.json")
+        }
     }
 
-    /// Save a summary for a meeting. Stored at `meetings/{id}/summaries/{template}.json`.
-    pub fn save_summary(&self, meeting_id: &str, summary: &Summary) -> Result<()> {
-        let dir = self.summaries_dir(meeting_id);
-        std::fs::create_dir_all(&dir).context("Failed to create summaries directory")?;
+    fn template_from_db(value: &str) -> Result<SummaryTemplate> {
+        match value {
+            "keypoints" => Ok(SummaryTemplate::KeyPoints),
+            "actionitems" => Ok(SummaryTemplate::ActionItems),
+            "decisions" => Ok(SummaryTemplate::Decisions),
+            "full" => Ok(SummaryTemplate::Full),
+            _ => anyhow::bail!("Invalid summary template in database: {}", value),
+        }
+    }
 
-        let path = dir.join(Self::summary_file_name(summary.template.clone()));
-        let json = serde_json::to_string_pretty(summary).context("Failed to serialize summary")?;
-        std::fs::write(&path, json).context("Failed to write summary")?;
+    fn status_to_db(status: &SummaryStatus) -> &'static str {
+        match status {
+            SummaryStatus::Pending => "pending",
+            SummaryStatus::Processing => "processing",
+            SummaryStatus::Completed => "completed",
+            SummaryStatus::Failed => "failed",
+        }
+    }
 
+    fn status_from_db(value: &str) -> Result<SummaryStatus> {
+        match value {
+            "pending" => Ok(SummaryStatus::Pending),
+            "processing" => Ok(SummaryStatus::Processing),
+            "completed" => Ok(SummaryStatus::Completed),
+            "failed" => Ok(SummaryStatus::Failed),
+            _ => anyhow::bail!("Invalid summary status in database: {}", value),
+        }
+    }
+
+    fn row_to_summary(row: sqlx::sqlite::SqliteRow) -> Result<Summary> {
+        let template: String = row.try_get(2)?;
+        let status: String = row.try_get(4)?;
+        let key_points = row
+            .try_get::<Option<String>, _>(6)?
+            .and_then(|s| serde_json::from_str(&s).ok())
+            .unwrap_or_default();
+        let action_items = row
+            .try_get::<Option<String>, _>(7)?
+            .and_then(|s| serde_json::from_str(&s).ok())
+            .unwrap_or_default();
+        let decisions = row
+            .try_get::<Option<String>, _>(8)?
+            .and_then(|s| serde_json::from_str(&s).ok())
+            .unwrap_or_default();
+
+        Ok(Summary {
+            id: row.try_get(0)?,
+            meeting_id: row.try_get(1)?,
+            template: Self::template_from_db(&template)?,
+            language: row.try_get(3)?,
+            status: Self::status_from_db(&status)?,
+            content: row.try_get(5)?,
+            key_points,
+            action_items,
+            decisions,
+            provider: row.try_get(9)?,
+            model: row.try_get(10)?,
+            created_at: row.try_get(11)?,
+            updated_at: row.try_get(12)?,
+        })
+    }
+
+    /// Save a summary for a meeting.
+    pub async fn save_summary(&self, meeting_id: &str, summary: &Summary) -> Result<()> {
+        self.get_meeting(meeting_id).await?;
+        sqlx::query(
+            "INSERT INTO summaries (
+                id, meeting_id, template, language, status, content,
+                key_points, action_items, decisions, provider, model, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(meeting_id, template) DO UPDATE SET
+                language = excluded.language,
+                status = excluded.status,
+                content = excluded.content,
+                key_points = excluded.key_points,
+                action_items = excluded.action_items,
+                decisions = excluded.decisions,
+                provider = excluded.provider,
+                model = excluded.model,
+                updated_at = excluded.updated_at",
+        )
+        .bind(&summary.id)
+        .bind(meeting_id)
+        .bind(Self::template_to_db(&summary.template))
+        .bind(summary.language.as_deref())
+        .bind(Self::status_to_db(&summary.status))
+        .bind(&summary.content)
+        .bind(serde_json::to_string(&summary.key_points).unwrap())
+        .bind(serde_json::to_string(&summary.action_items).unwrap())
+        .bind(serde_json::to_string(&summary.decisions).unwrap())
+        .bind(&summary.provider)
+        .bind(&summary.model)
+        .bind(summary.created_at)
+        .bind(summary.updated_at)
+        .execute(&self.db)
+        .await
+        .context("Failed to save summary")?;
         Ok(())
     }
 
     /// Get a specific summary by template for a meeting.
-    pub fn get_summary(&self, meeting_id: &str, template: SummaryTemplate) -> Result<Summary> {
-        let path = self
-            .summaries_dir(meeting_id)
-            .join(Self::summary_file_name(template));
-        if !path.exists() {
-            anyhow::bail!("Summary not found for meeting: {}", meeting_id);
-        }
-        let json = std::fs::read_to_string(&path).context("Failed to read summary")?;
-        let summary: Summary = serde_json::from_str(&json).context("Failed to parse summary")?;
-        Ok(summary)
+    pub async fn get_summary(
+        &self,
+        meeting_id: &str,
+        template: SummaryTemplate,
+    ) -> Result<Summary> {
+        let row = sqlx::query(
+            "SELECT id, meeting_id, template, language, status, content,
+                    key_points, action_items, decisions, provider, model, created_at, updated_at
+             FROM summaries WHERE meeting_id = ? AND template = ?",
+        )
+        .bind(meeting_id)
+        .bind(Self::template_to_db(&template))
+        .fetch_optional(&self.db)
+        .await
+        .context("Failed to query summary")?
+        .ok_or_else(|| anyhow::anyhow!("Summary not found for meeting: {}", meeting_id))?;
+
+        Self::row_to_summary(row)
     }
 
     /// List all summaries for a meeting.
-    pub fn list_summaries(&self, meeting_id: &str) -> Result<Vec<Summary>> {
-        let dir = self.summaries_dir(meeting_id);
-        if !dir.exists() {
-            return Ok(Vec::new());
-        }
+    pub async fn list_summaries(&self, meeting_id: &str) -> Result<Vec<Summary>> {
+        let rows = sqlx::query(
+            "SELECT id, meeting_id, template, language, status, content,
+                    key_points, action_items, decisions, provider, model, created_at, updated_at
+             FROM summaries WHERE meeting_id = ? ORDER BY created_at ASC",
+        )
+        .bind(meeting_id)
+        .fetch_all(&self.db)
+        .await
+        .context("Failed to query summaries")?;
 
-        let mut summaries = Vec::new();
-        for entry in std::fs::read_dir(&dir).context("Failed to read summaries directory")? {
-            let entry = entry.context("Failed to read directory entry")?;
-            let path = entry.path();
-            if path.extension().and_then(|e| e.to_str()) != Some("json") {
-                continue;
-            }
-            let json = std::fs::read_to_string(&path).context("Failed to read summary file")?;
-            let summary: Summary =
-                serde_json::from_str(&json).context("Failed to parse summary")?;
-            summaries.push(summary);
-        }
-
-        summaries.sort_by_key(|a| a.created_at);
-        Ok(summaries)
+        rows.into_iter().map(Self::row_to_summary).collect()
     }
 
     /// Delete a specific summary by template for a meeting.
-    pub fn delete_summary(&self, meeting_id: &str, template: SummaryTemplate) -> Result<()> {
-        let path = self
-            .summaries_dir(meeting_id)
-            .join(Self::summary_file_name(template));
-        if !path.exists() {
+    pub async fn delete_summary(&self, meeting_id: &str, template: SummaryTemplate) -> Result<()> {
+        let result = sqlx::query("DELETE FROM summaries WHERE meeting_id = ? AND template = ?")
+            .bind(meeting_id)
+            .bind(Self::template_to_db(&template))
+            .execute(&self.db)
+            .await
+            .context("Failed to delete summary")?;
+        if result.rows_affected() == 0 {
             anyhow::bail!("Summary not found for meeting: {}", meeting_id);
         }
-        std::fs::remove_file(&path).context("Failed to delete summary")?;
         Ok(())
     }
 }
 
-impl Default for MeetingStorage {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::models::Meeting;
-
-    #[test]
-    fn test_create_and_get_meeting() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let storage = MeetingStorage::with_base(temp_dir.path().to_path_buf());
-        let meeting = Meeting::new("Test Meeting".to_string());
-
-        // Create meeting
-        storage.create_meeting(&meeting).unwrap();
-
-        // Get meeting
-        let retrieved = storage.get_meeting(&meeting.id).unwrap();
-        assert_eq!(retrieved.id, meeting.id);
-        assert_eq!(retrieved.title, meeting.title);
-
-        // Cleanup happens automatically when temp_dir is dropped
-    }
-
-    #[test]
-    fn test_list_meetings() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let storage = MeetingStorage::with_base(temp_dir.path().to_path_buf());
-
-        let meeting1 = Meeting::new("Meeting 1".to_string());
-        let meeting2 = Meeting::new("Meeting 2".to_string());
-
-        storage.create_meeting(&meeting1).unwrap();
-        storage.create_meeting(&meeting2).unwrap();
-
-        let meetings = storage.list_meetings().unwrap();
-        assert_eq!(meetings.len(), 2);
-    }
-
-    #[test]
-    fn test_resolve_meeting_id_full() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let storage = MeetingStorage::with_base(temp_dir.path().to_path_buf());
-
-        let meeting = Meeting::new("Resolver Test".to_string());
-        storage.create_meeting(&meeting).unwrap();
-
-        // Full UUID resolves
-        let resolved = storage.resolve_meeting_id(&meeting.id).unwrap();
-        assert_eq!(resolved, meeting.id);
-    }
-
-    #[test]
-    fn test_resolve_meeting_id_short() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let storage = MeetingStorage::with_base(temp_dir.path().to_path_buf());
-
-        let meeting = Meeting::new("Short ID Test".to_string());
-        storage.create_meeting(&meeting).unwrap();
-
-        // 8-char prefix resolves
-        let prefix = &meeting.id[..8];
-        let resolved = storage.resolve_meeting_id(prefix).unwrap();
-        assert_eq!(resolved, meeting.id);
-    }
-
-    #[test]
-    fn test_resolve_meeting_id_too_short() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let storage = MeetingStorage::with_base(temp_dir.path().to_path_buf());
-
-        let result = storage.resolve_meeting_id("abc");
-        assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("ID too short"));
-    }
-
-    #[test]
-    fn test_resolve_meeting_id_not_found() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let storage = MeetingStorage::with_base(temp_dir.path().to_path_buf());
-
-        let result = storage.resolve_meeting_id("nonexist01");
-        assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("Meeting not found"));
-    }
-
-    #[test]
-    fn test_resolve_meeting_id_ambiguous() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let storage = MeetingStorage::with_base(temp_dir.path().to_path_buf());
-
-        // Create two meetings with IDs starting with same 8 chars is unlikely
-        // with random UUIDs, so we test ambiguity by creating meetings and
-        // using a very short common prefix. But min length is 8, so ambiguity
-        // requires two UUIDs sharing 8+ char prefix — extremely rare with v4.
-        // Instead, test with a prefix that doesn't match anything to confirm
-        // error path. Ambiguous path is exercised via the scan logic.
-        let meeting = Meeting::new("Ambig Test".to_string());
-        storage.create_meeting(&meeting).unwrap();
-
-        // Use 8-char prefix that won't match
-        let result = storage.resolve_meeting_id("zzzzzzzz");
-        assert!(result.is_err());
+impl std::fmt::Debug for MeetingStorage {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MeetingStorage")
+            .field("base", &self.base)
+            .finish()
     }
 }

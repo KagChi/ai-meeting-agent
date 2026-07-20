@@ -24,9 +24,12 @@ pub async fn run(id: String, template: String, language: Option<String>) -> Resu
         }
     };
 
-    let storage = MeetingStorage::new();
-    let full_id = storage.resolve_meeting_id(&id)?;
-    let meeting = storage.get_meeting(&full_id)?;
+    let storage = MeetingStorage::new().await?;
+    let full_id = storage
+        .resolve_meeting_id(&id)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("Meeting not found: {}", id))?;
+    let meeting = storage.get_meeting(&full_id).await?;
 
     if meeting.status != MeetingStatus::Ready {
         anyhow::bail!(
@@ -35,7 +38,7 @@ pub async fn run(id: String, template: String, language: Option<String>) -> Resu
         );
     }
 
-    let transcript_resp = storage.get_transcript(&full_id)?;
+    let transcript_resp = storage.get_transcript(&full_id).await?;
 
     let config_path = fs::config_path()?;
     let config = Config::load(&config_path)?;
@@ -74,7 +77,7 @@ pub async fn run(id: String, template: String, language: Option<String>) -> Resu
         created_at: now,
         updated_at: now,
     };
-    storage.save_summary(&full_id, &summary)?;
+    storage.save_summary(&full_id, &summary).await?;
 
     println!(
         "\n{} {}",

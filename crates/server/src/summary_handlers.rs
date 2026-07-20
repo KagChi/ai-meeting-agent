@@ -35,7 +35,7 @@ pub async fn create_summary(
 ) -> Result<axum::response::Response, ApiError> {
     validation::validate_uuid(&meeting_id)?;
 
-    let meeting = state.storage.get_meeting(&meeting_id)?;
+    let meeting = state.storage.get_meeting(&meeting_id).await?;
 
     if meeting.status != MeetingStatus::Ready {
         return Err(ApiError::Conflict(format!(
@@ -114,8 +114,8 @@ pub async fn list_summaries(
     Path(meeting_id): Path<String>,
 ) -> Result<Json<ListSummariesResponse>, ApiError> {
     validation::validate_uuid(&meeting_id)?;
-    let _meeting = state.storage.get_meeting(&meeting_id)?;
-    let summaries = state.storage.list_summaries(&meeting_id)?;
+    let _meeting = state.storage.get_meeting(&meeting_id).await?;
+    let summaries = state.storage.list_summaries(&meeting_id).await?;
     Ok(Json(ListSummariesResponse {
         meeting_id,
         summaries,
@@ -141,10 +141,10 @@ pub async fn get_summary(
     Path((meeting_id, template)): Path<(String, String)>,
 ) -> Result<Json<SummaryResponse>, ApiError> {
     validation::validate_uuid(&meeting_id)?;
-    let _meeting = state.storage.get_meeting(&meeting_id)?;
+    let _meeting = state.storage.get_meeting(&meeting_id).await?;
 
     let template = parse_template(&template)?;
-    let summary = state.storage.get_summary(&meeting_id, template)?;
+    let summary = state.storage.get_summary(&meeting_id, template).await?;
     Ok(Json(SummaryResponse { summary }))
 }
 

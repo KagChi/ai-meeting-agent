@@ -14,12 +14,12 @@ pub struct AppState {
 }
 
 impl AppState {
-    pub fn new(config: Config) -> Self {
-        Self {
-            storage: Arc::new(MeetingStorage::new()),
+    pub async fn new(config: Config) -> anyhow::Result<Self> {
+        Ok(Self {
+            storage: Arc::new(MeetingStorage::new().await?),
             jobs: Arc::new(JobRegistry::new()),
             config_path: fs::config_path().expect("Failed to determine config path"),
             config: Arc::new(RwLock::new(config)),
-        }
+        })
     }
 }

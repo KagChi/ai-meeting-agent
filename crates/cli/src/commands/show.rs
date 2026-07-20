@@ -3,10 +3,13 @@ use colored::Colorize;
 use meeting_agent_core::{models::MeetingStatus, MeetingStorage};
 
 pub async fn run(id: String) -> Result<()> {
-    let storage = MeetingStorage::new();
+    let storage = MeetingStorage::new().await?;
 
-    let full_id = storage.resolve_meeting_id(&id)?;
-    let meeting = storage.get_meeting(&full_id)?;
+    let full_id = storage
+        .resolve_meeting_id(&id)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("Meeting not found: {}", id))?;
+    let meeting = storage.get_meeting(&full_id).await?;
 
     println!("{}", "Meeting Details".bold().green());
     println!("{}", "─".repeat(50));
@@ -50,7 +53,7 @@ pub async fn run(id: String) -> Result<()> {
         meeting.updated_at.format("%Y-%m-%d %H:%M:%S UTC")
     );
 
-    if let Ok(resp) = storage.get_transcript(&full_id) {
+    if let Ok(resp) = storage.get_transcript(&full_id).await {
         println!("\n{}", "Transcript Preview:".bold().green());
         println!("{}", "─".repeat(50));
         let preview = if resp.text.len() > 500 {
@@ -61,7 +64,7 @@ pub async fn run(id: String) -> Result<()> {
         println!("{}", preview);
     }
 
-    if let Ok(summaries) = storage.list_summaries(&full_id) {
+    if let Ok(summaries) = storage.list_summaries(&full_id).await {
         if !summaries.is_empty() {
             println!("\n{}", "Summaries:".bold().green());
             for s in &summaries {

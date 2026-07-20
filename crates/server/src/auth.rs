@@ -82,7 +82,7 @@ mod tests {
     async fn test_auth_with_valid_key() {
         let mut config = Config::default();
         config.server.api_key = Some("test-key".to_string());
-        let state = AppState::new(config);
+        let state = AppState::new(config).await.unwrap();
 
         let app = Router::new()
             .route("/test", get(dummy_handler))
@@ -106,7 +106,7 @@ mod tests {
     async fn test_auth_with_invalid_key() {
         let mut config = Config::default();
         config.server.api_key = Some("test-key".to_string());
-        let state = AppState::new(config);
+        let state = AppState::new(config).await.unwrap();
 
         let app = Router::new()
             .route("/test", get(dummy_handler))
@@ -130,7 +130,7 @@ mod tests {
     async fn test_auth_with_missing_key() {
         let mut config = Config::default();
         config.server.api_key = Some("test-key".to_string());
-        let state = AppState::new(config);
+        let state = AppState::new(config).await.unwrap();
 
         let app = Router::new()
             .route("/test", get(dummy_handler))
@@ -149,7 +149,7 @@ mod tests {
     #[tokio::test]
     async fn test_auth_open_access() {
         let config = Config::default(); // No API key
-        let state = AppState::new(config);
+        let state = AppState::new(config).await.unwrap();
 
         let app = Router::new()
             .route("/test", get(dummy_handler))

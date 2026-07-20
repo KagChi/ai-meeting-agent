@@ -58,6 +58,7 @@ pub fn build_router(state: AppState) -> Router {
                 .patch(handlers::update_meeting)
                 .delete(handlers::delete_meeting),
         )
+        .route("/meetings/:id/recording", get(handlers::get_recording))
         .route("/meetings/:id/transcript", get(handlers::get_transcript))
         .route(
             "/meetings/:id/summary",
@@ -87,7 +88,7 @@ pub fn build_router(state: AppState) -> Router {
         .merge(public_routes)
         .merge(protected_routes)
         .with_state(state)
-        .layer(DefaultBodyLimit::max(2 * 1024 * 1024 * 1024)) // 2GB max body size (video files)
+        .layer(DefaultBodyLimit::max(2 * 1024 * 1024 * 1024)) // 2GB max recording size
         .layer(CorsLayer::permissive())
         .layer(TraceLayer::new_for_http())
         .layer(middleware::from_fn(logging::log_request))
@@ -99,7 +100,7 @@ pub async fn run(config: meeting_agent_core::Config) -> anyhow::Result<()> {
     let host_str = config.server.host.clone();
     let port = config.server.port;
 
-    let state = AppState::new(config);
+    let state = AppState::new(config).await?;
     let app = build_router(state);
 
     let host: std::net::IpAddr = host_str

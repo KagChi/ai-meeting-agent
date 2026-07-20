@@ -145,8 +145,8 @@ pub fn chunk_audio(path: &Path, segment_seconds: f64) -> Result<Vec<PathBuf>> {
 
 /// Convert audio bytes to WAV format in memory
 ///
-/// Takes raw audio bytes (audio or video file) as input and returns WAV-encoded bytes.
-/// For video files, only the audio track is extracted; video frames are discarded (-vn).
+/// Takes raw recording bytes as input and returns WAV-encoded bytes.
+/// Non-audio streams are discarded (-vn).
 /// Uses FFmpeg with pipe:0 (stdin) and pipe:1 (stdout) for in-memory processing.
 /// No temporary files are created.
 ///

@@ -54,7 +54,13 @@ Version information. No authentication required.
 
 ### `GET /meetings`
 
-List all meetings.
+List all meetings with optional pagination.
+
+**Query Parameters:**
+| Name | Type | Default | Description |
+|------|------|---------|-------------|
+| `limit` | integer | 20 | Number of results (1-100) |
+| `offset` | integer | 0 | Number of results to skip |
 
 **Response:** `200 OK`
 ```json
@@ -66,15 +72,20 @@ List all meetings.
       "date": "2026-07-01T03:40:00Z",
       "duration_seconds": 3600,
       "status": "ready",
+      "audio_file": "http://example.com/meetings/550e8400-e29b-41d4-a716-446655440000/recording",
       "transcription": {
         "provider": "openai",
         "model": "whisper-1",
-        "completed_at": "2026-07-01T03:50:00Z"
+        "completed_at": "2026-07-01T03:50:00Z",
+        "version": 1
       },
       "created_at": "2026-07-01T03:40:00Z",
       "updated_at": "2026-07-01T03:50:00Z"
     }
-  ]
+  ],
+  "total": 42,
+  "limit": 20,
+  "offset": 0
 }
 ```
 
@@ -159,13 +170,63 @@ Delete a meeting and all associated files (audio, transcript, summaries).
 **Errors:**
 - `404 Not Found` — meeting not found
 
+### `GET /meetings/{id}/metadata`
+
+Get structured metadata for a meeting (participants, location, organizer, etc.).
+
+**Response:** `200 OK`
+```json
+{
+  "meeting_id": "550e8400-e29b-41d4-a716-446655440000",
+  "participants": ["Alice", "Bob", "Charlie"],
+  "location": "Conference Room A",
+  "organizer": "Alice",
+  "metadata_source": "manual",
+  "recording_date": "2026-07-01T03:40:00Z",
+  "platform": "zoom",
+  "file_metadata": {
+    "original_filename": "meeting.mp3",
+    "size_bytes": 5242880,
+    "duration_seconds": 3600
+  }
+}
+```
+
+**Errors:**
+- `404 Not Found` — meeting not found
+
+### `GET /meetings/{id}/recording`
+
+Download the audio recording file for a meeting.
+
+**Response:** `200 OK` with appropriate `Content-Type` header:
+- `audio/mpeg` for `.mp3`
+- `audio/wav` for `.wav`
+- `audio/mp4` for `.m4a`
+- `audio/flac` for `.flac`
+- `audio/ogg` for `.ogg`/`.opus`
+- `audio/webm` for `.webm`
+
+**Headers:**
+- `Content-Type`: Detected MIME type based on file extension
+- `Content-Disposition`: `attachment; filename="<original-filename>"`
+
+**Errors:**
+- `404 Not Found` — meeting or recording file not found
+
 ---
 
 ## Transcripts
 
 ### `GET /meetings/{id}/transcript`
 
-Get the transcript for a meeting.
+Get the transcript for a meeting with optional pagination.
+
+**Query Parameters:**
+| Name | Type | Default | Description |
+|------|------|---------|-------------|
+| `limit` | integer | 100 | Number of segments to return (1-1000) |
+| `offset` | integer | 0 | Number of segments to skip |
 
 **Response:** `200 OK`
 ```json
@@ -188,13 +249,58 @@ Get the transcript for a meeting.
         "text": "Today we'll discuss the roadmap."
       }
     ]
-  }
+  },
+  "total_segments": 150,
+  "limit": 100,
+  "offset": 0
 }
 ```
 
 If no transcript exists yet, `transcript` is `null`.
 
 **Errors:**
+- `404 Not Found` — meeting not found
+
+### `GET /meetings/{id}/transcript/search`
+
+Full-text search across transcript segments using SQLite FTS5.
+
+**Query Parameters:**
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| `q` | string | Yes | Search query (supports FTS5 syntax) |
+| `limit` | integer | No | Max results (default 50, max 500) |
+| `offset` | integer | No | Results to skip (default 0) |
+
+**Response:** `200 OK`
+```json
+{
+  "meeting_id": "550e8400-e29b-41d4-a716-446655440000",
+  "query": "roadmap",
+  "results": [
+    {
+      "segment_id": 1,
+      "start": 5.32,
+      "end": 12.10,
+      "text": "Today we'll discuss the roadmap.",
+      "rank": 0.85
+    },
+    {
+      "segment_id": 42,
+      "start": 120.5,
+      "end": 128.3,
+      "text": "The roadmap for Q4 includes three major features.",
+      "rank": 0.72
+    }
+  ],
+  "total": 2,
+  "limit": 50,
+  "offset": 0
+}
+```
+
+**Errors:**
+- `400 Bad Request` — missing or invalid query
 - `404 Not Found` — meeting not found
 
 ---
