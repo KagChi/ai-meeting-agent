@@ -486,6 +486,7 @@ mod tests {
             start,
             end: start + 1.0,
             text: text.to_string(),
+            timestamp: None,
             tokens: None,
             temperature: None,
             avg_logprob: None,

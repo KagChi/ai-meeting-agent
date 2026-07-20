@@ -10,7 +10,7 @@ pub async fn run(id: String, format: String, output: Option<String>) -> Result<(
     let content = match format.as_str() {
         "srt" => to_srt(&resp),
         "vtt" => to_vtt(&resp),
-        "text" => resp.text,
+        "text" => to_text_with_timestamps(&resp),
         "json" => serde_json::to_string_pretty(&resp)?,
         other => anyhow::bail!("Unknown format: {}. Use: srt, vtt, text, json", other),
     };
@@ -63,4 +63,16 @@ fn to_vtt(resp: &TranscriptionResponse) -> String {
         ));
     }
     out
+}
+
+fn to_text_with_timestamps(resp: &TranscriptionResponse) -> String {
+    let segments = resp.segments.as_deref().unwrap_or(&[]);
+    segments
+        .iter()
+        .map(|s| {
+            let ts = s.get_timestamp();
+            format!("{} {}", ts, s.text.trim())
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }

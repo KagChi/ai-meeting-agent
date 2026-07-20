@@ -8,6 +8,14 @@ use serde_json::Value;
 use std::path::Path;
 use std::time::Duration;
 
+/// Format seconds as [HH:MM:SS] without milliseconds
+pub fn format_timestamp_readable(seconds: f64) -> String {
+    let h = (seconds / 3600.0) as u32;
+    let m = ((seconds % 3600.0) / 60.0) as u32;
+    let s = (seconds % 60.0) as u32;
+    format!("[{:02}:{:02}:{:02}]", h, m, s)
+}
+
 /// Transcription client that communicates with OpenAI-compatible APIs
 pub struct TranscriptionClient {
     client: reqwest::Client,
@@ -79,6 +87,9 @@ pub struct TranscriptSegment {
     pub start: f64,
     pub end: f64,
     pub text: String,
+    /// Human-readable timestamp in [HH:MM:SS] format
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timestamp: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tokens: Option<Vec<u32>>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -93,6 +104,15 @@ pub struct TranscriptSegment {
     /// or no overlap was found). speakrs emits labels like "SPEAKER_00".
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub speaker: Option<String>,
+}
+
+impl TranscriptSegment {
+    /// Get human-readable timestamp, computing from start if not present
+    pub fn get_timestamp(&self) -> String {
+        self.timestamp
+            .clone()
+            .unwrap_or_else(|| format_timestamp_readable(self.start))
+    }
 }
 
 /// Deserialize `Option<f64>` tolerating number, numeric string, or null/missing.
@@ -134,9 +154,18 @@ fn parse_response(raw: &str) -> Result<TranscriptionResponse> {
     );
 
     if val.get("segments").is_some() {
-        // OpenAI verbose_json shape
-        serde_json::from_value::<TranscriptionResponse>(val)
-            .context("Failed to parse OpenAI transcription response")
+        // OpenAI verbose_json shape - deserialize then add timestamps
+        let mut resp: TranscriptionResponse = serde_json::from_value(val)
+            .context("Failed to parse OpenAI transcription response")?;
+        
+        // Add human-readable timestamps to segments
+        if let Some(ref mut segments) = resp.segments {
+            for seg in segments.iter_mut() {
+                seg.timestamp = Some(format_timestamp_readable(seg.start));
+            }
+        }
+        
+        Ok(resp)
     } else if val.get("chunks").is_some() {
         // faster-whisper shape: { text, chunks: [{ text, timestamp: [start, end] }] }
         let text = val
@@ -165,6 +194,7 @@ fn parse_response(raw: &str) -> Result<TranscriptionResponse> {
                         .and_then(|t| t.as_str())
                         .unwrap_or("")
                         .to_string(),
+                    timestamp: Some(format_timestamp_readable(start)),
                     tokens: None,
                     temperature: None,
                     avg_logprob: None,
@@ -847,11 +877,13 @@ fn merge_chunk_responses(
 
         if let Some(segments) = &resp.segments {
             for seg in segments {
+                let adjusted_start = seg.start + offset;
                 all_segments.push(TranscriptSegment {
                     id: global_id,
-                    start: seg.start + offset,
+                    start: adjusted_start,
                     end: seg.end + offset,
                     text: seg.text.clone(),
+                    timestamp: Some(format_timestamp_readable(adjusted_start)),
                     tokens: seg.tokens.clone(),
                     temperature: seg.temperature,
                     avg_logprob: seg.avg_logprob,
@@ -1010,6 +1042,7 @@ mod tests {
                     start: 0.0,
                     end: 2.0,
                     text: "hello".to_string(),
+                    timestamp: None,
                     tokens: None,
                     temperature: None,
                     avg_logprob: None,
@@ -1022,6 +1055,7 @@ mod tests {
                     start: 2.0,
                     end: 4.0,
                     text: "there".to_string(),
+                    timestamp: None,
                     tokens: None,
                     temperature: None,
                     avg_logprob: None,
@@ -1042,6 +1076,7 @@ mod tests {
                     start: 0.0,
                     end: 1.5,
                     text: "general".to_string(),
+                    timestamp: None,
                     tokens: None,
                     temperature: None,
                     avg_logprob: None,
@@ -1054,6 +1089,7 @@ mod tests {
                     start: 1.5,
                     end: 3.0,
                     text: "kenobi".to_string(),
+                    timestamp: None,
                     tokens: None,
                     temperature: None,
                     avg_logprob: None,
@@ -1101,6 +1137,7 @@ mod tests {
                 start: 5.0,
                 end: 10.0,
                 text: "only".to_string(),
+                timestamp: None,
                 tokens: None,
                 temperature: None,
                 avg_logprob: None,
