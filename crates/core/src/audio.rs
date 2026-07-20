@@ -21,9 +21,10 @@ pub fn convert_to_wav(input_path: &Path) -> Result<PathBuf> {
     let temp_dir = std::env::temp_dir();
     let output_path = temp_dir.join(format!("meeting-agent-{}.wav", uuid::Uuid::new_v4()));
 
-    // Convert using ffmpeg-sidecar
+    // Path-based FFmpeg: seekable input (required for m4a/mp4 moov atoms)
     let status = FfmpegCommand::new()
         .input(input_path.to_str().context("Invalid input path")?)
+        .args(["-vn"])
         .args(["-ac", "1"])
         .args(["-ar", "16000"])
         .args(["-acodec", "pcm_s16le"])
@@ -39,7 +40,60 @@ pub fn convert_to_wav(input_path: &Path) -> Result<PathBuf> {
         anyhow::bail!("FFmpeg conversion failed with status: {}", status);
     }
 
+    let meta = std::fs::metadata(&output_path)
+        .with_context(|| format!("FFmpeg produced no output at {}", output_path.display()))?;
+    if meta.len() < 44 {
+        let _ = std::fs::remove_file(&output_path);
+        anyhow::bail!(
+            "FFmpeg produced empty/invalid WAV ({} bytes) from {}",
+            meta.len(),
+            input_path.display()
+        );
+    }
+
     Ok(output_path)
+}
+
+/// Write audio bytes to a temp file (preserving extension), convert to WAV via path-based FFmpeg.
+/// Returns path to the converted WAV temp file. Caller is responsible for cleanup.
+///
+/// Temp-file conversion is required for containers like m4a/mp4 that need seekable input
+/// (stdin/pipe demux often fails with "moov atom not found").
+pub fn convert_bytes_to_wav(input_bytes: &[u8], filename: &str) -> Result<PathBuf> {
+    if input_bytes.is_empty() {
+        anyhow::bail!("Audio data is empty");
+    }
+
+    let temp_dir = std::env::temp_dir();
+    let ext = Path::new(filename)
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.to_lowercase())
+        .filter(|e| !e.is_empty())
+        .unwrap_or_else(|| "bin".to_string());
+    let input_path = temp_dir.join(format!(
+        "meeting-agent-in-{}.{}",
+        uuid::Uuid::new_v4(),
+        ext
+    ));
+
+    std::fs::write(&input_path, input_bytes).with_context(|| {
+        format!(
+            "Failed to write {} bytes to temp input {}",
+            input_bytes.len(),
+            input_path.display()
+        )
+    })?;
+
+    let result = convert_to_wav(&input_path);
+    if let Err(e) = std::fs::remove_file(&input_path) {
+        log::warn!(
+            "failed to remove temp input {}: {}",
+            input_path.display(),
+            e
+        );
+    }
+    result
 }
 
 /// Check if FFmpeg is available by attempting to run version command
@@ -65,9 +119,10 @@ pub fn download_ffmpeg() -> Result<()> {
 
 /// Probe the duration of an audio file in seconds using ffprobe.
 ///
-/// Uses `ffprobe -show_format -of json` and reads `format.duration`.
-/// Falls back to stderr parsing if JSON parse fails.
+/// Reads `format.duration`. If missing/`N/A`, falls back to stream duration.
 pub fn probe_duration(path: &Path) -> Result<f64> {
+    let file_size = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
+
     let output = std::process::Command::new(ffprobe::ffprobe_path())
         .arg("-v")
         .arg("error")
@@ -79,16 +134,93 @@ pub fn probe_duration(path: &Path) -> Result<f64> {
         .output()
         .context("Failed to spawn ffprobe")?;
 
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let duration_str = stdout.trim();
+
     if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!("ffprobe failed: {}", stderr.trim());
+        anyhow::bail!(
+            "ffprobe failed for {} ({} bytes): {}",
+            path.display(),
+            file_size,
+            stderr.trim()
+        );
     }
 
+    if duration_str == "N/A" || duration_str.is_empty() {
+        return probe_duration_stream_fallback(path, file_size);
+    }
+
+    let duration: f64 = duration_str.parse().with_context(|| {
+        format!(
+            "Failed to parse ffprobe duration for {} ({} bytes): {:?}",
+            path.display(),
+            file_size,
+            duration_str
+        )
+    })?;
+
+    if duration <= 0.0 {
+        anyhow::bail!(
+            "Invalid audio duration {:.3}s for {} ({} bytes)",
+            duration,
+            path.display(),
+            file_size
+        );
+    }
+
+    Ok(duration)
+}
+
+fn probe_duration_stream_fallback(path: &Path, file_size: u64) -> Result<f64> {
+    let output = std::process::Command::new(ffprobe::ffprobe_path())
+        .arg("-v")
+        .arg("error")
+        .arg("-select_streams")
+        .arg("a:0")
+        .arg("-show_entries")
+        .arg("stream=duration")
+        .arg("-of")
+        .arg("default=noprint_wrappers=1:nokey=1")
+        .arg(path)
+        .output()
+        .context("Failed to spawn ffprobe stream fallback")?;
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let duration: f64 = stdout
-        .trim()
-        .parse()
-        .with_context(|| format!("Failed to parse ffprobe duration: {:?}", stdout.trim()))?;
+    let duration_str = stdout.trim();
+
+    if !output.status.success() || duration_str == "N/A" || duration_str.is_empty() {
+        anyhow::bail!(
+            "ffprobe could not determine duration for {} ({} bytes): {}",
+            path.display(),
+            file_size,
+            if stderr.trim().is_empty() {
+                duration_str
+            } else {
+                stderr.trim()
+            }
+        );
+    }
+
+    let duration: f64 = duration_str.parse().with_context(|| {
+        format!(
+            "Failed to parse stream duration for {} ({} bytes): {:?}",
+            path.display(),
+            file_size,
+            duration_str
+        )
+    })?;
+
+    if duration <= 0.0 {
+        anyhow::bail!(
+            "Invalid stream duration {:.3}s for {} ({} bytes)",
+            duration,
+            path.display(),
+            file_size
+        );
+    }
+
     Ok(duration)
 }
 
@@ -141,104 +273,6 @@ pub fn chunk_audio(path: &Path, segment_seconds: f64) -> Result<Vec<PathBuf>> {
     }
 
     Ok(chunks)
-}
-
-/// Convert audio bytes to WAV format in memory
-///
-/// Takes raw recording bytes as input and returns WAV-encoded bytes.
-/// Non-audio streams are discarded (-vn).
-/// Uses FFmpeg with pipe:0 (stdin) and pipe:1 (stdout) for in-memory processing.
-/// No temporary files are created.
-///
-/// Output format: 16 kHz mono WAV (PCM signed 16-bit little-endian)
-pub fn convert_to_wav_memory(input_bytes: &[u8]) -> Result<Vec<u8>> {
-    use std::io::{Read, Write};
-    use std::process::{Command, Stdio};
-    use std::thread;
-
-    let mut child = Command::new(ffmpeg_sidecar::paths::ffmpeg_path())
-        .arg("-i")
-        .arg("pipe:0") // stdin
-        .args(["-vn"]) // explicitly disable video stream processing
-        .args(["-f", "wav"]) // force WAV output format
-        .args(["-ac", "1"]) // mono
-        .args(["-ar", "16000"]) // 16kHz sample rate
-        .args(["-acodec", "pcm_s16le"])
-        .arg("pipe:1") // stdout
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .context("Failed to spawn FFmpeg process")?;
-
-    // Take ownership of stdin and stdout
-    let mut stdin = child.stdin.take().context("Failed to take stdin")?;
-    let mut stdout = child.stdout.take().context("Failed to take stdout")?;
-    let mut stderr = child.stderr.take().context("Failed to take stderr")?;
-
-    // Clone input_bytes for the writer thread
-    let input_data = input_bytes.to_vec();
-
-    // Write to stdin in a separate thread to avoid blocking
-    let writer_thread = thread::spawn(move || -> Result<()> {
-        // Ignore broken pipe errors - FFmpeg may close stdin early if input is invalid
-        match stdin.write_all(&input_data) {
-            Ok(_) => {}
-            Err(e) if e.kind() == std::io::ErrorKind::BrokenPipe => {
-                // FFmpeg closed stdin early, likely due to invalid input
-                // Don't fail here - let the process exit status tell us what went wrong
-            }
-            Err(e) => return Err(anyhow::Error::from(e).context("Failed to write to FFmpeg stdin")),
-        }
-        // Drop stdin to close it and signal EOF
-        drop(stdin);
-        Ok(())
-    });
-
-    // Read stdout and stderr concurrently to avoid deadlock
-    let stderr_thread = thread::spawn(move || -> Result<Vec<u8>> {
-        let mut stderr_data = Vec::new();
-        stderr
-            .read_to_end(&mut stderr_data)
-            .context("Failed to read FFmpeg stderr")?;
-        Ok(stderr_data)
-    });
-
-    // Read stdout in the main thread
-    let mut output_data = Vec::new();
-    stdout
-        .read_to_end(&mut output_data)
-        .context("Failed to read FFmpeg stdout")?;
-
-    // Wait for stderr thread
-    let stderr_data = stderr_thread
-        .join()
-        .map_err(|_| anyhow::anyhow!("Stderr reader thread panicked"))??;
-
-    // Wait for writer thread to finish (but don't fail on broken pipe)
-    writer_thread
-        .join()
-        .map_err(|_| anyhow::anyhow!("Writer thread panicked"))??;
-
-    // Wait for process to exit
-    let status = child.wait().context("Failed to wait for FFmpeg process")?;
-
-    if !status.success() {
-        let stderr_str = String::from_utf8_lossy(&stderr_data);
-        anyhow::bail!("FFmpeg conversion failed: {}", stderr_str);
-    }
-
-    Ok(output_data)
-}
-
-/// Convert audio file to WAV format in memory (reads file, returns bytes)
-///
-/// Convenience wrapper that reads a file and calls convert_to_wav_memory.
-/// No temporary files are created.
-pub fn convert_file_to_wav_memory(input_path: &Path) -> Result<Vec<u8>> {
-    let input_bytes = std::fs::read(input_path)
-        .with_context(|| format!("Failed to read input file: {:?}", input_path))?;
-    convert_to_wav_memory(&input_bytes)
 }
 
 /// Probe duration from audio bytes in memory

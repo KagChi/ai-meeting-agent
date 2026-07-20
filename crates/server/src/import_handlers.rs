@@ -89,7 +89,12 @@ pub async fn create_import(
         audio_bytes.ok_or_else(|| ApiError::BadRequest("Missing 'file' field".to_string()))?;
     let audio_filename = audio_filename.unwrap_or_else(|| "audio.mp3".to_string());
 
-    // Keep audio bytes in memory (no tempfile created)
+    if audio_bytes.is_empty() {
+        return Err(ApiError::BadRequest(
+            "Audio file is empty. Upload a valid recording.".to_string(),
+        ));
+    }
+
     let audio_vec = audio_bytes.to_vec();
 
     // Create job

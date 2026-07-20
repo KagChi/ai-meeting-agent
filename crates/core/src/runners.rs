@@ -339,13 +339,15 @@ fn check_cancelled(cancel_token: &CancellationToken) -> Result<()> {
     Ok(())
 }
 
-/// In-memory import: accept audio bytes instead of file path.
-/// No temporary files are created during processing.
+/// Import from uploaded audio bytes.
+/// Writes a temp file (preserving extension) and converts via path-based FFmpeg
+/// so containers like m4a/mp4 demux correctly.
 pub async fn run_import_memory(cfg: ImportMemoryConfig) {
     log::info!(
-        "Starting in-memory import job {} ({} bytes)",
+        "Starting import job {} ({} bytes, file={})",
         cfg.job_id,
-        cfg.audio_bytes.len()
+        cfg.audio_bytes.len(),
+        cfg.audio_filename
     );
 
     let result = run_import_memory_inner(&cfg).await;
@@ -371,36 +373,120 @@ pub async fn run_import_memory(cfg: ImportMemoryConfig) {
 }
 
 async fn run_import_memory_inner(cfg: &ImportMemoryConfig) -> Result<()> {
+    if cfg.audio_bytes.is_empty() {
+        anyhow::bail!("Audio data is empty");
+    }
+
     cfg.registry.update_progress(
         &cfg.job_id,
         ProgressEvent::new("converting", "Preparing audio file"),
     );
 
-    // Check if conversion is needed based on filename
     let needs_conversion = audio::needs_conversion_by_filename(&cfg.audio_filename);
-    let working_audio = if needs_conversion {
-        check_cancelled(&cfg.cancel_token)?;
+
+    // Write original upload to temp with real extension (m4a/mp4 need seekable input)
+    let temp_dir = std::env::temp_dir();
+    let ext = std::path::Path::new(&cfg.audio_filename)
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.to_lowercase())
+        .filter(|e| !e.is_empty())
+        .unwrap_or_else(|| "bin".to_string());
+    let original_temp = temp_dir.join(format!(
+        "meeting_agent_import_{}.{}",
+        uuid::Uuid::new_v4(),
+        ext
+    ));
+    log::info!(
+        "[import_memory] writing {} bytes to {}",
+        cfg.audio_bytes.len(),
+        original_temp.display()
+    );
+    tokio::fs::write(&original_temp, &cfg.audio_bytes)
+        .await
+        .context("Failed to write uploaded audio to temp file")?;
+
+    let work_result = run_import_memory_work(cfg, needs_conversion, &original_temp).await;
+
+    if let Err(e) = tokio::fs::remove_file(&original_temp).await {
+        log::warn!(
+            "[import_memory] failed to remove temp file {}: {}",
+            original_temp.display(),
+            e
+        );
+    }
+
+    work_result
+}
+
+async fn run_import_memory_work(
+    cfg: &ImportMemoryConfig,
+    needs_conversion: bool,
+    original_temp: &PathBuf,
+) -> Result<()> {
+    check_cancelled(&cfg.cancel_token)?;
+
+    let converted_temp: Option<PathBuf>;
+    let working_path = if needs_conversion {
         log::info!(
-            "[import_memory] converting {} bytes to WAV in memory",
+            "[import_memory] converting {} ({}) to WAV via path-based FFmpeg",
+            original_temp.display(),
             cfg.audio_bytes.len()
         );
         let converted = tokio::task::spawn_blocking({
-            let bytes = cfg.audio_bytes.clone();
-            move || audio::convert_to_wav_memory(&bytes)
+            let path = original_temp.clone();
+            move || audio::convert_to_wav(&path)
         })
         .await??;
         log::info!(
-            "[import_memory] conversion complete: {} bytes",
-            converted.len()
+            "[import_memory] conversion complete: {}",
+            converted.display()
         );
+        converted_temp = Some(converted.clone());
         converted
     } else {
         log::info!(
-            "[import_memory] no conversion needed, using original {} bytes",
-            cfg.audio_bytes.len()
+            "[import_memory] no conversion needed, using {}",
+            original_temp.display()
         );
-        cfg.audio_bytes.clone()
+        converted_temp = None;
+        original_temp.clone()
     };
+
+    let cleanup_converted = |path: &Option<PathBuf>| {
+        if let Some(p) = path {
+            if let Err(e) = std::fs::remove_file(p) {
+                log::warn!(
+                    "[import_memory] failed to remove converted temp {}: {}",
+                    p.display(),
+                    e
+                );
+            }
+        }
+    };
+
+    let result = run_import_memory_pipeline(cfg, needs_conversion, &working_path).await;
+    cleanup_converted(&converted_temp);
+    result
+}
+
+async fn run_import_memory_pipeline(
+    cfg: &ImportMemoryConfig,
+    needs_conversion: bool,
+    working_path: &PathBuf,
+) -> Result<()> {
+    // Fail early with a clear error before creating a meeting
+    let probed = tokio::task::spawn_blocking({
+        let path = working_path.clone();
+        move || audio::probe_duration(&path)
+    })
+    .await?
+    .context("Failed to probe source audio duration")?;
+    log::info!(
+        "[import_memory] probed duration={:.2}s for {}",
+        probed,
+        working_path.display()
+    );
 
     check_cancelled(&cfg.cancel_token)?;
 
@@ -409,7 +495,6 @@ async fn run_import_memory_inner(cfg: &ImportMemoryConfig) -> Result<()> {
         ProgressEvent::new("processing", "Creating meeting record"),
     );
 
-    // Build user metadata from config
     let user_metadata = if cfg.title.is_some()
         || cfg.participants.is_some()
         || cfg.location.is_some()
@@ -427,7 +512,6 @@ async fn run_import_memory_inner(cfg: &ImportMemoryConfig) -> Result<()> {
         None
     };
 
-    // Create meeting and enrich with metadata
     let mut meeting = Meeting::new("Temporary Title".to_string());
     let filename_path = std::path::Path::new(&cfg.audio_filename);
     crate::metadata::enrich_meeting_with_metadata(&mut meeting, filename_path, user_metadata)?;
@@ -443,31 +527,18 @@ async fn run_import_memory_inner(cfg: &ImportMemoryConfig) -> Result<()> {
     );
 
     log::info!(
-        "[import_memory] starting transcription for {} bytes (chunk_seconds={}, concurrency={})",
-        working_audio.len(),
+        "[import_memory] starting transcription for {} (chunk_seconds={}, concurrency={})",
+        working_path.display(),
         cfg.config.transcription.chunk_seconds,
         cfg.config.transcription.chunk_concurrency
     );
-
-    // Write audio to temporary file for reliable ffmpeg processing
-    let temp_dir = std::env::temp_dir();
-    let temp_file_path =
-        temp_dir.join(format!("meeting_agent_import_{}.wav", uuid::Uuid::new_v4()));
-    log::info!(
-        "[import_memory] writing {} bytes to temp file: {}",
-        working_audio.len(),
-        temp_file_path.display()
-    );
-    tokio::fs::write(&temp_file_path, &working_audio)
-        .await
-        .context("Failed to write audio to temp file")?;
 
     let transcription_client = TranscriptionClient::new(cfg.config.transcription.clone())?;
 
     let transcription = transcription_client
         .transcribe_chunked(
             crate::transcription::TranscriptionRequest {
-                file_path: temp_file_path.to_string_lossy().to_string(),
+                file_path: working_path.to_string_lossy().to_string(),
                 response_format: Some("verbose_json".to_string()),
                 language: None,
                 prompt: None,
@@ -477,15 +548,6 @@ async fn run_import_memory_inner(cfg: &ImportMemoryConfig) -> Result<()> {
             cfg.config.transcription.chunk_concurrency,
         )
         .await?;
-
-    // Clean up temp file
-    if let Err(e) = tokio::fs::remove_file(&temp_file_path).await {
-        log::warn!(
-            "[import_memory] failed to remove temp file {}: {}",
-            temp_file_path.display(),
-            e
-        );
-    }
 
     log::info!(
         "[import_memory] transcription complete: {} segments, duration={:.2}s",
@@ -499,8 +561,6 @@ async fn run_import_memory_inner(cfg: &ImportMemoryConfig) -> Result<()> {
 
     check_cancelled(&cfg.cancel_token)?;
 
-    // Optional speaker diarization. Resilient: on failure, log and proceed
-    // without speaker labels rather than failing the whole import.
     #[cfg(feature = "diarization")]
     let transcription = if cfg.config.diarize.enabled {
         cfg.registry.update_progress(
@@ -509,40 +569,15 @@ async fn run_import_memory_inner(cfg: &ImportMemoryConfig) -> Result<()> {
         );
         check_cancelled(&cfg.cancel_token)?;
 
-        // For diarization, we need to write bytes to a temp file since
-        // the diarizer expects a file path. This is a compromise until
-        // we refactor the diarizer to accept bytes.
-        log::info!("[import_memory] diarization enabled, writing temp file for diarizer");
-        let temp_audio = {
-            let temp_dir = std::env::temp_dir();
-            let temp_path = temp_dir.join(format!(
-                "meeting-agent-diarize-{}.wav",
-                uuid::Uuid::new_v4()
-            ));
-            tokio::fs::write(&temp_path, &working_audio).await?;
-            temp_path
-        };
-
-        let result = match crate::diarize::Diarizer::diarize(
-            &temp_audio,
-            &transcription,
-            &cfg.config.diarize,
-        )
-        .await
+        match crate::diarize::Diarizer::diarize(working_path, &transcription, &cfg.config.diarize)
+            .await
         {
             Ok(labeled) => labeled,
             Err(e) => {
                 log::warn!("[diarize] failed, proceeding without speaker labels: {e:#}");
                 transcription
             }
-        };
-
-        // Clean up temp file
-        if let Err(e) = tokio::fs::remove_file(&temp_audio).await {
-            log::warn!("[import_memory] failed to remove diarization temp file: {e}");
         }
-
-        result
     } else {
         transcription
     };
@@ -573,10 +608,14 @@ async fn run_import_memory_inner(cfg: &ImportMemoryConfig) -> Result<()> {
         cfg.audio_filename.clone()
     };
 
+    let working_audio = tokio::fs::read(working_path)
+        .await
+        .with_context(|| format!("Failed to read working audio {}", working_path.display()))?;
+
     cfg.storage
         .save_audio_from_bytes(&meeting.id, &working_audio, &saved_audio_filename)
         .await?;
-    
+
     let duration_seconds = transcription.duration.map(|d| d as u64).unwrap_or(0);
     cfg.storage
         .save_transcript(

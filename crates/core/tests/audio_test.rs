@@ -1,85 +1,126 @@
 use meeting_agent_core::audio::{
-    chunk_audio_memory, convert_to_wav_memory, probe_duration_from_bytes,
+    chunk_audio_memory, convert_bytes_to_wav, convert_to_wav, probe_duration,
+    probe_duration_from_bytes,
 };
+use std::process::Command;
+use std::time::{SystemTime, UNIX_EPOCH};
 
-/// Generate a minimal valid MP3 file in memory for testing
-/// This is a silent 1-second MP3 at 16kHz mono
-fn generate_test_mp3() -> Vec<u8> {
-    // Minimal MP3 header + silent frames (approximately 1 second)
-    // This is a simplified test fixture - real MP3 has complex structure
-    // For proper testing, we'd use a real audio file from test fixtures
-    vec![
-        0xFF, 0xFB, 0x90, 0x00, // MP3 sync word + header
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // Silent frame data
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    ]
+fn unique_temp(prefix: &str, ext: &str) -> std::path::PathBuf {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    std::env::temp_dir().join(format!("{prefix}-{nanos}.{ext}"))
+}
+
+/// Generate a short m4a via ffmpeg for path-based conversion tests.
+fn generate_test_m4a() -> Vec<u8> {
+    let out = unique_temp("meeting-agent-test", "m4a");
+    let status = Command::new("ffmpeg")
+        .args([
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=f=440:d=1",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "64k",
+        ])
+        .arg(&out)
+        .status()
+        .expect("spawn ffmpeg (install ffmpeg or skip #[ignore] tests)");
+    assert!(status.success(), "ffmpeg should generate test m4a");
+    let bytes = std::fs::read(&out).expect("read test m4a");
+    let _ = std::fs::remove_file(&out);
+    bytes
 }
 
 #[test]
 #[ignore] // Requires FFmpeg to be installed
-fn test_convert_to_wav_memory_basic() {
-    let input = generate_test_mp3();
-    let result = convert_to_wav_memory(&input);
+fn test_convert_m4a_bytes_to_wav_path() {
+    let input = generate_test_m4a();
+    assert!(input.len() > 100, "test m4a should not be tiny");
 
-    assert!(result.is_ok(), "Conversion should succeed");
-    let output = result.unwrap();
-    assert!(!output.is_empty(), "Output should not be empty");
+    let wav_path = convert_bytes_to_wav(&input, "recording.m4a").expect("convert m4a");
+    let meta = std::fs::metadata(&wav_path).expect("wav metadata");
+    assert!(
+        meta.len() > 1000,
+        "converted WAV should be substantial, got {}",
+        meta.len()
+    );
 
-    // Check WAV signature (RIFF header)
-    assert_eq!(&output[0..4], b"RIFF", "WAV should start with RIFF");
-    assert_eq!(&output[8..12], b"WAVE", "WAV should have WAVE marker");
+    let duration = probe_duration(&wav_path).expect("probe duration");
+    assert!(duration > 0.5 && duration < 2.0, "duration={duration}");
+
+    let bytes = std::fs::read(&wav_path).expect("read wav");
+    assert_eq!(&bytes[0..4], b"RIFF");
+    assert_eq!(&bytes[8..12], b"WAVE");
+    let _ = std::fs::remove_file(&wav_path);
 }
 
 #[test]
 #[ignore] // Requires FFmpeg to be installed
-fn test_probe_duration_from_bytes() {
-    let input = generate_test_mp3();
-    let result = probe_duration_from_bytes(&input);
+fn test_convert_to_wav_path() {
+    let input = generate_test_m4a();
+    let temp = unique_temp("meeting-agent-in", "m4a");
+    std::fs::write(&temp, &input).expect("write m4a");
 
-    assert!(result.is_ok(), "Duration probe should succeed");
-    let duration = result.unwrap();
-    assert!(duration > 0.0, "Duration should be positive");
-    // Our test fixture is approximately 1 second
-    assert!(duration < 2.0, "Duration should be less than 2 seconds");
+    let wav_path = convert_to_wav(&temp).expect("convert_to_wav");
+    let duration = probe_duration(&wav_path).expect("probe");
+    assert!(duration > 0.0);
+
+    let _ = std::fs::remove_file(&temp);
+    let _ = std::fs::remove_file(&wav_path);
 }
 
 #[test]
-#[ignore] // Requires FFmpeg to be installed
-fn test_chunk_audio_memory_basic() {
-    let input = generate_test_mp3();
-
-    // Try to chunk into 0.5 second segments
-    let result = chunk_audio_memory(&input, 0.5);
-
-    assert!(result.is_ok(), "Chunking should succeed");
-    let chunks = result.unwrap();
-
-    // Should produce at least 1 chunk (our test audio is ~1 second)
-    assert!(!chunks.is_empty(), "Should produce at least one chunk");
-
-    // Each chunk should be valid WAV
-    for (i, chunk) in chunks.iter().enumerate() {
-        assert!(!chunk.is_empty(), "Chunk {} should not be empty", i);
-        assert_eq!(&chunk[0..4], b"RIFF", "Chunk {} should start with RIFF", i);
-    }
-}
-
-#[test]
-#[ignore] // Requires FFmpeg to be installed
-fn test_convert_empty_input() {
-    let empty: Vec<u8> = vec![];
-    let result = convert_to_wav_memory(&empty);
-
-    // Empty input should fail
+fn test_convert_empty_bytes_fails() {
+    let result = convert_bytes_to_wav(&[], "audio.m4a");
     assert!(result.is_err(), "Empty input should produce error");
 }
 
 #[test]
 #[ignore] // Requires FFmpeg to be installed
-fn test_chunk_audio_memory_zero_duration() {
-    let input = generate_test_mp3();
+fn test_probe_duration_from_bytes() {
+    let input = generate_test_m4a();
+    let wav_path = convert_bytes_to_wav(&input, "t.m4a").expect("convert");
+    let wav = std::fs::read(&wav_path).expect("read");
+    let _ = std::fs::remove_file(&wav_path);
 
-    // Zero segment duration should fail
-    let result = chunk_audio_memory(&input, 0.0);
+    let result = probe_duration_from_bytes(&wav);
+    assert!(result.is_ok(), "Duration probe should succeed: {result:?}");
+    let duration = result.unwrap();
+    assert!(duration > 0.0, "Duration should be positive");
+}
+
+#[test]
+#[ignore] // Requires FFmpeg to be installed
+fn test_chunk_audio_memory_basic() {
+    let input = generate_test_m4a();
+    let wav_path = convert_bytes_to_wav(&input, "t.m4a").expect("convert");
+    let wav = std::fs::read(&wav_path).expect("read");
+    let _ = std::fs::remove_file(&wav_path);
+
+    let result = chunk_audio_memory(&wav, 0.5);
+    assert!(result.is_ok(), "Chunking should succeed: {result:?}");
+    let chunks = result.unwrap();
+    assert!(!chunks.is_empty(), "Should produce at least one chunk");
+    for (i, chunk) in chunks.iter().enumerate() {
+        assert!(!chunk.is_empty(), "Chunk {i} should not be empty");
+        assert_eq!(&chunk[0..4], b"RIFF", "Chunk {i} should start with RIFF");
+    }
+}
+
+#[test]
+#[ignore] // Requires FFmpeg to be installed
+fn test_chunk_audio_memory_zero_duration() {
+    let input = generate_test_m4a();
+    let wav_path = convert_bytes_to_wav(&input, "t.m4a").expect("convert");
+    let wav = std::fs::read(&wav_path).expect("read");
+    let _ = std::fs::remove_file(&wav_path);
+
+    let result = chunk_audio_memory(&wav, 0.0);
     assert!(result.is_err(), "Zero segment duration should fail");
 }
