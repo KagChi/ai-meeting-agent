@@ -140,7 +140,7 @@ pub async fn get_recording(
     path = "/transcripts/search",
     tag = "transcripts",
     params(
-        ("q" = String, Query, description = "Search query (FTS5 syntax)"),
+        ("q" = String, Query, description = "Plain-text search query (special chars escaped)"),
         ("limit" = Option<u32>, Query, description = "Max meetings to return (default 50, max 500)"),
         ("offset" = Option<u32>, Query, description = "Meetings to skip (default 0)")
     ),

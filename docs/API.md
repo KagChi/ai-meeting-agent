@@ -227,7 +227,7 @@ Returns **meetings** that contain matching segments (not a flat segment list), o
 **Query Parameters:**
 | Name | Type | Required | Default | Description |
 |------|------|----------|---------|-------------|
-| `q` | string | Yes | — | Search query (FTS5 syntax, max 500 chars) |
+| `q` | string | Yes | — | Plain-text search query (max 500 chars). Special characters (`+`, `-`, `:`, etc.) are escaped automatically. |
 | `limit` | integer | No | 50 | Max meetings to return (1–500) |
 | `offset` | integer | No | 0 | Meetings to skip |
 

@@ -90,7 +90,7 @@ fn default_search_limit() -> u32 {
 /// Query params for `GET /transcripts/search`.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct SearchTranscriptsQuery {
-    /// Full-text search query (FTS5 syntax).
+    /// Plain-text full-text search query (special characters are escaped for FTS5).
     pub q: String,
     #[serde(default = "default_search_limit")]
     pub limit: u32,
