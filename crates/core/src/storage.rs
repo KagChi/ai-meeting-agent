@@ -415,9 +415,10 @@ impl MeetingStorage {
         .context("Failed to compute transcript version")?;
 
         // Insert new segments with version number (old versions are preserved)
+        // Use array index as segment_id to guarantee uniqueness
         if let Some(segments) = &response.segments {
-            for segment in segments {
-                sqlx::query(
+            for (idx, segment) in segments.iter().enumerate() {
+                let result = sqlx::query(
                     "INSERT INTO transcript_segments (
                         meeting_id, version, segment_id, start, end, text, speaker,
                         tokens, temperature, avg_logprob, compression_ratio, no_speech_prob
@@ -425,7 +426,7 @@ impl MeetingStorage {
                 )
                 .bind(meeting_id)
                 .bind(version)
-                .bind(segment.id as i64)
+                .bind(idx as i64)  // Use array index for guaranteed unique segment_id
                 .bind(segment.start)
                 .bind(segment.end)
                 .bind(&segment.text)
@@ -441,8 +442,18 @@ impl MeetingStorage {
                 .bind(segment.compression_ratio.map(|v| v as f64))
                 .bind(segment.no_speech_prob.map(|v| v as f64))
                 .execute(&self.db)
-                .await
-                .context("Failed to insert transcript segment")?;
+                .await;
+
+                if let Err(e) = result {
+                    log::error!(
+                        "Failed to insert transcript segment: meeting_id={}, version={}, segment_idx={}, start={:.2}, end={:.2}, error={}",
+                        meeting_id, version, idx, segment.start, segment.end, e
+                    );
+                    return Err(anyhow::anyhow!(
+                        "Failed to insert transcript segment (meeting={}, ver={}, idx={}): {}",
+                        meeting_id, version, idx, e
+                    ));
+                }
             }
         }
 
