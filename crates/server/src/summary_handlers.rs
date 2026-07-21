@@ -2,6 +2,7 @@ use crate::error::ApiError;
 use crate::state::AppState;
 use crate::types::{
     CreateSummaryRequest, CreateSummaryResponse, ListSummariesResponse, SummaryResponse,
+    UpdateSummaryRequest,
 };
 use crate::validation;
 use axum::{
@@ -158,6 +159,89 @@ pub async fn get_summary(
     let template = parse_template(&template)?;
     let format = query.format.unwrap_or_default(); // Default to markdown
     let summary = state.storage.get_summary(&meeting_id, template, format).await?;
+    Ok(Json(SummaryResponse { summary }))
+}
+
+/// Overwrite stored summary content for a template (no LLM generation).
+#[utoipa::path(
+    put,
+    path = "/meetings/{id}/summary/{template}",
+    tag = "summaries",
+    params(
+        ("id" = String, Path, description = "Meeting ID or prefix"),
+        ("template" = String, Path, description = "Summary template: key_points, action_items, decisions, full, or meeting_notes")
+    ),
+    request_body = UpdateSummaryRequest,
+    responses(
+        (status = 200, description = "Summary updated", body = SummaryResponse),
+        (status = 400, description = "Invalid request", body = ErrorResponse),
+        (status = 404, description = "Meeting not found", body = ErrorResponse)
+    )
+)]
+pub async fn update_summary(
+    State(state): State<AppState>,
+    Path((meeting_id, template)): Path<(String, String)>,
+    Json(req): Json<UpdateSummaryRequest>,
+) -> Result<Json<SummaryResponse>, ApiError> {
+    validation::validate_uuid(&meeting_id)?;
+    validation::validate_summary_content(&req.content)?;
+    let _meeting = state.storage.get_meeting(&meeting_id).await?;
+
+    let template = parse_template(&template)?;
+    let format = req.format.unwrap_or_default();
+
+    // Preserve existing metadata when overwriting content when possible.
+    let existing = state
+        .storage
+        .get_summary(&meeting_id, template.clone(), format.clone())
+        .await
+        .ok();
+
+    let now = chrono::Utc::now();
+    let (key_points, action_items, decisions) = match format {
+        meeting_agent_core::models::SummaryFormat::Markdown => {
+            meeting_agent_core::summary::parse_sections(&req.content, template.clone())
+        }
+        meeting_agent_core::models::SummaryFormat::RawText => {
+            (Vec::new(), Vec::new(), Vec::new())
+        }
+    };
+
+    let summary = meeting_agent_core::models::Summary {
+        id: existing
+            .as_ref()
+            .map(|s| s.id.clone())
+            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
+        meeting_id: meeting_id.clone(),
+        template,
+        format,
+        language: existing.as_ref().and_then(|s| s.language.clone()),
+        status: meeting_agent_core::models::SummaryStatus::Completed,
+        content: req.content,
+        key_points,
+        action_items,
+        decisions,
+        provider: existing
+            .as_ref()
+            .map(|s| s.provider.clone())
+            .unwrap_or_else(|| "manual".to_string()),
+        model: existing
+            .as_ref()
+            .map(|s| s.model.clone())
+            .unwrap_or_else(|| "user-edit".to_string()),
+        created_at: existing
+            .as_ref()
+            .map(|s| s.created_at)
+            .unwrap_or(now),
+        updated_at: now,
+    };
+
+    state
+        .storage
+        .save_summary(&meeting_id, &summary)
+        .await
+        .map_err(|e| ApiError::InternalServerError(e.to_string()))?;
+
     Ok(Json(SummaryResponse { summary }))
 }
 

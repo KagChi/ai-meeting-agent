@@ -75,7 +75,7 @@ pub fn build_router(state: AppState) -> Router {
         )
         .route(
             "/meetings/:id/summary/:template",
-            get(summary_handlers::get_summary),
+            get(summary_handlers::get_summary).put(summary_handlers::update_summary),
         )
         .route("/import", post(import_handlers::create_import))
         .route("/import/validate", post(import_handlers::validate_import))

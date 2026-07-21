@@ -279,7 +279,7 @@ pub async fn update_meeting(
     validation::validate_uuid(&id)?;
 
     // Validate update request has at least one field
-    validation::validate_update_request(&req.title, &req.date)?;
+    validation::validate_update_request(&req.title, &req.date, &req.participants)?;
 
     // Load existing meeting
     let mut meeting = state.storage.get_meeting(&id).await?;
@@ -290,6 +290,14 @@ pub async fn update_meeting(
     }
     if let Some(date) = req.date {
         meeting.date = date;
+    }
+    if let Some(participants) = req.participants {
+        let cleaned: Vec<String> = participants
+            .into_iter()
+            .map(|n| n.trim().to_string())
+            .filter(|n| !n.is_empty())
+            .collect();
+        meeting.participants = Some(cleaned);
     }
 
     // Update timestamp

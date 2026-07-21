@@ -12,7 +12,7 @@
 //!   - Transcript JSON at tests/output/transcript.json (from whisper_integration_test)
 
 use meeting_agent_core::config::SummaryConfig;
-use meeting_agent_core::models::SummaryTemplate;
+use meeting_agent_core::models::{SummaryFormat, SummaryTemplate};
 use meeting_agent_core::summary::{SummarizeOptions, SummaryClient};
 use meeting_agent_core::transcription::{TranscriptSegment, TranscriptionResponse};
 use std::path::PathBuf;
@@ -137,7 +137,9 @@ async fn gemma4_vllm_summary_full() {
 
     let options = SummarizeOptions {
         template: SummaryTemplate::Full,
+        format: SummaryFormat::Markdown,
         language: Some("en".to_string()),
+        meeting: Default::default(),
     };
 
     let started = std::time::Instant::now();

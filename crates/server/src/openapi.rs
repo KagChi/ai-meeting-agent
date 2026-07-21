@@ -30,6 +30,7 @@ use utoipa::OpenApi;
         summary_handlers::list_summaries,
         summary_handlers::get_summary,
         summary_handlers::create_summary,
+        summary_handlers::update_summary,
         // Import handlers
         import_handlers::create_import,
         import_handlers::validate_import,
@@ -49,6 +50,7 @@ use utoipa::OpenApi;
             CreateMeetingRequest,
             UpdateMeetingRequest,
             CreateSummaryRequest,
+            UpdateSummaryRequest,
             UpdateTranscriptionConfigRequest,
             UpdateSummaryConfigRequest,
             UpdateConfigRequest,

@@ -69,6 +69,11 @@ pub async fn run(id: String, template: String, format: Option<String>, language:
         template: template.clone(),
         format: format.clone(),
         language: language.clone(),
+        meeting: meeting_agent_core::summary::MeetingContext {
+            title: Some(meeting.title.clone()),
+            date: Some(meeting.date.to_rfc3339()),
+            participants: meeting.participants.clone(),
+        },
     };
     let result = client.summarize(&transcript_resp, &opts).await?;
 

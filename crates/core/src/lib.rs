@@ -23,5 +23,5 @@ pub use config::Config;
 pub use jobs::{Job, JobRegistry, JobState, JobType};
 pub use models::{Meeting, Summary, SummaryTemplate, Transcript};
 pub use storage::MeetingStorage;
-pub use summary::{SummarizeOptions, SummaryClient};
+pub use summary::{MeetingContext, SummarizeOptions, SummaryClient};
 pub use transcription::{TranscriptionClient, TranscriptionRequest, TranscriptionResponse};

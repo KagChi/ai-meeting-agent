@@ -72,7 +72,10 @@ impl ServerHandler for MeetingAgentMcpServer {
                 "getSummary",
                 "Get generated summary. Template defaults to full.",
             ),
-            tool::<UpdateMeetingRequest>("updateMeeting", "Update meeting title and/or date."),
+            tool::<UpdateMeetingRequest>(
+                "updateMeeting",
+                "Update meeting title, date, and/or participants.",
+            ),
             tool::<MeetingIdRequest>("deleteMeeting", "Delete meeting and associated files."),
             tool::<JobIdRequest>("cancelJob", "Cancel a running import or summary job."),
             tool::<ExportTranscriptRequest>(
@@ -140,7 +143,7 @@ impl ServerHandler for MeetingAgentMcpServer {
             "updateMeeting" => {
                 let req: UpdateMeetingRequest = parse_arguments(&request.arguments)?;
                 self.client
-                    .update_meeting(&req.meeting_id, req.title, req.date)
+                    .update_meeting(&req.meeting_id, req.title, req.date, req.participants)
                     .await?
             }
             "deleteMeeting" => {
