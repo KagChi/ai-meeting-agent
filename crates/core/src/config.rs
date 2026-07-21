@@ -99,10 +99,27 @@ pub struct DiarizeConfig {
     /// `http://diarize-service:8001`
     #[serde(default)]
     pub service_url: Option<String>,
+    /// Voiceprint embedding model id.
+    ///
+    /// - `wespeaker-voxceleb-CAM++_LM` (default, 512-dim, ORT + kaldi fbank)
+    /// - `wespeaker-voxceleb-resnet34` (256-dim, speakrs EmbeddingModel)
+    #[serde(default = "default_embedding_model")]
+    pub embedding_model: String,
+    /// Expected embedding dimension for the selected model.
+    #[serde(default = "default_embedding_dim")]
+    pub embedding_dim: u32,
 }
 
 fn default_diarize_execution_mode() -> String {
     "auto".to_string()
+}
+
+fn default_embedding_model() -> String {
+    "wespeaker-voxceleb-CAM++_LM".to_string()
+}
+
+fn default_embedding_dim() -> u32 {
+    512
 }
 
 impl Default for DiarizeConfig {
@@ -112,6 +129,8 @@ impl Default for DiarizeConfig {
             execution_mode: default_diarize_execution_mode(),
             model_dir: None,
             service_url: None,
+            embedding_model: default_embedding_model(),
+            embedding_dim: default_embedding_dim(),
         }
     }
 }
@@ -124,10 +143,18 @@ impl DiarizeConfig {
     /// - `DIARIZE_EXECUTION_MODE` (auto|cpu|coreml|coreml-fast|cuda|cuda-fast|migraphx)
     /// - `DIARIZE_MODEL_DIR` (local model path; blank = download on first use)
     /// - `DIARIZE_SERVICE_URL` (HTTP service URL; blank = in-process)
+    /// - `DIARIZE_EMBEDDING_MODEL` (wespeaker-voxceleb-CAM++_LM | wespeaker-voxceleb-resnet34)
+    /// - `DIARIZE_EMBEDDING_DIM` (512 for CAM++, 256 for ResNet34)
     pub fn from_env() -> Self {
         let mut config = Self::default();
         config.apply_env();
         config
+    }
+
+    /// Whether the configured embedding model is CAM++ (ORT fbank path).
+    pub fn uses_campplus_embedding(&self) -> bool {
+        let m = self.embedding_model.to_ascii_lowercase();
+        m.contains("cam++") || m.contains("campplus")
     }
 
     /// Apply `DIARIZE_*` environment overrides onto this config.
@@ -149,6 +176,27 @@ impl DiarizeConfig {
         if let Ok(url) = std::env::var("DIARIZE_SERVICE_URL") {
             if !url.trim().is_empty() {
                 self.service_url = Some(url);
+            }
+        }
+        if let Ok(model) = std::env::var("DIARIZE_EMBEDDING_MODEL") {
+            let model = model.trim();
+            if !model.is_empty() {
+                self.embedding_model = model.to_string();
+                // Auto-fill dim when user only sets model name.
+                if std::env::var("DIARIZE_EMBEDDING_DIM").is_err() {
+                    self.embedding_dim = if self.uses_campplus_embedding() {
+                        512
+                    } else {
+                        256
+                    };
+                }
+            }
+        }
+        if let Ok(dim) = std::env::var("DIARIZE_EMBEDDING_DIM") {
+            if let Ok(d) = dim.trim().parse::<u32>() {
+                if d > 0 {
+                    self.embedding_dim = d;
+                }
             }
         }
     }

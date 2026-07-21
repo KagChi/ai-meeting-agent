@@ -12,9 +12,7 @@ use crate::storage::MeetingStorage;
 use crate::transcription::TranscriptionResponse;
 
 #[cfg(feature = "diarization")]
-use crate::diarize::embed::{
-    cosine_similarity, embed_audio_file, mean_pool_l2, EMBED_DIM, EMBED_MODEL_ID,
-};
+use crate::diarize::embed::{cosine_similarity, embed_audio_file, mean_pool_l2};
 
 /// Default minimum total enrolled speech (seconds) before building a centroid.
 pub const DEFAULT_ENROLL_MIN_SPEECH_S: f64 = 30.0;
@@ -85,10 +83,12 @@ pub async fn rebuild_voiceprint(
     }
 
     let centroid = crate::diarize::embed::mean_pool_l2(&embeddings)?;
-    if centroid.len() != EMBED_DIM as usize {
+    let expected_dim = cfg.embedding_dim as usize;
+    if centroid.len() != expected_dim {
         anyhow::bail!(
-            "unexpected embed dim {} (expected {EMBED_DIM})",
-            centroid.len()
+            "unexpected embed dim {} (expected {expected_dim} for model {})",
+            centroid.len(),
+            cfg.embedding_model
         );
     }
 
@@ -100,8 +100,8 @@ pub async fn rebuild_voiceprint(
             .map(|v| v.id.clone())
             .unwrap_or_else(|| Uuid::new_v4().to_string()),
         person_id: person_id.to_string(),
-        model: EMBED_MODEL_ID.to_string(),
-        dim: EMBED_DIM,
+        model: cfg.embedding_model.clone(),
+        dim: cfg.embedding_dim,
         centroid,
         enrolled_from: VoiceprintEnrolledFrom::Sample,
         created_at: existing
@@ -129,11 +129,15 @@ pub async fn rebuild_voiceprint(
 }
 
 /// Match a query embedding against all enrolled voiceprints.
+///
+/// When `model_id` is set, only voiceprints from that embedding model are
+/// considered (prevents mixing ResNet34 256-d with CAM++ 512-d).
 #[cfg(feature = "diarization")]
 pub async fn match_embedding(
     storage: &MeetingStorage,
     query: &[f32],
     threshold: f32,
+    model_id: Option<&str>,
 ) -> anyhow::Result<IdentifyMatch> {
     let bank = storage.list_voiceprints().await?;
     if bank.is_empty() {
@@ -147,7 +151,12 @@ pub async fn match_embedding(
     let mut best_id: Option<String> = None;
     let mut best_score = f32::NEG_INFINITY;
     for vp in &bank {
-        if vp.centroid.len() != query.len() {
+        if let Some(mid) = model_id {
+            if vp.model != mid {
+                continue;
+            }
+        }
+        if vp.centroid.len() != query.len() || vp.dim as usize != query.len() {
             continue;
         }
         let score = cosine_similarity(query, &vp.centroid);
@@ -177,6 +186,7 @@ pub async fn match_embedding(
     _storage: &MeetingStorage,
     _query: &[f32],
     _threshold: f32,
+    _model_id: Option<&str>,
 ) -> anyhow::Result<IdentifyMatch> {
     anyhow::bail!("voiceprint match requires the `diarization` feature")
 }
@@ -227,6 +237,7 @@ async fn auto_enroll_guest(
     query: &[f32],
     display_name: &str,
     segment_ids: &[u32],
+    model_id: &str,
 ) -> anyhow::Result<String> {
     let person = Person::new(display_name.to_string());
     storage.create_person(&person).await?;
@@ -262,7 +273,7 @@ async fn auto_enroll_guest(
     if let Err(e) = store_centroid(
         storage,
         &person.id,
-        EMBED_MODEL_ID,
+        model_id,
         query.to_vec(),
         VoiceprintEnrolledFrom::MeetingTurn,
     )
@@ -274,7 +285,7 @@ async fn auto_enroll_guest(
         );
     } else {
         log::info!(
-            "[identify] auto-enrolled {display_name} ({}) speech={speech_s:.1}s",
+            "[identify] auto-enrolled {display_name} ({}) speech={speech_s:.1}s model={model_id}",
             person.id
         );
     }
@@ -409,7 +420,7 @@ pub async fn identify_transcript_with_meeting(
         }
 
         let query = mean_pool_l2(&embs)?;
-        let m = match_embedding(storage, &query, threshold).await?;
+        let m = match_embedding(storage, &query, threshold, Some(&cfg.embedding_model)).await?;
 
         let (person_id, confidence, display_name) = if let Some(pid) = m.person_id {
             matched += 1;
@@ -431,6 +442,7 @@ pub async fn identify_transcript_with_meeting(
                 &query,
                 &name,
                 &segment_ids,
+                &cfg.embedding_model,
             )
             .await
             {
@@ -621,12 +633,16 @@ mod tests {
 
         #[cfg(feature = "diarization")]
         {
-            let m = match_embedding(&storage, &centroid, 0.5).await.unwrap();
+            let m = match_embedding(&storage, &centroid, 0.5, Some("test"))
+                .await
+                .unwrap();
             assert_eq!(m.person_id.as_deref(), Some(person.id.as_str()));
             assert!(m.confidence > 0.99);
 
             let other = vec![0.0f32, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0];
-            let m2 = match_embedding(&storage, &other, 0.9).await.unwrap();
+            let m2 = match_embedding(&storage, &other, 0.9, Some("test"))
+                .await
+                .unwrap();
             assert!(m2.person_id.is_none());
         }
     }

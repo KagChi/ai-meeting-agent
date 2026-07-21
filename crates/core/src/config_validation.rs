@@ -125,6 +125,31 @@ pub fn validate_diarize(d: &DiarizeConfig) -> Result<(), Vec<String>> {
             errs.push(format!("diarize.model_dir not found: {}", dir.display()));
         }
     }
+    if d.embedding_model.trim().is_empty() {
+        errs.push("diarize.embedding_model must not be empty".into());
+    }
+    if d.embedding_dim == 0 {
+        errs.push("diarize.embedding_dim must be > 0".into());
+    }
+    let is_campplus = {
+        let m = d.embedding_model.to_ascii_lowercase();
+        m.contains("cam++") || m.contains("campplus")
+    };
+    if is_campplus && d.embedding_dim != 512 {
+        errs.push(format!(
+            "diarize.embedding_dim should be 512 for CAM++ (got {})",
+            d.embedding_dim
+        ));
+    }
+    if !is_campplus
+        && d.embedding_model.contains("resnet34")
+        && d.embedding_dim != 256
+    {
+        errs.push(format!(
+            "diarize.embedding_dim should be 256 for ResNet34 (got {})",
+            d.embedding_dim
+        ));
+    }
     if errs.is_empty() {
         Ok(())
     } else {
@@ -203,6 +228,8 @@ mod tests {
             execution_mode: "cpu".into(),
             model_dir: None,
             service_url: None,
+            embedding_model: "wespeaker-voxceleb-CAM++_LM".into(),
+            embedding_dim: 512,
         }
     }
 

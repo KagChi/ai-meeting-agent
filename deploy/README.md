@@ -108,6 +108,9 @@ docker compose -f deploy/docker-compose.yml exec minutes-llm ollama pull qwen2.5
 DIARIZE_ENABLED=true
 DIARIZE_SERVICE_URL=http://diarize-service:8001
 DIARIZE_EXECUTION_MODE=cuda-fast
+# Voiceprints default to CAM++_LM (512-d). Re-enroll if switching models.
+DIARIZE_EMBEDDING_MODEL=wespeaker-voxceleb-CAM++_LM
+DIARIZE_EMBEDDING_DIM=512
 ```
 Then restart: `docker compose -f deploy/docker-compose.yml up -d diarize-service meeting-agent-server`
 

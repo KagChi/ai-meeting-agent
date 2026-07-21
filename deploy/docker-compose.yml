@@ -89,6 +89,8 @@ services:
       # cuda-fast matches ORT cu12 + CUDA 12.6 image (auto also tries CUDA first on Linux)
       - DIARIZE_EXECUTION_MODE=${DIARIZE_EXECUTION_MODE:-cuda-fast}
       - DIARIZE_MODEL_DIR=${DIARIZE_MODEL_DIR:-}
+      - DIARIZE_EMBEDDING_MODEL=${DIARIZE_EMBEDDING_MODEL:-wespeaker-voxceleb-CAM++_LM}
+      - DIARIZE_EMBEDDING_DIM=${DIARIZE_EMBEDDING_DIM:-512}
       # HF-aware download uses HF_HOME; HOME keeps legacy defaults on the volume
       - HOME=/app
       - HF_HOME=/app/.cache/huggingface
@@ -139,6 +141,8 @@ services:
       # container and must honor DIARIZE_EXECUTION_MODE (not stuck on cpu).
       # Server image is CPU-only unless GPU-enabled; cuda fails → CPU fallback.
       - DIARIZE_EXECUTION_MODE=${DIARIZE_EXECUTION_MODE:-auto}
+      - DIARIZE_EMBEDDING_MODEL=${DIARIZE_EMBEDDING_MODEL:-wespeaker-voxceleb-CAM++_LM}
+      - DIARIZE_EMBEDDING_DIM=${DIARIZE_EMBEDDING_DIM:-512}
     ports:
       - "${SERVER_HOST_PORT:-8080}:8080"
     volumes:
