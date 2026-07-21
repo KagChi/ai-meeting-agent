@@ -670,11 +670,21 @@ async fn refine_transcript(
 
     match summary_client.refine(&transcription).await {
         Ok(refined) => {
-            log::info!("[refine] completed successfully");
-            TranscriptionResponse {
-                refined_text: Some(refined),
-                ..transcription
+            log::info!(
+                "[refine] completed successfully (segments refined: {})",
+                refined.segment_refined.len()
+            );
+            let mut response = transcription;
+            if let Some(segments) = response.segments.as_mut() {
+                for (seg, refined_line) in segments.iter_mut().zip(refined.segment_refined.into_iter()) {
+                    let trimmed = refined_line.trim();
+                    if !trimmed.is_empty() {
+                        seg.refined_text = Some(trimmed.to_string());
+                    }
+                }
             }
+            response.refined_text = Some(refined.refined_text);
+            response
         }
         Err(e) => {
             log::warn!("[refine] failed: {:#}", e);

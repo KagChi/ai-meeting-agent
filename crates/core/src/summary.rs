@@ -14,6 +14,15 @@ pub struct SummaryClient {
     config: SummaryConfig,
 }
 
+/// Result of LLM transcript refinement.
+#[derive(Debug, Clone)]
+pub struct RefineResult {
+    /// Joined document-level refined text (space-separated segment refinements).
+    pub refined_text: String,
+    /// Per-segment refined text, same length/order as input segments (empty if no segments).
+    pub segment_refined: Vec<String>,
+}
+
 #[derive(Debug, Clone)]
 pub struct SummarizeOptions {
     pub template: SummaryTemplate,
@@ -125,71 +134,162 @@ impl SummaryClient {
         })
     }
 
-    /// Refine a raw transcript using LLM to improve formatting, punctuation, and readability.
-    /// Returns the refined text as a String.
-    pub async fn refine(&self, transcript: &TranscriptionResponse) -> Result<String> {
+    /// Refine a raw transcript using LLM.
+    ///
+    /// When segments are present, returns refined text **per segment** (same length/order)
+    /// plus a joined document-level string. Without segments, only the document string is set.
+    pub async fn refine(
+        &self,
+        transcript: &TranscriptionResponse,
+    ) -> Result<RefineResult> {
         let system_prompt = "You are a transcript refinement assistant. Your task is to improve raw transcripts by:\n\
             1. Adding proper punctuation and capitalization\n\
-            2. Structuring the text into clear paragraphs based on topic shifts and speaker changes\n\
-            3. Fixing transcription errors and making the text more readable\n\
-            4. Preserving all original content and meaning\n\
-            5. Keeping any speaker labels (like SPEAKER_00, SPEAKER_01) intact\n\
-            6. Maintaining the original language(s) of the transcript\n\n\
-            Output ONLY the refined transcript text without any additional commentary or metadata.";
+            2. Fixing transcription errors and making the text more readable\n\
+            3. Preserving all original content and meaning\n\
+            4. Maintaining the original language(s) of the transcript\n\
+            5. Keeping each input line as exactly one output line with the same [N] index prefix\n\
+            6. Do NOT merge, split, reorder, or drop lines\n\
+            7. Do NOT add commentary or metadata\n\n\
+            Output format: one line per input line, each starting with the same [N] prefix.";
 
         let url = self.config.resolve_base_url();
-        let chunks = chunk_refinement_input(transcript, REFINE_CHUNK_CHARS);
-        log::info!(
-            "Sending refinement request to {} (model: {}, chunks: {})",
-            url,
-            self.config.model,
-            chunks.len()
-        );
+        let segments = transcript.segments.as_deref().unwrap_or(&[]);
 
-        let mut refined_chunks = Vec::with_capacity(chunks.len());
-        for (idx, chunk) in chunks.iter().enumerate() {
-            let user_prompt = if chunks.len() == 1 {
-                format!("Refine this transcript:\n\n{chunk}")
-            } else {
-                format!(
-                    "Refine this transcript chunk ({}/{}). Do not summarize. Do not add chunk labels.\n\n{}",
-                    idx + 1,
-                    chunks.len(),
-                    chunk
-                )
-            };
-
-            let request = ChatRequest {
-                model: self.config.model.clone(),
-                messages: vec![
-                    ChatMessage {
-                        role: "system".to_string(),
-                        content: system_prompt.to_string(),
-                    },
-                    ChatMessage {
-                        role: "user".to_string(),
-                        content: user_prompt,
-                    },
-                ],
-                temperature: 0.3,
-                max_tokens: self.config.max_tokens.max(1024),
-            };
-
+        if segments.is_empty() {
+            let chunks = chunk_words(&transcript.text, REFINE_CHUNK_CHARS);
             log::info!(
-                "Sending refinement chunk {}/{} ({} chars)",
-                idx + 1,
-                chunks.len(),
-                chunk.len()
+                "Sending refinement request to {} (model: {}, text chunks: {})",
+                url,
+                self.config.model,
+                chunks.len()
             );
-            refined_chunks.push(
-                self.send_chat_request(&url, &request, "refinement")
-                    .await?
-                    .trim()
-                    .to_string(),
-            );
+            let mut refined_chunks = Vec::with_capacity(chunks.len());
+            for (idx, chunk) in chunks.iter().enumerate() {
+                let user_prompt = if chunks.len() == 1 {
+                    format!("Refine this transcript text. Output only the refined text:\n\n{chunk}")
+                } else {
+                    format!(
+                        "Refine this transcript chunk ({}/{}). Do not summarize.\n\n{}",
+                        idx + 1,
+                        chunks.len(),
+                        chunk
+                    )
+                };
+                refined_chunks.push(
+                    self.send_refine_request(&url, system_prompt, &user_prompt)
+                        .await?,
+                );
+            }
+            return Ok(RefineResult {
+                refined_text: refined_chunks.join("\n\n"),
+                segment_refined: Vec::new(),
+            });
         }
 
-        Ok(refined_chunks.join("\n\n"))
+        let indexed_lines: Vec<(usize, String)> = segments
+            .iter()
+            .enumerate()
+            .map(|(i, s)| {
+                let text = s.text.trim();
+                let line = match s.speaker.as_deref() {
+                    Some(speaker) if !speaker.trim().is_empty() => {
+                        format!("[{i}] {speaker}: {text}")
+                    }
+                    _ => format!("[{i}] {text}"),
+                };
+                (i, line)
+            })
+            .collect();
+
+        let line_chunks = chunk_indexed_lines(&indexed_lines, REFINE_CHUNK_CHARS);
+        log::info!(
+            "Sending refinement request to {} (model: {}, segment chunks: {}, segments: {})",
+            url,
+            self.config.model,
+            line_chunks.len(),
+            segments.len()
+        );
+
+        let mut segment_refined = vec![None; segments.len()];
+        for (chunk_idx, chunk_lines) in line_chunks.iter().enumerate() {
+            let body = chunk_lines
+                .iter()
+                .map(|(_, line)| line.as_str())
+                .collect::<Vec<_>>()
+                .join("\n");
+            let user_prompt = format!(
+                "Refine this transcript chunk ({}/{}). Keep every [N] line; one refined line per input line.\n\n{}",
+                chunk_idx + 1,
+                line_chunks.len(),
+                body
+            );
+
+            log::info!(
+                "Sending refinement chunk {}/{} ({} lines, {} chars)",
+                chunk_idx + 1,
+                line_chunks.len(),
+                chunk_lines.len(),
+                body.len()
+            );
+
+            let response = self
+                .send_refine_request(&url, system_prompt, &user_prompt)
+                .await?;
+            let parsed = parse_indexed_refined_lines(&response);
+            for (i, _) in chunk_lines {
+                if let Some(text) = parsed.get(i) {
+                    segment_refined[*i] = Some(text.clone());
+                }
+            }
+        }
+
+        // Fallback: keep raw text for any segment the model dropped
+        for (i, slot) in segment_refined.iter_mut().enumerate() {
+            if slot.is_none() {
+                log::warn!("[refine] segment {i} missing from LLM output; keeping raw");
+                *slot = Some(segments[i].text.trim().to_string());
+            }
+        }
+
+        let refined_joined = segment_refined
+            .iter()
+            .filter_map(|s| s.as_ref())
+            .map(|s| s.as_str())
+            .collect::<Vec<_>>()
+            .join(" ");
+
+        Ok(RefineResult {
+            refined_text: refined_joined,
+            segment_refined: segment_refined.into_iter().map(|s| s.unwrap_or_default()).collect(),
+        })
+    }
+
+    async fn send_refine_request(
+        &self,
+        url: &str,
+        system_prompt: &str,
+        user_prompt: &str,
+    ) -> Result<String> {
+        let request = ChatRequest {
+            model: self.config.model.clone(),
+            messages: vec![
+                ChatMessage {
+                    role: "system".to_string(),
+                    content: system_prompt.to_string(),
+                },
+                ChatMessage {
+                    role: "user".to_string(),
+                    content: user_prompt.to_string(),
+                },
+            ],
+            temperature: 0.3,
+            max_tokens: self.config.max_tokens.max(1024),
+        };
+        Ok(self
+            .send_chat_request(url, &request, "refinement")
+            .await?
+            .trim()
+            .to_string())
     }
 
     async fn send_chat_request(
@@ -243,64 +343,65 @@ impl SummaryClient {
     }
 }
 
-fn chunk_refinement_input(transcript: &TranscriptionResponse, max_chars: usize) -> Vec<String> {
-    let segments = transcript.segments.as_deref().unwrap_or(&[]);
-    if !segments.is_empty() {
-        let lines = segments.iter().map(|s| {
-            let text = s.text.trim();
-            match s.speaker.as_deref() {
-                Some(speaker) if !speaker.trim().is_empty() => format!("{}: {}", speaker, text),
-                _ => text.to_string(),
-            }
-        });
-        return chunk_lines(lines, max_chars);
+/// Group indexed segment lines into character-budgeted chunks (never split a line).
+fn chunk_indexed_lines(
+    lines: &[(usize, String)],
+    max_chars: usize,
+) -> Vec<Vec<(usize, String)>> {
+    let mut chunks: Vec<Vec<(usize, String)>> = Vec::new();
+    let mut current: Vec<(usize, String)> = Vec::new();
+    let mut current_len = 0usize;
+
+    for (idx, line) in lines {
+        let line_len = line.len();
+        let sep = if current.is_empty() { 0 } else { 1 };
+        if !current.is_empty() && current_len + sep + line_len > max_chars {
+            chunks.push(std::mem::take(&mut current));
+            current_len = 0;
+        }
+        current_len += if current.is_empty() { 0 } else { 1 } + line_len;
+        current.push((*idx, line.clone()));
     }
 
-    chunk_words(&transcript.text, max_chars)
+    if !current.is_empty() {
+        chunks.push(current);
+    }
+    if chunks.is_empty() {
+        chunks.push(Vec::new());
+    }
+    chunks
 }
 
-fn chunk_lines<I>(lines: I, max_chars: usize) -> Vec<String>
-where
-    I: IntoIterator<Item = String>,
-{
-    let mut chunks = Vec::new();
-    let mut current = String::new();
-
-    for line in lines {
-        if line.trim().is_empty() {
+/// Parse lines like `[3] refined text here` into a map of index → text.
+fn parse_indexed_refined_lines(response: &str) -> std::collections::HashMap<usize, String> {
+    let mut out = std::collections::HashMap::new();
+    for raw in response.lines() {
+        let line = raw.trim();
+        if line.is_empty() {
             continue;
         }
-
-        if line.len() > max_chars {
-            if !current.trim().is_empty() {
-                chunks.push(current.trim().to_string());
-                current.clear();
+        let Some(rest) = line.strip_prefix('[') else {
+            continue;
+        };
+        let Some(close) = rest.find(']') else {
+            continue;
+        };
+        let Ok(idx) = rest[..close].trim().parse::<usize>() else {
+            continue;
+        };
+        let mut text = rest[close + 1..].trim().to_string();
+        // Drop optional "SPEAKER_XX: " prefix the model may echo
+        if let Some(colon) = text.find(':') {
+            let prefix = text[..colon].trim();
+            if prefix.starts_with("SPEAKER") || prefix.chars().all(|c| c.is_ascii_digit()) {
+                text = text[colon + 1..].trim().to_string();
             }
-            chunks.extend(chunk_words(&line, max_chars));
-            continue;
         }
-
-        let separator_len = if current.is_empty() { 0 } else { 1 };
-        if current.len() + separator_len + line.len() > max_chars && !current.is_empty() {
-            chunks.push(current.trim().to_string());
-            current.clear();
+        if !text.is_empty() {
+            out.insert(idx, text);
         }
-
-        if !current.is_empty() {
-            current.push('\n');
-        }
-        current.push_str(line.trim());
     }
-
-    if !current.trim().is_empty() {
-        chunks.push(current.trim().to_string());
-    }
-
-    if chunks.is_empty() {
-        chunks.push(String::new());
-    }
-
-    chunks
+    out
 }
 
 fn chunk_words(text: &str, max_chars: usize) -> Vec<String> {
@@ -517,7 +618,30 @@ mod tests {
             compression_ratio: None,
             no_speech_prob: None,
             speaker: None,
+            refined_text: None,
         }
+    }
+
+    #[test]
+    fn test_parse_indexed_refined_lines() {
+        let map = parse_indexed_refined_lines(
+            "[0] Hello world.\n[1] SPEAKER_00: Second line.\nnoise\n[2] Third.",
+        );
+        assert_eq!(map.get(&0).map(String::as_str), Some("Hello world."));
+        assert_eq!(map.get(&1).map(String::as_str), Some("Second line."));
+        assert_eq!(map.get(&2).map(String::as_str), Some("Third."));
+    }
+
+    #[test]
+    fn test_chunk_indexed_lines() {
+        let lines = vec![
+            (0, "[0] a".to_string()),
+            (1, "[1] bbb".to_string()),
+            (2, "[2] c".to_string()),
+        ];
+        let chunks = chunk_indexed_lines(&lines, 12);
+        assert!(chunks.len() >= 2);
+        assert_eq!(chunks.iter().map(|c| c.len()).sum::<usize>(), 3);
     }
 
     #[test]

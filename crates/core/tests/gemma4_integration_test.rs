@@ -57,6 +57,7 @@ fn load_transcript() -> TranscriptionResponse {
                     compression_ratio: None,
                     no_speech_prob: None,
                     speaker: None,
+                    refined_text: None,
                 })
                 .collect();
 
@@ -100,6 +101,7 @@ fn load_transcript() -> TranscriptionResponse {
             compression_ratio: None,
             no_speech_prob: None,
             speaker: None,
+            refined_text: None,
         }]),
         refined_text: None,
     }

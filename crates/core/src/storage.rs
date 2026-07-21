@@ -443,8 +443,9 @@ impl MeetingStorage {
                 let result = sqlx::query(
                     "INSERT INTO transcript_segments (
                         meeting_id, version, segment_id, start, end, text, speaker,
-                        tokens, temperature, avg_logprob, compression_ratio, no_speech_prob
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        tokens, temperature, avg_logprob, compression_ratio, no_speech_prob,
+                        refined_text
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 )
                 .bind(meeting_id)
                 .bind(version)
@@ -463,6 +464,7 @@ impl MeetingStorage {
                 .bind(segment.avg_logprob.map(|v| v as f64))
                 .bind(segment.compression_ratio.map(|v| v as f64))
                 .bind(segment.no_speech_prob.map(|v| v as f64))
+                .bind(segment.refined_text.as_deref())
                 .execute(&self.db)
                 .await;
 
@@ -481,8 +483,8 @@ impl MeetingStorage {
 
         // Record version metadata
         sqlx::query(
-            "INSERT INTO transcript_versions (meeting_id, version, provider, model, language, segment_count)
-             VALUES (?, ?, ?, ?, ?, ?)",
+            "INSERT INTO transcript_versions (meeting_id, version, provider, model, language, segment_count, refined_text)
+             VALUES (?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(meeting_id)
         .bind(version)
@@ -490,6 +492,7 @@ impl MeetingStorage {
         .bind(model)
         .bind(response.language.as_deref())
         .bind(response.segments.as_ref().map(|s| s.len()).unwrap_or(0) as i64)
+        .bind(response.refined_text.as_deref())
         .execute(&self.db)
         .await
         .context("Failed to insert transcript version")?;
@@ -512,14 +515,47 @@ impl MeetingStorage {
             .collect::<Vec<_>>()
             .join(" ");
         let duration = segments.last().map(|s| s.end);
+        let refined_text = self.get_refined_text(meeting_id, version).await?;
 
         Ok(TranscriptionResponse {
             text,
             language: None,
             duration,
             segments: Some(segments),
-            refined_text: None,
+            refined_text,
         })
+    }
+
+    async fn get_refined_text(
+        &self,
+        meeting_id: &str,
+        version: Option<u32>,
+    ) -> Result<Option<String>> {
+        let refined = if let Some(v) = version {
+            sqlx::query_scalar::<_, Option<String>>(
+                "SELECT refined_text FROM transcript_versions WHERE meeting_id = ? AND version = ?",
+            )
+            .bind(meeting_id)
+            .bind(v as i64)
+            .fetch_optional(&self.db)
+            .await
+            .context("Failed to load refined_text")?
+            .flatten()
+        } else {
+            sqlx::query_scalar::<_, Option<String>>(
+                "SELECT refined_text FROM transcript_versions
+                 WHERE meeting_id = ?
+                 ORDER BY version DESC
+                 LIMIT 1",
+            )
+            .bind(meeting_id)
+            .fetch_optional(&self.db)
+            .await
+            .context("Failed to load refined_text")?
+            .flatten()
+        };
+
+        Ok(refined.filter(|s| !s.is_empty()))
     }
 
     /// Get transcript segments with pagination and optional version.
@@ -541,7 +577,7 @@ impl MeetingStorage {
 
         let query = format!(
             "SELECT segment_id, start, end, text, speaker, tokens, temperature,
-                    avg_logprob, compression_ratio, no_speech_prob
+                    avg_logprob, compression_ratio, no_speech_prob, refined_text
              FROM transcript_segments
              WHERE meeting_id = ? {}
              ORDER BY segment_id ASC
@@ -569,6 +605,9 @@ impl MeetingStorage {
                 let tokens = row
                     .try_get::<Option<String>, _>(5)?
                     .and_then(|s| serde_json::from_str(&s).ok());
+                let refined_text = row
+                    .try_get::<Option<String>, _>(10)?
+                    .filter(|s| !s.is_empty());
                 Ok(TranscriptSegment {
                     id: row.try_get::<i64, _>(0)? as u32,
                     start,
@@ -581,6 +620,7 @@ impl MeetingStorage {
                     avg_logprob: row.try_get::<Option<f64>, _>(7)?.map(|v| v as f32),
                     compression_ratio: row.try_get::<Option<f64>, _>(8)?.map(|v| v as f32),
                     no_speech_prob: row.try_get::<Option<f64>, _>(9)?.map(|v| v as f32),
+                    refined_text,
                 })
             })
             .collect()
@@ -781,6 +821,7 @@ impl MeetingStorage {
                     avg_logprob: None,
                     compression_ratio: None,
                     no_speech_prob: None,
+                    refined_text: None,
                 })
             })
             .collect()
@@ -1145,6 +1186,7 @@ mod tests {
             compression_ratio: None,
             no_speech_prob: None,
             speaker: None,
+            refined_text: None,
         }
     }
 
@@ -1177,6 +1219,35 @@ mod tests {
             .unwrap();
 
         meeting.id
+    }
+
+    #[tokio::test]
+    async fn save_and_load_refined_text() {
+        let (_dir, storage) = setup().await;
+        let mut meeting = Meeting::new("Refined".to_string());
+        meeting.status = MeetingStatus::Ready;
+        storage.create_meeting(&meeting).await.unwrap();
+
+        let mut seg = segment(0, 0.0, "raw uh text");
+        seg.refined_text = Some("Raw text.".to_string());
+        let response = TranscriptionResponse {
+            text: "raw uh text".to_string(),
+            language: Some("en".to_string()),
+            duration: Some(5.0),
+            segments: Some(vec![seg]),
+            refined_text: Some("Raw text.".to_string()),
+        };
+        storage
+            .save_transcript(&meeting.id, &response, "test", "test-model", 5)
+            .await
+            .unwrap();
+
+        let loaded = storage.get_transcript(&meeting.id, None).await.unwrap();
+        assert_eq!(loaded.text, "raw uh text");
+        assert_eq!(loaded.refined_text.as_deref(), Some("Raw text."));
+        let segs = loaded.segments.as_ref().unwrap();
+        assert_eq!(segs.len(), 1);
+        assert_eq!(segs[0].refined_text.as_deref(), Some("Raw text."));
     }
 
     #[tokio::test]
