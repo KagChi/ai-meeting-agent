@@ -119,6 +119,7 @@ pub fn build_router(state: AppState) -> Router {
         )
         .route("/import", post(import_handlers::create_import))
         .route("/import/validate", post(import_handlers::validate_import))
+        .route("/jobs", get(import_handlers::list_jobs))
         .route(
             "/jobs/:job_id/status",
             get(import_handlers::get_import_status),

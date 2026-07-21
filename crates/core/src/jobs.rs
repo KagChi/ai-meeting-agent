@@ -21,6 +21,8 @@ pub enum JobType {
     Import,
     Summary,
     Retranscribe,
+    /// Background voice-bank speaker identification (non-blocking).
+    Identify,
 }
 
 /// State of a background job.

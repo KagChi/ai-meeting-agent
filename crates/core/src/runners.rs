@@ -7,7 +7,7 @@
 
 use crate::audio;
 use crate::config::Config;
-use crate::jobs::{JobRegistry, ProgressEvent};
+use crate::jobs::{JobRegistry, JobType, ProgressEvent};
 use crate::models::{Meeting, SummaryFormat, SummaryStatus, SummaryTemplate};
 use crate::storage::MeetingStorage;
 use crate::summary::{SummarizeOptions, SummaryClient};
@@ -152,18 +152,6 @@ async fn run_import_inner(
         maybe_diarize(final_audio, transcription, config, registry, job_id).await;
     check_cancelled(cancel_token)?;
 
-    let transcription = maybe_identify(
-        final_audio,
-        transcription,
-        storage,
-        config,
-        registry,
-        job_id,
-        &meeting.id,
-    )
-    .await;
-    check_cancelled(cancel_token)?;
-
     let transcription = refine_transcript(transcription, config, registry, job_id).await;
 
     registry.update_progress(
@@ -194,6 +182,15 @@ async fn run_import_inner(
             Some(duration_seconds),
         )
         .await?;
+
+    // Voice-bank identify runs as its own job so import is not blocked.
+    spawn_identify_job_if_needed(
+        storage,
+        config,
+        registry,
+        &meeting.id,
+        &transcription,
+    );
 
     Ok(())
 }
@@ -568,18 +565,6 @@ async fn run_import_memory_pipeline(
     .await;
     check_cancelled(&cfg.cancel_token)?;
 
-    let transcription = maybe_identify(
-        working_path,
-        transcription,
-        &cfg.storage,
-        &cfg.config,
-        &cfg.registry,
-        &cfg.job_id,
-        &meeting.id,
-    )
-    .await;
-    check_cancelled(&cfg.cancel_token)?;
-
     let transcription =
         refine_transcript(transcription, &cfg.config, &cfg.registry, &cfg.job_id).await;
 
@@ -626,6 +611,14 @@ async fn run_import_memory_pipeline(
         )
         .await?;
 
+    spawn_identify_job_if_needed(
+        &cfg.storage,
+        &cfg.config,
+        &cfg.registry,
+        &meeting.id,
+        &transcription,
+    );
+
     Ok(())
 }
 
@@ -664,64 +657,126 @@ async fn maybe_diarize(
     }
 }
 
-/// Optional voiceprint identify after diarize. Soft-fails: keeps diar labels.
+fn has_speaker_labels(transcription: &TranscriptionResponse) -> bool {
+    transcription
+        .segments
+        .as_ref()
+        .map(|s| s.iter().any(|seg| seg.speaker.is_some()))
+        .unwrap_or(false)
+}
+
+/// Spawn a non-blocking voice-bank identify job after transcript is saved.
 ///
-/// Unmatched speakers with enough speech are auto-enrolled into the voice bank.
-async fn maybe_identify(
-    audio_path: &std::path::Path,
-    mut transcription: TranscriptionResponse,
+/// Does not block import/retranscribe. Multiple identify jobs may run in parallel.
+fn spawn_identify_job_if_needed(
     storage: &Arc<MeetingStorage>,
     config: &Config,
     registry: &Arc<JobRegistry>,
-    job_id: &str,
     meeting_id: &str,
-) -> TranscriptionResponse {
+    transcription: &TranscriptionResponse,
+) {
     #[cfg(feature = "diarization")]
     {
-        if !config.diarize.enabled {
-            return transcription;
+        if !config.diarize.enabled || !has_speaker_labels(transcription) {
+            return;
         }
-        let has_labels = transcription
-            .segments
-            .as_ref()
-            .map(|s| s.iter().any(|seg| seg.speaker.is_some()))
-            .unwrap_or(false);
-        if !has_labels {
-            return transcription;
-        }
+
+        let identify_job_id = registry.create_job(JobType::Identify);
+        registry.set_meeting_id(&identify_job_id, meeting_id.to_string());
         registry.update_progress(
-            job_id,
-            ProgressEvent::new("identifying", "Speaker identification").with_percent(78.0),
+            &identify_job_id,
+            ProgressEvent::new("queued", "Speaker identification queued").with_percent(0.0),
         );
-        match crate::voiceprint::identify_transcript_with_meeting(
-            audio_path,
-            &mut transcription,
-            storage,
+
+        let storage = Arc::clone(storage);
+        let config = config.clone();
+        let registry = Arc::clone(registry);
+        let meeting_id = meeting_id.to_string();
+        let cancel_token = registry
+            .cancel_token(&identify_job_id)
+            .unwrap_or_else(CancellationToken::new);
+
+        log::info!(
+            "[identify] spawned background job {identify_job_id} for meeting {meeting_id}"
+        );
+
+        tokio::spawn(async move {
+            run_identify_job(
+                identify_job_id,
+                meeting_id,
+                config,
+                storage,
+                registry,
+                cancel_token,
+            )
+            .await;
+        });
+    }
+    #[cfg(not(feature = "diarization"))]
+    {
+        let _ = (storage, config, registry, meeting_id, transcription);
+    }
+}
+
+/// Background voice-bank identify job entry point.
+pub async fn run_identify_job(
+    job_id: String,
+    meeting_id: String,
+    config: Config,
+    storage: Arc<MeetingStorage>,
+    registry: Arc<JobRegistry>,
+    cancel_token: CancellationToken,
+) {
+    #[cfg(feature = "diarization")]
+    {
+        if cancel_token.is_cancelled() {
+            registry.cancel_job(&job_id);
+            return;
+        }
+
+        registry.update_progress(
+            &job_id,
+            ProgressEvent::new("identifying", "Identifying speakers").with_percent(20.0),
+        );
+
+        let result = crate::voiceprint::identify_meeting(
+            storage.as_ref(),
+            &meeting_id,
             &config.diarize,
             crate::voiceprint::DEFAULT_IDENTIFY_THRESHOLD,
-            Some(meeting_id),
         )
-        .await
-        {
-            Ok(result) => {
+        .await;
+
+        if cancel_token.is_cancelled() {
+            registry.cancel_job(&job_id);
+            return;
+        }
+
+        match result {
+            Ok((result, updated)) => {
                 log::info!(
-                    "[identify] matched={} guests={} skipped={}",
+                    "[identify] job {job_id} meeting {meeting_id}: matched={} guests={} skipped={} updated={updated}",
                     result.matched,
                     result.guests,
                     result.skipped
                 );
-                transcription
+                registry.update_progress(
+                    &job_id,
+                    ProgressEvent::new("completed", format!("Identified speakers ({updated} segments)"))
+                        .with_percent(100.0),
+                );
+                registry.complete_job(&job_id);
             }
             Err(e) => {
-                log::warn!("[identify] failed, keeping diarization labels: {e:#}");
-                transcription
+                log::error!("[identify] job {job_id} failed for meeting {meeting_id}: {e:#}");
+                registry.fail_job(&job_id, format!("Speaker identification failed: {e:#}"));
             }
         }
     }
     #[cfg(not(feature = "diarization"))]
     {
-        let _ = (audio_path, storage, config, registry, job_id, meeting_id);
-        transcription
+        let _ = (meeting_id, config, storage, cancel_token);
+        registry.fail_job(&job_id, "Speaker identify requires the diarization feature".into());
     }
 }
 
@@ -855,28 +910,13 @@ async fn run_retranscribe_inner(cfg: &RetranscribeConfig) -> Result<()> {
         anyhow::bail!("Job cancelled before diarization");
     }
 
-    // Same as import: diarize (+ optional identify) before refine so Enhance keeps labels
+    // Diarize before refine so Enhance keeps labels; identify runs after save (background).
     let transcription = maybe_diarize(
         &cfg.audio_path,
         transcription,
         &cfg.config,
         &cfg.registry,
         &cfg.job_id,
-    )
-    .await;
-
-    if cfg.cancel_token.is_cancelled() {
-        anyhow::bail!("Job cancelled before identification");
-    }
-
-    let transcription = maybe_identify(
-        &cfg.audio_path,
-        transcription,
-        &cfg.storage,
-        &cfg.config,
-        &cfg.registry,
-        &cfg.job_id,
-        &cfg.meeting_id,
     )
     .await;
 
@@ -912,6 +952,14 @@ async fn run_retranscribe_inner(cfg: &RetranscribeConfig) -> Result<()> {
             duration_seconds,
         )
         .await?;
+
+    spawn_identify_job_if_needed(
+        &cfg.storage,
+        &cfg.config,
+        &cfg.registry,
+        &cfg.meeting_id,
+        &transcription,
+    );
 
     Ok(())
 }

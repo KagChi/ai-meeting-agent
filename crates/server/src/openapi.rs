@@ -38,6 +38,7 @@ use utoipa::OpenApi;
         // Import handlers
         import_handlers::create_import,
         import_handlers::validate_import,
+        import_handlers::list_jobs,
         import_handlers::get_import_status,
         import_handlers::cancel_import,
         // Config handlers

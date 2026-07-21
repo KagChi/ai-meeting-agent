@@ -195,9 +195,32 @@ pub async fn validate_import(
     Err(ApiError::BadRequest("Missing 'file' field".to_string()))
 }
 
+/// GET /jobs
+///
+/// List in-memory background jobs (import, summary, retranscribe, identify).
+#[utoipa::path(
+    get,
+    path = "/jobs",
+    tag = "jobs",
+    responses(
+        (status = 200, description = "Job list", body = Vec<JobStatusResponse>)
+    )
+)]
+pub async fn list_jobs(
+    State(state): State<AppState>,
+) -> Result<Json<Vec<JobStatusResponse>>, ApiError> {
+    let jobs: Vec<JobStatusResponse> = state
+        .jobs
+        .list_jobs()
+        .into_iter()
+        .map(JobStatusResponse::from)
+        .collect();
+    Ok(Json(jobs))
+}
+
 /// GET /jobs/:job_id/status
 ///
-/// Poll the current status of an import job.
+/// Poll the current status of a background job.
 #[utoipa::path(
     get,
     path = "/jobs/{job_id}/status",
