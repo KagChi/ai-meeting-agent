@@ -109,6 +109,8 @@ DIARIZE_ENABLED=true
 DIARIZE_SERVICE_URL=http://diarize-service:8001
 DIARIZE_EXECUTION_MODE=cuda-fast
 # Voiceprints default to CAM++_LM (512-d). Re-enroll if switching models.
+# When DIARIZE_SERVICE_URL is set, the API server stores SQLite voice bank only;
+# embedding inference is POST /v1/embed on diarize-service (GPU).
 DIARIZE_EMBEDDING_MODEL=wespeaker-voxceleb-CAM++_LM
 DIARIZE_EMBEDDING_DIM=512
 ```

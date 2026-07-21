@@ -14,7 +14,9 @@ use tower_http::trace::TraceLayer;
 use tracing::{error, info, warn};
 
 use meeting_agent_core::{
-    config::DiarizeConfig, diarize::Diarizer, transcription::TranscriptionResponse,
+    config::DiarizeConfig,
+    diarize::{embed_audio_file_local, Diarizer},
+    transcription::TranscriptionResponse,
 };
 
 #[derive(Clone)]
@@ -35,7 +37,22 @@ struct DiarizeResponse {
 struct HealthResponse {
     status: String,
     gpu_mode: String,
+    embedding_model: String,
+    embedding_dim: u32,
     version: String,
+}
+
+#[derive(Debug, Serialize)]
+struct EmbedResponse {
+    success: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    embedding: Option<Vec<f32>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    dim: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    model: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
 }
 
 #[derive(Debug)]
@@ -87,8 +104,10 @@ async fn main() {
     let hf_home = std::env::var("HF_HOME").unwrap_or_else(|_| "(unset)".into());
     let hub_cache = meeting_agent_core::diarize::resolve_hf_hub_cache();
     info!(
-        "Diarization mode: {} model_dir={:?} HF_HOME={} hub_cache={}",
+        "Diarization mode: {} embed_model={} dim={} model_dir={:?} HF_HOME={} hub_cache={}",
         config.execution_mode,
+        config.embedding_model,
+        config.embedding_dim,
         config.model_dir,
         hf_home,
         hub_cache.display()
@@ -104,6 +123,7 @@ async fn main() {
 
     let app = Router::new()
         .route("/v1/diarize", post(diarize_handler))
+        .route("/v1/embed", post(embed_handler))
         .route("/health", get(health_handler))
         // Long meetings (up to 2h audio) need a generous body cap + per-request
         // timeout so axum's 2MB default and 30s idle don't kill the upload.
@@ -134,8 +154,123 @@ async fn health_handler(State(state): State<Arc<AppState>>) -> Json<HealthRespon
     Json(HealthResponse {
         status: "ok".to_string(),
         gpu_mode: state.config.execution_mode.clone(),
+        embedding_model: state.config.embedding_model.clone(),
+        embedding_dim: state.config.embedding_dim,
         version: env!("CARGO_PKG_VERSION").to_string(),
     })
+}
+
+/// Voiceprint embedding: multipart `audio` + optional `start_s` / `end_s`.
+/// Runs models in-process on this GPU service (service_url is forced None).
+async fn embed_handler(
+    State(state): State<Arc<AppState>>,
+    mut multipart: Multipart,
+) -> Result<Json<EmbedResponse>, AppError> {
+    let mut audio_bytes: Option<Vec<u8>> = None;
+    let mut start_s: Option<f64> = None;
+    let mut end_s: Option<f64> = None;
+
+    while let Some(field) = multipart
+        .next_field()
+        .await
+        .map_err(|e| AppError::InvalidRequest(format!("Multipart error: {}", e)))?
+    {
+        let name = field.name().unwrap_or("").to_string();
+        match name.as_str() {
+            "audio" => {
+                let data = field.bytes().await.map_err(|e| {
+                    AppError::InvalidRequest(format!("Failed to read audio: {}", e))
+                })?;
+                audio_bytes = Some(data.to_vec());
+            }
+            "start_s" => {
+                let t = field.text().await.map_err(|e| {
+                    AppError::InvalidRequest(format!("Failed to read start_s: {}", e))
+                })?;
+                start_s = Some(t.trim().parse::<f64>().map_err(|e| {
+                    AppError::InvalidRequest(format!("Invalid start_s: {e}"))
+                })?);
+            }
+            "end_s" => {
+                let t = field.text().await.map_err(|e| {
+                    AppError::InvalidRequest(format!("Failed to read end_s: {}", e))
+                })?;
+                end_s = Some(t.trim().parse::<f64>().map_err(|e| {
+                    AppError::InvalidRequest(format!("Invalid end_s: {e}"))
+                })?);
+            }
+            _ => {
+                warn!("Unknown field in embed multipart: {}", name);
+            }
+        }
+    }
+
+    let audio_bytes =
+        audio_bytes.ok_or_else(|| AppError::InvalidRequest("Missing 'audio' field".to_string()))?;
+
+    let temp_filename = format!("embed-{}.audio", uuid::Uuid::new_v4());
+    let temp_path = state.temp_dir.join(&temp_filename);
+    fs::write(&temp_path, &audio_bytes).await?;
+
+    info!(
+        "Processing embed request: {} bytes audio start={:?} end={:?} model={}",
+        audio_bytes.len(),
+        start_s,
+        end_s,
+        state.config.embedding_model
+    );
+
+    let config = state.config.clone();
+    let path = temp_path.clone();
+    let result = tokio::task::spawn_blocking(move || {
+        embed_audio_file_local(&path, start_s, end_s, &config)
+    })
+    .await;
+
+    if let Err(e) = fs::remove_file(&temp_path).await {
+        warn!("Failed to remove embed temp {}: {}", temp_path.display(), e);
+    }
+
+    let result = match result {
+        Ok(inner) => inner,
+        Err(e) => {
+            error!("embed task join error: {e}");
+            return Ok(Json(EmbedResponse {
+                success: false,
+                embedding: None,
+                dim: None,
+                model: Some(state.config.embedding_model.clone()),
+                error: Some(format!("embed task failed: {e}")),
+            }));
+        }
+    };
+
+    match result {
+        Ok(embedding) => {
+            let dim = embedding.len() as u32;
+            info!(
+                "Embed completed: dim={dim} model={}",
+                state.config.embedding_model
+            );
+            Ok(Json(EmbedResponse {
+                success: true,
+                embedding: Some(embedding),
+                dim: Some(dim),
+                model: Some(state.config.embedding_model.clone()),
+                error: None,
+            }))
+        }
+        Err(e) => {
+            error!("Embed failed: {e:#}");
+            Ok(Json(EmbedResponse {
+                success: false,
+                embedding: None,
+                dim: None,
+                model: Some(state.config.embedding_model.clone()),
+                error: Some(format!("{e:#}")),
+            }))
+        }
+    }
 }
 
 async fn diarize_handler(

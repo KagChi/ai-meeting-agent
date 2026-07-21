@@ -453,7 +453,26 @@ pub fn embed_samples(samples: &[f32], cfg: &DiarizeConfig) -> anyhow::Result<Vec
 }
 
 /// Decode file (optionally slice `[start_s, end_s)`) and embed.
+///
+/// When [`DiarizeConfig::service_url`] is set (API server), posts audio to
+/// `{service_url}/v1/embed` on diarize-service. When unset (diarize-service
+/// itself / local), runs models in-process.
 pub fn embed_audio_file(
+    audio_path: &Path,
+    start_s: Option<f64>,
+    end_s: Option<f64>,
+    cfg: &DiarizeConfig,
+) -> anyhow::Result<Vec<f32>> {
+    if let Some(url) = cfg.service_url.as_deref() {
+        if !url.trim().is_empty() {
+            return embed_audio_file_via_http(audio_path, start_s, end_s, url, cfg);
+        }
+    }
+    embed_audio_file_local(audio_path, start_s, end_s, cfg)
+}
+
+/// In-process embed only (no HTTP). Used by diarize-service and local tools.
+pub fn embed_audio_file_local(
     audio_path: &Path,
     start_s: Option<f64>,
     end_s: Option<f64>,
@@ -476,6 +495,152 @@ pub fn embed_audio_file(
         );
     }
     embed_samples(&samples[start_idx..end_idx], cfg)
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct EmbedServiceResponse {
+    success: bool,
+    #[serde(default)]
+    embedding: Option<Vec<f32>>,
+    #[serde(default)]
+    dim: Option<u32>,
+    #[serde(default)]
+    model: Option<String>,
+    #[serde(default)]
+    error: Option<String>,
+}
+
+fn embed_http_client() -> &'static reqwest::Client {
+    use std::sync::OnceLock;
+    use std::time::Duration;
+    static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+    CLIENT.get_or_init(|| {
+        reqwest::Client::builder()
+            .timeout(Duration::from_secs(600))
+            .pool_idle_timeout(Duration::from_secs(90))
+            .build()
+            .expect("failed to build embed reqwest client")
+    })
+}
+
+async fn call_embed_service(
+    audio_path: &Path,
+    start_s: Option<f64>,
+    end_s: Option<f64>,
+    service_url: &str,
+    cfg: &DiarizeConfig,
+) -> anyhow::Result<Vec<f32>> {
+    let file = tokio::fs::File::open(audio_path)
+        .await
+        .with_context(|| format!("Failed to open audio for embed: {}", audio_path.display()))?;
+    let audio_len = file.metadata().await.map(|m| m.len()).unwrap_or(0);
+    let file_name = audio_path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("audio.wav")
+        .to_string();
+
+    let audio_part = reqwest::multipart::Part::stream_with_length(file, audio_len)
+        .file_name(file_name)
+        .mime_str("audio/wav")?;
+
+    let mut form = reqwest::multipart::Form::new().part("audio", audio_part);
+    if let Some(s) = start_s {
+        form = form.text("start_s", s.to_string());
+    }
+    if let Some(s) = end_s {
+        form = form.text("end_s", s.to_string());
+    }
+
+    let url = format!("{}/v1/embed", service_url.trim_end_matches('/'));
+    log::debug!(
+        "[embed] remote POST {url} path={} start={:?} end={:?}",
+        audio_path.display(),
+        start_s,
+        end_s
+    );
+
+    let response = embed_http_client()
+        .post(&url)
+        .multipart(form)
+        .send()
+        .await
+        .context("Failed to send embed request to diarize-service")?;
+
+    if !response.status().is_success() {
+        anyhow::bail!(
+            "embed service status {}: {}",
+            response.status(),
+            response.text().await.unwrap_or_default()
+        );
+    }
+
+    let result: EmbedServiceResponse = response
+        .json()
+        .await
+        .context("Failed to parse embed service response")?;
+
+    if !result.success {
+        anyhow::bail!(
+            "embed service failed: {}",
+            result.error.unwrap_or_else(|| "unknown".into())
+        );
+    }
+
+    let emb = result
+        .embedding
+        .context("embed service returned no embedding")?;
+    if emb.is_empty() {
+        anyhow::bail!("embed service returned empty embedding");
+    }
+    if let Some(dim) = result.dim {
+        if dim as usize != emb.len() {
+            anyhow::bail!(
+                "embed service dim mismatch: header={dim} vec={}",
+                emb.len()
+            );
+        }
+    }
+    if emb.len() != cfg.embedding_dim as usize {
+        anyhow::bail!(
+            "embed dim {} != configured embedding_dim {}",
+            emb.len(),
+            cfg.embedding_dim
+        );
+    }
+    if let Some(ref model) = result.model {
+        if model != &cfg.embedding_model {
+            log::warn!(
+                "[embed] remote model={model} local config={}",
+                cfg.embedding_model
+            );
+        }
+    }
+    Ok(emb)
+}
+
+fn embed_audio_file_via_http(
+    audio_path: &Path,
+    start_s: Option<f64>,
+    end_s: Option<f64>,
+    service_url: &str,
+    cfg: &DiarizeConfig,
+) -> anyhow::Result<Vec<f32>> {
+    let path = audio_path.to_path_buf();
+    let url = service_url.to_string();
+    let cfg = cfg.clone();
+    match tokio::runtime::Handle::try_current() {
+        Ok(handle) => tokio::task::block_in_place(|| {
+            handle.block_on(call_embed_service(&path, start_s, end_s, &url, &cfg))
+        }),
+        Err(_) => {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .context("build tokio runtime for embed HTTP")?;
+            rt.block_on(call_embed_service(&path, start_s, end_s, &url, &cfg))
+        }
+    }
 }
 
 #[cfg(test)]

@@ -77,6 +77,8 @@ ENV RUST_LOG=info \
     HOME=/app \
     HF_HOME=/app/.cache/huggingface \
     TEMP=/tmp/diarize-service \
+    LD_LIBRARY_PATH=/app \
+    ORT_CUDA_VERSION=12 \
     NVIDIA_VISIBLE_DEVICES=all \
     NVIDIA_DRIVER_CAPABILITIES=compute,utility
 
