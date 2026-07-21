@@ -148,34 +148,9 @@ async fn run_import_inner(
 
     check_cancelled(cancel_token)?;
 
-    // Optional speaker diarization. Resilient: on failure, log and proceed
-    // without speaker labels rather than failing the whole import.
-    #[cfg(feature = "diarization")]
-    let transcription = if config.diarize.enabled {
-        registry.update_progress(
-            job_id,
-            ProgressEvent::new("diarizing", "Speaker diarization").with_percent(70.0),
-        );
-        check_cancelled(cancel_token)?;
-        match crate::diarize::Diarizer::diarize(final_audio, &transcription, &config.diarize).await
-        {
-            Ok(labeled) => labeled,
-            Err(e) => {
-                log::warn!("[diarize] failed, proceeding without speaker labels: {e:#}");
-                transcription
-            }
-        }
-    } else {
-        transcription
-    };
-
-    #[cfg(not(feature = "diarization"))]
-    let transcription = {
-        if config.diarize.enabled {
-            log::warn!("[diarize] feature not enabled, skipping speaker diarization");
-        }
-        transcription
-    };
+    let transcription =
+        maybe_diarize(final_audio, transcription, config, registry, job_id).await;
+    check_cancelled(cancel_token)?;
 
     let transcription = refine_transcript(transcription, config, registry, job_id).await;
 
@@ -561,34 +536,15 @@ async fn run_import_memory_pipeline(
 
     check_cancelled(&cfg.cancel_token)?;
 
-    #[cfg(feature = "diarization")]
-    let transcription = if cfg.config.diarize.enabled {
-        cfg.registry.update_progress(
-            &cfg.job_id,
-            ProgressEvent::new("diarizing", "Speaker diarization").with_percent(70.0),
-        );
-        check_cancelled(&cfg.cancel_token)?;
-
-        match crate::diarize::Diarizer::diarize(working_path, &transcription, &cfg.config.diarize)
-            .await
-        {
-            Ok(labeled) => labeled,
-            Err(e) => {
-                log::warn!("[diarize] failed, proceeding without speaker labels: {e:#}");
-                transcription
-            }
-        }
-    } else {
-        transcription
-    };
-
-    #[cfg(not(feature = "diarization"))]
-    let transcription = {
-        if cfg.config.diarize.enabled {
-            log::warn!("[diarize] feature not enabled, skipping speaker diarization");
-        }
-        transcription
-    };
+    let transcription = maybe_diarize(
+        working_path,
+        transcription,
+        &cfg.config,
+        &cfg.registry,
+        &cfg.job_id,
+    )
+    .await;
+    check_cancelled(&cfg.cancel_token)?;
 
     let transcription =
         refine_transcript(transcription, &cfg.config, &cfg.registry, &cfg.job_id).await;
@@ -637,6 +593,41 @@ async fn run_import_memory_pipeline(
         .await?;
 
     Ok(())
+}
+
+/// Optional speaker diarization. Soft-fails: on error, returns unlabeled transcript.
+async fn maybe_diarize(
+    audio_path: &std::path::Path,
+    transcription: TranscriptionResponse,
+    config: &Config,
+    registry: &Arc<JobRegistry>,
+    job_id: &str,
+) -> TranscriptionResponse {
+    #[cfg(feature = "diarization")]
+    {
+        if !config.diarize.enabled {
+            return transcription;
+        }
+        registry.update_progress(
+            job_id,
+            ProgressEvent::new("diarizing", "Speaker diarization").with_percent(70.0),
+        );
+        match crate::diarize::Diarizer::diarize(audio_path, &transcription, &config.diarize).await {
+            Ok(labeled) => labeled,
+            Err(e) => {
+                log::warn!("[diarize] failed, proceeding without speaker labels: {e:#}");
+                transcription
+            }
+        }
+    }
+    #[cfg(not(feature = "diarization"))]
+    {
+        let _ = (audio_path, registry, job_id);
+        if config.diarize.enabled {
+            log::warn!("[diarize] feature not enabled, skipping speaker diarization");
+        }
+        transcription
+    }
 }
 
 async fn refine_transcript(
@@ -765,12 +756,24 @@ async fn run_retranscribe_inner(cfg: &RetranscribeConfig) -> Result<()> {
         )
         .await?;
 
-    // Check cancellation before refining
+    if cfg.cancel_token.is_cancelled() {
+        anyhow::bail!("Job cancelled before diarization");
+    }
+
+    // Same as import: diarize before refine so Enhance keeps speaker labels
+    let transcription = maybe_diarize(
+        &cfg.audio_path,
+        transcription,
+        &cfg.config,
+        &cfg.registry,
+        &cfg.job_id,
+    )
+    .await;
+
     if cfg.cancel_token.is_cancelled() {
         anyhow::bail!("Job cancelled before refinement");
     }
 
-    // Refine transcript
     let transcription = refine_transcript(
         transcription,
         &cfg.config,
