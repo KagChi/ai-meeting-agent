@@ -433,13 +433,18 @@ fn chunk_words(text: &str, max_chars: usize) -> Vec<String> {
 }
 
 fn system_prompt(template: SummaryTemplate, format: SummaryFormat) -> String {
+    if matches!(template, SummaryTemplate::MeetingNotes) {
+        return meeting_notes_system_prompt(format);
+    }
+
     let section_desc = match template {
         SummaryTemplate::KeyPoints => "key points",
         SummaryTemplate::ActionItems => "action items",
         SummaryTemplate::Decisions => "decisions",
         SummaryTemplate::Full => "key points, action items, and decisions",
+        SummaryTemplate::MeetingNotes => unreachable!(),
     };
-    
+
     match format {
         SummaryFormat::Markdown => {
             format!(
@@ -463,16 +468,65 @@ fn system_prompt(template: SummaryTemplate, format: SummaryFormat) -> String {
     }
 }
 
+fn meeting_notes_system_prompt(format: SummaryFormat) -> String {
+    let format_note = match format {
+        SummaryFormat::Markdown => "Output valid GitHub-flavored Markdown only.",
+        SummaryFormat::RawText => "Output plain text following the same section order (no markdown tables if avoidable; use simple lists).",
+    };
+    format!(
+        "You are a meeting notes assistant for an internship program. \
+         Produce meeting notes that match this exact document structure and section order. \
+         {format_note} \
+         Be detailed, factual, and comprehensive. Infer date, participants, and topic from the transcript when not explicit. \
+         Action items must be measurable deliverables with owners when possible."
+    )
+}
+
 fn build_prompt(template: SummaryTemplate, format: SummaryFormat, transcript: &str, language: Option<&str>) -> String {
+    let lang_note = match language {
+        Some(l) => format!("\n\nWrite the notes in this language: {l}."),
+        None => String::new(),
+    };
+
+    if matches!(template, SummaryTemplate::MeetingNotes) {
+        return format!(
+            "Generate internship meeting notes from the transcript below.\n\n\
+             Use this exact Markdown structure (fill every section; use 'N/A' or '- (none)' when empty):\n\n\
+             # Meeting Notes\n\n\
+             ## Meeting Information\n\n\
+             | Item | Description |\n\
+             |------|-------------|\n\
+             | Date | <full date with weekday if known> |\n\
+             | Participants | <comma-separated names> |\n\
+             | Topic | <short meeting topic> |\n\n\
+             ---\n\n\
+             ## 1. Review Pending Tasks\n\n\
+             | Pending Task | Owner | Status | Remarks |\n\
+             |--------------|-------|--------|---------|\n\
+             | ... | ... | ... | ... |\n\n\
+             ---\n\n\
+             ## 2. Discussion Topics\n\n\
+             ### Topic 1: <title>\n\n\
+             **Reference:** <optional context>\n\n\
+             - bullet points covering discussion\n\n\
+             ### Topic N: ...\n\n\
+             ---\n\n\
+             ## 3. New Action Items\n\n\
+             | Task | Owner | Measurable Deliverable | Due Date | Evidence |\n\
+             |------|-------|------------------------|----------|----------|\n\
+             | ... | ... | ... | ... | ... |\n\n\
+             Do not wrap the whole document in a code fence. Output only the notes document.\n\
+             {lang_note}\n\n\
+             --- TRANSCRIPT START ---\n{transcript}\n--- TRANSCRIPT END ---"
+        );
+    }
+
     let template_name = match template {
         SummaryTemplate::KeyPoints => "key points only",
         SummaryTemplate::ActionItems => "action items only",
         SummaryTemplate::Decisions => "decisions only",
         SummaryTemplate::Full => "key points, action items, and decisions (all three sections)",
-    };
-    let lang_note = match language {
-        Some(l) => format!("\n\nWrite the summary in this language: {l}."),
-        None => String::new(),
+        SummaryTemplate::MeetingNotes => unreachable!(),
     };
     let format_note = match format {
         SummaryFormat::Markdown => " Use markdown formatting with headings and bullet points.",
@@ -506,6 +560,11 @@ fn parse_sections(
     content: &str,
     template: SummaryTemplate,
 ) -> (Vec<String>, Vec<String>, Vec<String>) {
+    // Meeting notes content is the full document; structured vecs are best-effort only.
+    if matches!(template, SummaryTemplate::MeetingNotes) {
+        return (Vec::new(), Vec::new(), Vec::new());
+    }
+
     let mut key_points = Vec::new();
     let mut action_items = Vec::new();
     let mut decisions = Vec::new();

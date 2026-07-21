@@ -970,6 +970,7 @@ impl MeetingStorage {
             SummaryTemplate::ActionItems => "actionitems",
             SummaryTemplate::Decisions => "decisions",
             SummaryTemplate::Full => "full",
+            SummaryTemplate::MeetingNotes => "meetingnotes",
         }
     }
 
@@ -979,6 +980,7 @@ impl MeetingStorage {
             "actionitems" => Ok(SummaryTemplate::ActionItems),
             "decisions" => Ok(SummaryTemplate::Decisions),
             "full" => Ok(SummaryTemplate::Full),
+            "meetingnotes" => Ok(SummaryTemplate::MeetingNotes),
             _ => anyhow::bail!("Invalid summary template in database: {}", value),
         }
     }

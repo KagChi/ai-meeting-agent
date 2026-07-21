@@ -138,7 +138,7 @@ pub async fn list_summaries(
     tag = "summaries",
     params(
         ("id" = String, Path, description = "Meeting ID or prefix"),
-        ("template" = String, Path, description = "Summary template: key_points, action_items, decisions, or full"),
+        ("template" = String, Path, description = "Summary template: key_points, action_items, decisions, full, or meeting_notes"),
         ("format" = Option<String>, Query, description = "Output format: markdown (default) or rawtext")
     ),
     responses(
@@ -167,8 +167,9 @@ fn parse_template(s: &str) -> Result<meeting_agent_core::models::SummaryTemplate
         "action_items" => Ok(meeting_agent_core::models::SummaryTemplate::ActionItems),
         "decisions" => Ok(meeting_agent_core::models::SummaryTemplate::Decisions),
         "full" => Ok(meeting_agent_core::models::SummaryTemplate::Full),
+        "meeting_notes" | "meetingnotes" => Ok(meeting_agent_core::models::SummaryTemplate::MeetingNotes),
         other => Err(ApiError::BadRequest(format!(
-            "Invalid summary template '{other}'. Valid: key_points, action_items, decisions, full"
+            "Invalid summary template '{other}'. Valid: key_points, action_items, decisions, full, meeting_notes"
         ))),
     }
 }

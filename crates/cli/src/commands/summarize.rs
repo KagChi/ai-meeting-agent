@@ -16,9 +16,10 @@ pub async fn run(id: String, template: String, format: Option<String>, language:
         "key-points" | "keypoints" => SummaryTemplate::KeyPoints,
         "action-items" | "actionitems" => SummaryTemplate::ActionItems,
         "decisions" => SummaryTemplate::Decisions,
+        "meeting-notes" | "meeting_notes" | "meetingnotes" => SummaryTemplate::MeetingNotes,
         other => {
             anyhow::bail!(
-                "Unknown template: {}. Use: full, key-points, action-items, decisions",
+                "Unknown template: {}. Use: full, key-points, action-items, decisions, meeting-notes",
                 other
             )
         }
