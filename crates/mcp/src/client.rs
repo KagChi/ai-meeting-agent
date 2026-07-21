@@ -101,10 +101,17 @@ impl MeetingAgentClient {
         title: Option<String>,
         date: Option<String>,
         participants: Option<Vec<String>>,
+        location: Option<String>,
+        organizer: Option<String>,
     ) -> Result<Value> {
-        if title.is_none() && date.is_none() && participants.is_none() {
+        if title.is_none()
+            && date.is_none()
+            && participants.is_none()
+            && location.is_none()
+            && organizer.is_none()
+        {
             return Err(ClientError::InvalidInput(
-                "title, date, or participants must be provided".to_string(),
+                "title, date, participants, location, or organizer must be provided".to_string(),
             ));
         }
 
@@ -117,6 +124,8 @@ impl MeetingAgentClient {
                 "title": title,
                 "date": date,
                 "participants": participants,
+                "location": location,
+                "organizer": organizer,
             }));
         self.send_json(request).await
     }

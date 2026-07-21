@@ -74,7 +74,7 @@ impl ServerHandler for MeetingAgentMcpServer {
             ),
             tool::<UpdateMeetingRequest>(
                 "updateMeeting",
-                "Update meeting title, date, and/or participants.",
+                "Update meeting title, date, participants, location, and/or organizer.",
             ),
             tool::<MeetingIdRequest>("deleteMeeting", "Delete meeting and associated files."),
             tool::<JobIdRequest>("cancelJob", "Cancel a running import or summary job."),
@@ -143,7 +143,14 @@ impl ServerHandler for MeetingAgentMcpServer {
             "updateMeeting" => {
                 let req: UpdateMeetingRequest = parse_arguments(&request.arguments)?;
                 self.client
-                    .update_meeting(&req.meeting_id, req.title, req.date, req.participants)
+                    .update_meeting(
+                        &req.meeting_id,
+                        req.title,
+                        req.date,
+                        req.participants,
+                        req.location,
+                        req.organizer,
+                    )
                     .await?
             }
             "deleteMeeting" => {

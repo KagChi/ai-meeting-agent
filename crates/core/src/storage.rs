@@ -415,6 +415,58 @@ impl MeetingStorage {
         Ok(count as u64)
     }
 
+    /// Bulk-rename speaker labels on the latest transcript version.
+    ///
+    /// `mapping` keys are existing labels (e.g. `"SPEAKER_00"`); values are the
+    /// new display names. FTS index is kept in sync via the `segments_au` trigger.
+    /// Returns total number of segment rows updated.
+    pub async fn rename_speakers(
+        &self,
+        meeting_id: &str,
+        mapping: &std::collections::HashMap<String, String>,
+    ) -> Result<u64> {
+        // Ensure meeting exists
+        self.get_meeting(meeting_id).await?;
+
+        if mapping.is_empty() {
+            return Ok(0);
+        }
+
+        let version: i64 = sqlx::query_scalar(
+            "SELECT COALESCE(MAX(version), 0) FROM transcript_segments WHERE meeting_id = ?",
+        )
+        .bind(meeting_id)
+        .fetch_one(&self.db)
+        .await
+        .context("Failed to resolve latest transcript version")?;
+
+        if version == 0 {
+            anyhow::bail!("Transcript not found for meeting: {}", meeting_id);
+        }
+
+        let mut total: u64 = 0;
+        for (old, new) in mapping {
+            if old == new {
+                continue;
+            }
+            let result = sqlx::query(
+                "UPDATE transcript_segments
+                 SET speaker = ?
+                 WHERE meeting_id = ? AND version = ? AND speaker = ?",
+            )
+            .bind(new)
+            .bind(meeting_id)
+            .bind(version)
+            .bind(old)
+            .execute(&self.db)
+            .await
+            .context("Failed to rename speaker labels")?;
+            total += result.rows_affected();
+        }
+
+        Ok(total)
+    }
+
     /// Save transcript data and create transcript version metadata.
     pub async fn save_transcript(
         &self,
@@ -1255,6 +1307,49 @@ mod tests {
         let segs = loaded.segments.as_ref().unwrap();
         assert_eq!(segs.len(), 1);
         assert_eq!(segs[0].refined_text.as_deref(), Some("Raw text."));
+    }
+
+    #[tokio::test]
+    async fn rename_speakers_updates_latest_version_only() {
+        let (_dir, storage) = setup().await;
+        let mut meeting = Meeting::new("Speakers".to_string());
+        meeting.status = MeetingStatus::Ready;
+        storage.create_meeting(&meeting).await.unwrap();
+
+        let mut s0 = segment(0, 0.0, "hello from alice");
+        s0.speaker = Some("SPEAKER_00".to_string());
+        let mut s1 = segment(1, 5.0, "hello from bob");
+        s1.speaker = Some("SPEAKER_01".to_string());
+        let mut s2 = segment(2, 10.0, "alice again");
+        s2.speaker = Some("SPEAKER_00".to_string());
+
+        let response = TranscriptionResponse {
+            text: "hello from alice hello from bob alice again".to_string(),
+            language: Some("en".to_string()),
+            duration: Some(15.0),
+            segments: Some(vec![s0, s1, s2]),
+            refined_text: None,
+        };
+        storage
+            .save_transcript(&meeting.id, &response, "test", "test-model", 15)
+            .await
+            .unwrap();
+
+        let mut mapping = std::collections::HashMap::new();
+        mapping.insert("SPEAKER_00".to_string(), "Alice".to_string());
+        mapping.insert("SPEAKER_01".to_string(), "Bob".to_string());
+
+        let updated = storage
+            .rename_speakers(&meeting.id, &mapping)
+            .await
+            .unwrap();
+        assert_eq!(updated, 3);
+
+        let loaded = storage.get_transcript(&meeting.id, None).await.unwrap();
+        let segs = loaded.segments.as_ref().unwrap();
+        assert_eq!(segs[0].speaker.as_deref(), Some("Alice"));
+        assert_eq!(segs[1].speaker.as_deref(), Some("Bob"));
+        assert_eq!(segs[2].speaker.as_deref(), Some("Alice"));
     }
 
     #[tokio::test]

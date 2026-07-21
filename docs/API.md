@@ -146,7 +146,10 @@ Update meeting metadata. At least one field must be provided.
 ```json
 {
   "title": "Updated Title",
-  "date": "2026-07-02T10:00:00Z"
+  "date": "2026-07-02T10:00:00Z",
+  "participants": ["Alice", "Bob"],
+  "location": "Conference Room A",
+  "organizer": "Alice"
 }
 ```
 
@@ -154,12 +157,49 @@ Update meeting metadata. At least one field must be provided.
 |-------|------|----------|-------------|
 | `title` | string | No | New title |
 | `date` | string (ISO 8601) | No | New date/time |
+| `participants` | string[] | No | Replace participants list (including empty) |
+| `location` | string | No | Physical/virtual location; empty string clears |
+| `organizer` | string | No | Meeting organizer; empty string clears |
 
 **Response:** `200 OK` — updated meeting object
 
 **Errors:**
 - `400 Bad Request` — no fields provided
 - `404 Not Found` — meeting not found
+
+### `POST /meetings/{id}/speakers/rename`
+
+Bulk-rename diarization speaker labels on the **latest** transcript version.
+Maps existing labels (e.g. `SPEAKER_00`) to display names (e.g. `Alice`).
+
+**Request Body:**
+```json
+{
+  "mapping": {
+    "SPEAKER_00": "Alice",
+    "SPEAKER_01": "Bob"
+  }
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `mapping` | object | Yes | Map of existing label → new name (1–50 entries) |
+
+**Response:** `200 OK`
+```json
+{
+  "updated_segments": 12,
+  "mapping": {
+    "SPEAKER_00": "Alice",
+    "SPEAKER_01": "Bob"
+  }
+}
+```
+
+**Errors:**
+- `400 Bad Request` — empty mapping, empty names, or too many entries
+- `404 Not Found` — meeting or transcript not found
 
 ### `DELETE /meetings/{id}`
 

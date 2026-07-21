@@ -13,7 +13,8 @@ use crate::error::ApiError;
 use crate::state::AppState;
 use crate::types::{
     CreateMeetingRequest, ListMeetingsResponse, MeetingResponse, PaginationQuery,
-    SearchTranscriptsQuery, SearchTranscriptsResponse, TranscriptResponse, UpdateMeetingRequest,
+    RenameSpeakersRequest, RenameSpeakersResponse, SearchTranscriptsQuery,
+    SearchTranscriptsResponse, TranscriptResponse, UpdateMeetingRequest,
 };
 use crate::validation;
 
@@ -279,7 +280,13 @@ pub async fn update_meeting(
     validation::validate_uuid(&id)?;
 
     // Validate update request has at least one field
-    validation::validate_update_request(&req.title, &req.date, &req.participants)?;
+    validation::validate_update_request(
+        &req.title,
+        &req.date,
+        &req.participants,
+        &req.location,
+        &req.organizer,
+    )?;
 
     // Load existing meeting
     let mut meeting = state.storage.get_meeting(&id).await?;
@@ -299,6 +306,22 @@ pub async fn update_meeting(
             .collect();
         meeting.participants = Some(cleaned);
     }
+    if let Some(location) = req.location {
+        let trimmed = location.trim().to_string();
+        meeting.location = if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed)
+        };
+    }
+    if let Some(organizer) = req.organizer {
+        let trimmed = organizer.trim().to_string();
+        meeting.organizer = if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed)
+        };
+    }
 
     // Update timestamp
     meeting.updated_at = chrono::Utc::now();
@@ -307,6 +330,58 @@ pub async fn update_meeting(
     state.storage.update_meeting(&meeting).await?;
 
     Ok(Json(MeetingResponse { meeting }))
+}
+
+/// Bulk-rename diarization speaker labels on the latest transcript version.
+#[utoipa::path(
+    post,
+    path = "/meetings/{id}/speakers/rename",
+    tag = "transcripts",
+    params(
+        ("id" = String, Path, description = "Meeting ID or prefix")
+    ),
+    request_body = RenameSpeakersRequest,
+    responses(
+        (status = 200, description = "Speakers renamed", body = RenameSpeakersResponse),
+        (status = 400, description = "Invalid request", body = ErrorResponse),
+        (status = 404, description = "Meeting or transcript not found", body = ErrorResponse)
+    )
+)]
+pub async fn rename_speakers(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(req): Json<RenameSpeakersRequest>,
+) -> Result<Json<RenameSpeakersResponse>, ApiError> {
+    validation::validate_uuid(&id)?;
+    validation::validate_speaker_mapping(&req.mapping)?;
+
+    // Ensure meeting exists (404 if missing)
+    let _meeting = state.storage.get_meeting(&id).await?;
+
+    let cleaned: std::collections::HashMap<String, String> = req
+        .mapping
+        .into_iter()
+        .map(|(k, v)| (k.trim().to_string(), v.trim().to_string()))
+        .filter(|(k, v)| !k.is_empty() && !v.is_empty())
+        .collect();
+
+    let updated = state
+        .storage
+        .rename_speakers(&id, &cleaned)
+        .await
+        .map_err(|e| {
+            let msg = e.to_string();
+            if msg.contains("not found") || msg.contains("Transcript not found") {
+                ApiError::NotFound(msg)
+            } else {
+                ApiError::InternalServerError(msg)
+            }
+        })?;
+
+    Ok(Json(RenameSpeakersResponse {
+        updated_segments: updated,
+        mapping: cleaned,
+    }))
 }
 
 /// Delete a meeting

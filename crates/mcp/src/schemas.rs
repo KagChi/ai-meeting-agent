@@ -62,6 +62,10 @@ pub struct UpdateMeetingRequest {
     pub date: Option<String>,
     /// Replace meeting participants when provided.
     pub participants: Option<Vec<String>>,
+    /// Physical or virtual location. Empty string clears the field.
+    pub location: Option<String>,
+    /// Meeting organizer. Empty string clears the field.
+    pub organizer: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
