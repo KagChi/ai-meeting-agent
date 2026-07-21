@@ -393,7 +393,7 @@ pub async fn rename_speakers(
         ("id" = String, Path, description = "Meeting ID")
     ),
     responses(
-        (status = 200, description = "Speakers identified", body = IdentifySpeakersResponse),
+        (status = 200, description = "Speakers identified; unmatched guests auto-enrolled when speech ≥ 10s", body = IdentifySpeakersResponse),
         (status = 400, description = "Invalid request", body = ErrorResponse),
         (status = 404, description = "Meeting, transcript, or recording not found", body = ErrorResponse),
     )

@@ -24,7 +24,14 @@ pub const EMBED_DIM: u32 = 256;
 const WINDOW_SAMPLES: usize = 160_000;
 const SAMPLE_RATE: usize = 16_000;
 
-static EMBEDDER: OnceLock<Mutex<Option<EmbeddingModel>>> = OnceLock::new();
+/// Cached embedder + the [`ExecutionMode`] it was loaded with so config
+/// changes (or first-load CPU vs later GPU) can reload instead of sticky CPU.
+struct CachedEmbedder {
+    model: EmbeddingModel,
+    mode: ExecutionMode,
+}
+
+static EMBEDDER: OnceLock<Mutex<Option<CachedEmbedder>>> = OnceLock::new();
 
 /// L2-normalize a vector in place. Zero vector left unchanged.
 pub fn l2_normalize(v: &mut [f32]) {
@@ -121,54 +128,85 @@ fn load_embedder(
     })
 }
 
+fn load_embedder_with_fallback(
+    model_dir: Option<&Path>,
+    mode: ExecutionMode,
+) -> anyhow::Result<(EmbeddingModel, ExecutionMode)> {
+    match load_embedder(model_dir, mode) {
+        Ok(emb) => Ok((emb, mode)),
+        Err(e) if !matches!(mode, ExecutionMode::Cpu) => {
+            log::warn!("[embed] GPU load failed (mode={mode}): {e:#}; falling back to CPU");
+            let emb = load_embedder(model_dir, ExecutionMode::Cpu)?;
+            Ok((emb, ExecutionMode::Cpu))
+        }
+        Err(e) => Err(e),
+    }
+}
+
 fn with_embedder<T>(
     model_dir: Option<&Path>,
     mode: ExecutionMode,
     f: impl FnOnce(&mut EmbeddingModel) -> anyhow::Result<T>,
 ) -> anyhow::Result<T> {
     let mutex = EMBEDDER.get_or_init(|| Mutex::new(None));
-    let mut model = {
+    let mut cached = {
         let mut guard = mutex
             .lock()
             .map_err(|e| anyhow::anyhow!("embedder mutex poisoned: {e}"))?;
-        if guard.is_none() {
+        let need_load = match guard.as_ref() {
+            None => true,
+            Some(c) if c.mode != mode => {
+                log::info!(
+                    "[embed] execution_mode changed ({} → {}); reloading WeSpeaker",
+                    c.mode,
+                    mode
+                );
+                true
+            }
+            Some(_) => false,
+        };
+        if need_load {
             log::info!(
                 "[embed] loading WeSpeaker model (mode={mode}, model_dir={:?})",
                 model_dir
             );
-            let emb = load_embedder(model_dir, mode).or_else(|e| {
-                if !matches!(mode, ExecutionMode::Cpu) {
-                    log::warn!("[embed] GPU load failed: {e:#}; falling back to CPU");
-                    load_embedder(model_dir, ExecutionMode::Cpu)
-                } else {
-                    Err(e)
-                }
-            })?;
+            let (emb, loaded_mode) = load_embedder_with_fallback(model_dir, mode)?;
             log::info!(
-                "[embed] model ready (sample_rate={}, min_samples={})",
+                "[embed] model ready (mode={loaded_mode}, sample_rate={}, min_samples={})",
                 emb.sample_rate(),
                 emb.min_num_samples()
             );
-            *guard = Some(emb);
+            *guard = Some(CachedEmbedder {
+                model: emb,
+                mode: loaded_mode,
+            });
         }
         guard.take().expect("embedder initialized")
     };
-    let result = f(&mut model);
+    let result = f(&mut cached.model);
     {
         let mut guard = mutex
             .lock()
             .map_err(|e| anyhow::anyhow!("embedder mutex poisoned: {e}"))?;
-        *guard = Some(model);
+        *guard = Some(cached);
     }
     result
 }
 
 /// Embed mono f32 @ 16 kHz samples. Windows of 10 s are mean-pooled when longer.
+///
+/// Uses the same [`DiarizeConfig::execution_mode`] as in-process diarization
+/// (`auto` / `cpu` / `cuda` / `cuda-fast` / `coreml` / …).
 pub fn embed_samples(samples: &[f32], cfg: &DiarizeConfig) -> anyhow::Result<Vec<f32>> {
     if samples.is_empty() {
         anyhow::bail!("cannot embed empty audio");
     }
     let mode = resolve_execution_mode(&cfg.execution_mode);
+    log::debug!(
+        "[embed] diarize.execution_mode={:?} → resolved={}",
+        cfg.execution_mode,
+        mode
+    );
     let model_dir = cfg.model_dir.as_deref();
 
     // Dedicated stack like diarize (ORT can be deep).
