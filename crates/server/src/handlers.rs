@@ -12,9 +12,10 @@ use serde_json::{json, Value};
 use crate::error::ApiError;
 use crate::state::AppState;
 use crate::types::{
-    CreateMeetingRequest, IdentifySpeakersResponse, ListMeetingsResponse, MeetingResponse,
-    PaginationQuery, RenameSpeakersRequest, RenameSpeakersResponse, SearchTranscriptsQuery,
-    SearchTranscriptsResponse, SpeakerIdentityResponse, TranscriptResponse, UpdateMeetingRequest,
+    ClearIdentificationResponse, CreateMeetingRequest, IdentifySpeakersResponse,
+    ListMeetingsResponse, MeetingResponse, PaginationQuery, RenameSpeakersRequest,
+    RenameSpeakersResponse, SearchTranscriptsQuery, SearchTranscriptsResponse,
+    SpeakerIdentityResponse, TranscriptResponse, UpdateMeetingRequest,
 };
 use crate::validation;
 
@@ -438,6 +439,46 @@ pub async fn identify_speakers(
                 speech_s: i.speech_s,
             })
             .collect(),
+    }))
+}
+
+/// Clear speaker identification from a meeting transcript.
+/// 
+/// Removes person_id and identify_confidence from all segments, reverting to manual/diarization labels only.
+#[utoipa::path(
+    patch,
+    path = "/meetings/{id}/speakers/clear-identification",
+    tag = "transcripts",
+    params(
+        ("id" = String, Path, description = "Meeting ID")
+    ),
+    responses(
+        (status = 200, description = "Speaker identification cleared", body = ClearIdentificationResponse),
+        (status = 404, description = "Meeting or transcript not found", body = ErrorResponse),
+    )
+)]
+pub async fn clear_speaker_identification(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<ClearIdentificationResponse>, ApiError> {
+    validation::validate_uuid(&id)?;
+    
+    let cleared = state
+        .storage
+        .clear_speaker_identification(&id)
+        .await
+        .map_err(|e| {
+            let msg = e.to_string();
+            if msg.contains("not found") || msg.contains("Transcript not found") {
+                ApiError::NotFound(msg)
+            } else {
+                ApiError::InternalServerError(msg)
+            }
+        })?;
+
+    Ok(Json(ClearIdentificationResponse {
+        meeting_id: id,
+        cleared_segments: cleared,
     }))
 }
 

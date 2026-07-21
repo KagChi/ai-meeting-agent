@@ -128,6 +128,21 @@ pub struct TranscriptSegment {
     pub start: f64,
     pub end: f64,
     pub text: String,
+    /// Human-readable timestamp in [HH:MM:SS] format
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timestamp: Option<String>,
+    /// Speaker label from diarization or manual rename (e.g., "SPEAKER_00", "Alice")
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub speaker: Option<String>,
+    /// Voice-bank person ID when identified (FK → persons.id)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub person_id: Option<String>,
+    /// Cosine similarity from identify step (0-1 range)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub identify_confidence: Option<f32>,
+    /// LLM-refined segment text (punctuation/capitalization)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub refined_text: Option<String>,
 }
 
 /// Template for summary generation. User picks per request.

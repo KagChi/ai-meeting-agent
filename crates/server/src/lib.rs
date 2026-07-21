@@ -79,6 +79,10 @@ pub fn build_router(state: AppState) -> Router {
             post(handlers::identify_speakers),
         )
         .route(
+            "/meetings/:id/speakers/clear-identification",
+            axum::routing::patch(handlers::clear_speaker_identification),
+        )
+        .route(
             "/persons",
             get(person_handlers::list_persons).post(person_handlers::create_person),
         )

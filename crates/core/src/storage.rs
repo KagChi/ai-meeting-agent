@@ -451,6 +451,33 @@ impl MeetingStorage {
             if old == new {
                 continue;
             }
+            
+            // Check if this speaker is identified from voice bank
+            let identified: Option<(String, String)> = sqlx::query_as(
+                "SELECT DISTINCT ts.speaker, p.name 
+                 FROM transcript_segments ts
+                 JOIN persons p ON ts.person_id = p.id
+                 WHERE ts.meeting_id = ? AND ts.version = ? AND ts.speaker = ?
+                 LIMIT 1"
+            )
+            .bind(meeting_id)
+            .bind(version)
+            .bind(old)
+            .fetch_optional(&self.db)
+            .await
+            .context("Failed to check speaker identification")?;
+            
+            if let Some((_, person_name)) = identified {
+                // Allow rename only for Guest entries
+                if !person_name.starts_with("Guest-") {
+                    anyhow::bail!(
+                        "Cannot rename speaker '{}' - identified as '{}' from voice bank. \
+                         Use 'Clear Voice Identification' to reset.",
+                        old, person_name
+                    );
+                }
+            }
+            
             let result = sqlx::query(
                 "UPDATE transcript_segments
                  SET speaker = ?
@@ -1708,6 +1735,38 @@ impl MeetingStorage {
             total += result.rows_affected();
         }
         Ok(total)
+    }
+
+    /// Clear person_id and identify_confidence from all segments in a meeting.
+    /// Reverts to showing manual/diarization labels only.
+    pub async fn clear_speaker_identification(&self, meeting_id: &str) -> Result<u64> {
+        // Ensure meeting exists
+        self.get_meeting(meeting_id).await?;
+
+        let version: i64 = sqlx::query_scalar(
+            "SELECT COALESCE(MAX(version), 0) FROM transcript_segments WHERE meeting_id = ?",
+        )
+        .bind(meeting_id)
+        .fetch_one(&self.db)
+        .await
+        .context("Failed to resolve latest transcript version")?;
+
+        if version == 0 {
+            anyhow::bail!("Transcript not found for meeting: {}", meeting_id);
+        }
+
+        let result = sqlx::query(
+            "UPDATE transcript_segments
+             SET person_id = NULL, identify_confidence = NULL
+             WHERE meeting_id = ? AND version = ?",
+        )
+        .bind(meeting_id)
+        .bind(version)
+        .execute(&self.db)
+        .await
+        .context("Failed to clear speaker identification")?;
+
+        Ok(result.rows_affected())
     }
 }
 

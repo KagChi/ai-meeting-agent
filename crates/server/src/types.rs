@@ -237,6 +237,12 @@ pub struct IdentifySpeakersResponse {
     pub identities: Vec<SpeakerIdentityResponse>,
 }
 
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct ClearIdentificationResponse {
+    pub meeting_id: String,
+    pub cleared_segments: u64,
+}
+
 // === Import Types ===
 
 /// Response when creating an import job (202 Accepted)
