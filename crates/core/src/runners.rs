@@ -219,7 +219,8 @@ pub async fn run_summary(
             if cancel_token.is_cancelled() {
                 registry.cancel_job(&job_id);
             } else {
-                registry.fail_job(&job_id, e.to_string());
+                // {:#} includes the full anyhow chain (e.g. SQLite CHECK / constraint detail)
+                registry.fail_job(&job_id, format!("{e:#}"));
             }
         }
     }

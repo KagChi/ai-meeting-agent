@@ -1089,7 +1089,12 @@ impl MeetingStorage {
         .bind(summary.updated_at)
         .execute(&self.db)
         .await
-        .context("Failed to save summary")?;
+        .with_context(|| {
+            format!(
+                "Failed to save summary (meeting_id={}, template={:?}, format={:?})",
+                meeting_id, summary.template, summary.format
+            )
+        })?;
         Ok(())
     }
 
