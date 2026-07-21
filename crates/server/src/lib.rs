@@ -70,6 +70,10 @@ pub fn build_router(state: AppState) -> Router {
             get(handlers::list_transcript_versions),
         )
         .route(
+            "/meetings/:id/speakers/rename",
+            post(handlers::rename_speakers),
+        )
+        .route(
             "/meetings/:id/summary",
             get(summary_handlers::list_summaries).post(summary_handlers::create_summary),
         )

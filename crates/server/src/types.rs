@@ -22,6 +22,25 @@ pub struct UpdateMeetingRequest {
     /// Replace meeting participants list when provided (including empty list).
     #[serde(default)]
     pub participants: Option<Vec<String>>,
+    /// Physical or virtual location. Empty string clears the field.
+    #[serde(default)]
+    pub location: Option<String>,
+    /// Meeting organizer. Empty string clears the field.
+    #[serde(default)]
+    pub organizer: Option<String>,
+}
+
+/// Bulk rename diarization speaker labels on the latest transcript version.
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub struct RenameSpeakersRequest {
+    /// Map of existing label → new display name (e.g. `"SPEAKER_00" → "Alice"`).
+    pub mapping: std::collections::HashMap<String, String>,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct RenameSpeakersResponse {
+    pub updated_segments: u64,
+    pub mapping: std::collections::HashMap<String, String>,
 }
 
 #[derive(Debug, Deserialize, utoipa::ToSchema)]

@@ -24,6 +24,7 @@ use utoipa::OpenApi;
         handlers::create_meeting,
         handlers::update_meeting,
         handlers::delete_meeting,
+        handlers::rename_speakers,
         handlers::get_transcript,
         handlers::search_all_transcripts,
         // Summary handlers
@@ -49,6 +50,8 @@ use utoipa::OpenApi;
             // Request types
             CreateMeetingRequest,
             UpdateMeetingRequest,
+            RenameSpeakersRequest,
+            RenameSpeakersResponse,
             CreateSummaryRequest,
             UpdateSummaryRequest,
             UpdateTranscriptionConfigRequest,
