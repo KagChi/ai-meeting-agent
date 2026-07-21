@@ -179,8 +179,9 @@ impl SummaryClient {
             4. Maintaining the original language(s) of the transcript\n\
             5. Keeping each input line as exactly one output line with the same [N] index prefix\n\
             6. Do NOT merge, split, reorder, or drop lines\n\
-            7. Do NOT add commentary or metadata\n\n\
-            Output format: one line per input line, each starting with the same [N] prefix.";
+            7. Do NOT add commentary, metadata, or speaker labels\n\
+            8. Do NOT invent or copy speaker names (e.g. Guest-1, SPEAKER_00) into the refined text\n\n\
+            Output format: one line per input line, each starting with the same [N] prefix followed by refined speech text only.";
 
         let url = self.config.resolve_base_url();
         let segments = transcript.segments.as_deref().unwrap_or(&[]);
@@ -216,19 +217,12 @@ impl SummaryClient {
             });
         }
 
+        // Speaker labels stay on segments for UI/identify; refine input is text only so
+        // refined_text does not get polluted with "Guest-1: ..." prefixes.
         let indexed_lines: Vec<(usize, String)> = segments
             .iter()
             .enumerate()
-            .map(|(i, s)| {
-                let text = s.text.trim();
-                let line = match s.speaker.as_deref() {
-                    Some(speaker) if !speaker.trim().is_empty() => {
-                        format!("[{i}] {speaker}: {text}")
-                    }
-                    _ => format!("[{i}] {text}"),
-                };
-                (i, line)
-            })
+            .map(|(i, s)| (i, format!("[{i}] {}", s.text.trim())))
             .collect();
 
         let line_chunks = chunk_indexed_lines(&indexed_lines, REFINE_CHUNK_CHARS);

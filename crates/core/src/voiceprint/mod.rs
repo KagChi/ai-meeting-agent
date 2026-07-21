@@ -20,8 +20,14 @@ pub const DEFAULT_ENROLL_MIN_SPEECH_S: f64 = 30.0;
 /// Minimum speech (seconds) before auto-enrolling a guest as a new person + sample.
 pub const DEFAULT_AUTO_ENROLL_MIN_SPEECH_S: f64 = 10.0;
 
+/// Max speech (seconds) written into an auto-enroll sample WAV (centroid uses full query).
+pub const DEFAULT_AUTO_ENROLL_SAMPLE_MAX_S: f64 = 30.0;
+
 /// Default cosine threshold for person match (tuned later on lab voices).
 pub const DEFAULT_IDENTIFY_THRESHOLD: f32 = 0.55;
+
+/// Cosine threshold to merge two unmatched diarization clusters within one meeting.
+pub const DEFAULT_WITHIN_MEETING_MERGE_THRESHOLD: f32 = 0.55;
 
 /// Result of matching a query embedding against the voice bank.
 #[derive(Debug, Clone)]
@@ -226,6 +232,59 @@ fn next_guest_index(name_by_id: &HashMap<String, String>) -> u32 {
     max_n + 1
 }
 
+/// Take spans in time order until total duration reaches `max_s` (trim last span).
+fn cap_spans_to_duration(spans: &[(f64, f64)], max_s: f64) -> (Vec<(f64, f64)>, f64) {
+    if max_s <= 0.0 || spans.is_empty() {
+        return (Vec::new(), 0.0);
+    }
+    let mut ordered: Vec<(f64, f64)> = spans
+        .iter()
+        .copied()
+        .filter(|(a, b)| b - a > 0.0)
+        .collect();
+    ordered.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+
+    let mut out = Vec::new();
+    let mut taken = 0.0;
+    for (start, end) in ordered {
+        if taken + f64::EPSILON >= max_s {
+            break;
+        }
+        let span_len = (end - start).max(0.0);
+        if span_len <= 0.0 {
+            continue;
+        }
+        let remain = max_s - taken;
+        if span_len <= remain + f64::EPSILON {
+            out.push((start, end));
+            taken += span_len;
+        } else {
+            out.push((start, start + remain));
+            taken += remain;
+            break;
+        }
+    }
+    (out, taken)
+}
+
+/// Union-find parent for within-meeting cluster merge.
+fn uf_find(parent: &mut [usize], i: usize) -> usize {
+    let mut i = i;
+    while parent[i] != i {
+        parent[i] = parent[parent[i]];
+        i = parent[i];
+    }
+    i
+}
+
+fn uf_union(parent: &mut [usize], a: usize, b: usize) {
+    let ra = uf_find(parent, a);
+    let rb = uf_find(parent, b);
+    if ra != rb {
+        parent[rb] = ra;
+    }
+}
+
 /// Create person + meeting-turn sample (+ optional centroid) for an unmatched speaker.
 #[cfg(feature = "diarization")]
 async fn auto_enroll_guest(
@@ -300,8 +359,9 @@ async fn auto_enroll_guest(
 /// 2. Embed those spans from `audio_path` (mean-pool)
 /// 3. Cosine-match vs enrolled centroids
 /// 4. ≥ threshold → person name + `person_id`
-/// 5. else auto-enroll as `Guest-N` when speech ≥ [`DEFAULT_AUTO_ENROLL_MIN_SPEECH_S`]
-///    (person + sample + centroid); short speech stays label-only guest
+/// 5. else merge similar unmatched clusters within this meeting, then
+///    auto-enroll as `Guest-N` when speech ≥ [`DEFAULT_AUTO_ENROLL_MIN_SPEECH_S`]
+///    (sample capped at [`DEFAULT_AUTO_ENROLL_SAMPLE_MAX_S`]); short speech stays label-only
 ///
 /// Mutates `transcript.segments` speaker/person_id/confidence in place.
 /// Does **not** write segment renames to DB — caller applies via storage.
@@ -322,6 +382,16 @@ pub async fn identify_transcript(
         None,
     )
     .await
+}
+
+/// Per-label work item after embed (before bank match / enroll).
+#[cfg(feature = "diarization")]
+struct LabelEmbed {
+    label: String,
+    spans: Vec<(f64, f64)>,
+    segment_ids: Vec<u32>,
+    speech_s: f64,
+    query: Vec<f32>,
 }
 
 /// Same as [`identify_transcript`] but tags auto-enrolled samples with `meeting_id`.
@@ -370,11 +440,8 @@ pub async fn identify_transcript_with_meeting(
         });
     }
 
-    let mut identities = Vec::new();
-    let mut matched = 0u32;
-    let mut guests = 0u32;
+    let mut embedded: Vec<LabelEmbed> = Vec::new();
     let mut skipped = 0u32;
-    let mut guest_n = next_guest_index(&name_by_id);
 
     for label in &labels {
         let spans: Vec<(f64, f64)> = segments
@@ -391,13 +458,10 @@ pub async fn identify_transcript_with_meeting(
 
         if speech_s < 0.5 {
             skipped += 1;
-            log::info!(
-                "[identify] skip {label}: only {speech_s:.2}s speech"
-            );
+            log::info!("[identify] skip {label}: only {speech_s:.2}s speech");
             continue;
         }
 
-        // Embed each span ≥ ~0.25s, mean-pool
         let mut embs = Vec::new();
         for (start, end) in &spans {
             if end - start < 0.25 {
@@ -420,61 +484,188 @@ pub async fn identify_transcript_with_meeting(
         }
 
         let query = mean_pool_l2(&embs)?;
-        let m = match_embedding(storage, &query, threshold, Some(&cfg.embedding_model)).await?;
+        embedded.push(LabelEmbed {
+            label: label.clone(),
+            spans,
+            segment_ids,
+            speech_s,
+            query,
+        });
+    }
 
-        let (person_id, confidence, display_name) = if let Some(pid) = m.person_id {
-            matched += 1;
+    // Bank match first; collect unmatched indices for within-meeting merge.
+    let mut bank_hit: Vec<Option<(String, f32, String)>> = vec![None; embedded.len()];
+    let mut unmatched_idx: Vec<usize> = Vec::new();
+
+    for (i, item) in embedded.iter().enumerate() {
+        let m = match_embedding(
+            storage,
+            &item.query,
+            threshold,
+            Some(&cfg.embedding_model),
+        )
+        .await?;
+        if let Some(pid) = m.person_id {
             let name = name_by_id
                 .get(&pid)
                 .cloned()
                 .unwrap_or_else(|| pid.clone());
-            (Some(pid), Some(m.confidence), name)
-        } else if speech_s + f64::EPSILON >= DEFAULT_AUTO_ENROLL_MIN_SPEECH_S {
-            let name = format!("Guest-{guest_n}");
-            guest_n += 1;
-            guests += 1;
-            match auto_enroll_guest(
-                storage,
-                audio_path,
-                meeting_id,
-                &spans,
-                speech_s,
-                &query,
-                &name,
-                &segment_ids,
-                &cfg.embedding_model,
-            )
-            .await
-            {
-                Ok(pid) => {
-                    name_by_id.insert(pid.clone(), name.clone());
-                    (Some(pid), Some(m.confidence), name)
-                }
-                Err(e) => {
-                    log::warn!("[identify] auto-enroll failed for {label}: {e:#}");
-                    (None, Some(m.confidence), name)
-                }
-            }
+            bank_hit[i] = Some((pid, m.confidence, name));
         } else {
-            let name = format!("Guest-{guest_n}");
-            guest_n += 1;
-            guests += 1;
-            log::info!(
-                "[identify] {label}: speech {speech_s:.1}s < auto-enroll min {DEFAULT_AUTO_ENROLL_MIN_SPEECH_S}s; label only"
-            );
-            (None, Some(m.confidence), name)
+            unmatched_idx.push(i);
+        }
+    }
+
+    // Merge similar unmatched diar clusters (same person split by diarization).
+    let mut parent: Vec<usize> = (0..embedded.len()).collect();
+    let merge_thr = DEFAULT_WITHIN_MEETING_MERGE_THRESHOLD;
+    for a in 0..unmatched_idx.len() {
+        for b in (a + 1)..unmatched_idx.len() {
+            let i = unmatched_idx[a];
+            let j = unmatched_idx[b];
+            let score = cosine_similarity(&embedded[i].query, &embedded[j].query);
+            if score >= merge_thr {
+                log::info!(
+                    "[identify] within-meeting merge {} ~ {} (cos={score:.3})",
+                    embedded[i].label,
+                    embedded[j].label
+                );
+                uf_union(&mut parent, i, j);
+            }
+        }
+    }
+
+    // Group unmatched by merge root; process groups in first-seen root order.
+    let mut groups: HashMap<usize, Vec<usize>> = HashMap::new();
+    for &i in &unmatched_idx {
+        let r = uf_find(&mut parent, i);
+        groups.entry(r).or_default().push(i);
+    }
+    let mut group_roots: Vec<usize> = groups.keys().copied().collect();
+    group_roots.sort_unstable();
+
+    // Assignment per embedded index: (person_id, confidence, display_name)
+    let mut assign: Vec<Option<(Option<String>, Option<f32>, String)>> =
+        vec![None; embedded.len()];
+    let mut matched = 0u32;
+    let mut guests = 0u32;
+    let mut guest_n = next_guest_index(&name_by_id);
+
+    for (i, hit) in bank_hit.iter().enumerate() {
+        if let Some((pid, conf, name)) = hit {
+            matched += 1;
+            assign[i] = Some((Some(pid.clone()), Some(*conf), name.clone()));
+        }
+    }
+
+    for root in group_roots {
+        let members = groups.get(&root).cloned().unwrap_or_default();
+        if members.is_empty() {
+            continue;
+        }
+        // Prefer longest speech as enroll representative.
+        let rep = *members
+            .iter()
+            .max_by(|a, b| {
+                embedded[**a]
+                    .speech_s
+                    .partial_cmp(&embedded[**b].speech_s)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
+            .unwrap_or(&members[0]);
+
+        let mut all_spans: Vec<(f64, f64)> = Vec::new();
+        let mut all_seg_ids: Vec<u32> = Vec::new();
+        let mut total_speech = 0.0;
+        for &mi in &members {
+            all_spans.extend(embedded[mi].spans.iter().copied());
+            all_seg_ids.extend(embedded[mi].segment_ids.iter().copied());
+            total_speech += embedded[mi].speech_s;
+        }
+        all_spans.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+        all_seg_ids.sort_unstable();
+        all_seg_ids.dedup();
+
+        let (person_id, confidence, display_name) =
+            if total_speech + f64::EPSILON >= DEFAULT_AUTO_ENROLL_MIN_SPEECH_S {
+                let name = format!("Guest-{guest_n}");
+                guest_n += 1;
+                guests += 1;
+                let (sample_spans, sample_s) =
+                    cap_spans_to_duration(&all_spans, DEFAULT_AUTO_ENROLL_SAMPLE_MAX_S);
+                let enroll_spans = if sample_spans.is_empty() {
+                    embedded[rep].spans.clone()
+                } else {
+                    sample_spans
+                };
+                let enroll_dur = if sample_s > 0.0 {
+                    sample_s
+                } else {
+                    embedded[rep].speech_s.min(DEFAULT_AUTO_ENROLL_SAMPLE_MAX_S)
+                };
+                match auto_enroll_guest(
+                    storage,
+                    audio_path,
+                    meeting_id,
+                    &enroll_spans,
+                    enroll_dur,
+                    &embedded[rep].query,
+                    &name,
+                    &all_seg_ids,
+                    &cfg.embedding_model,
+                )
+                .await
+                {
+                    Ok(pid) => {
+                        name_by_id.insert(pid.clone(), name.clone());
+                        // Auto-enroll is not a bank match score.
+                        (Some(pid), None, name)
+                    }
+                    Err(e) => {
+                        log::warn!(
+                            "[identify] auto-enroll failed for {}: {e:#}",
+                            embedded[rep].label
+                        );
+                        (None, None, name)
+                    }
+                }
+            } else {
+                let name = format!("Guest-{guest_n}");
+                guest_n += 1;
+                guests += 1;
+                log::info!(
+                    "[identify] {}: speech {total_speech:.1}s < auto-enroll min {DEFAULT_AUTO_ENROLL_MIN_SPEECH_S}s; label only",
+                    embedded[rep].label
+                );
+                (None, None, name)
+            };
+
+        for &mi in &members {
+            assign[mi] = Some((
+                person_id.clone(),
+                confidence,
+                display_name.clone(),
+            ));
+        }
+    }
+
+    let mut identities = Vec::new();
+    for (i, item) in embedded.iter().enumerate() {
+        let Some((person_id, confidence, display_name)) = assign[i].clone() else {
+            skipped += 1;
+            continue;
         };
 
         identities.push(SpeakerIdentity {
-            diar_label: label.clone(),
+            diar_label: item.label.clone(),
             display_name: display_name.clone(),
             person_id: person_id.clone(),
             confidence,
-            speech_s,
+            speech_s: item.speech_s,
         });
 
         for seg in segments.iter_mut() {
-            if seg.speaker.as_deref() == Some(label.as_str()) {
+            if seg.speaker.as_deref() == Some(item.label.as_str()) {
                 seg.speaker = Some(display_name.clone());
                 seg.person_id = person_id.clone();
                 seg.identify_confidence = confidence;
@@ -656,6 +847,8 @@ mod tests {
 
         let person = Person::new("Alice".to_string());
         storage.create_person(&person).await.unwrap();
+        let guest = Person::new("Guest-1".to_string());
+        storage.create_person(&guest).await.unwrap();
 
         let segs = vec![
             TranscriptSegment {
@@ -710,7 +903,7 @@ mod tests {
         );
         map.insert(
             "SPEAKER_01".to_string(),
-            ("Guest-1".to_string(), Some("guest-pid".into()), Some(0.2)),
+            ("Guest-1".to_string(), Some(guest.id.clone()), Some(0.2)),
         );
         let n = storage
             .apply_speaker_identities(&meeting.id, &map)
@@ -723,7 +916,7 @@ mod tests {
         assert_eq!(segs[0].speaker.as_deref(), Some("Alice"));
         assert_eq!(segs[0].person_id.as_deref(), Some(person.id.as_str()));
         assert_eq!(segs[1].speaker.as_deref(), Some("Guest-1"));
-        assert_eq!(segs[1].person_id.as_deref(), Some("guest-pid"));
+        assert_eq!(segs[1].person_id.as_deref(), Some(guest.id.as_str()));
     }
 
     #[test]
@@ -734,5 +927,30 @@ mod tests {
         m.insert("c".into(), "Guest-1".into());
         assert_eq!(next_guest_index(&m), 4);
         assert_eq!(next_guest_index(&HashMap::new()), 1);
+    }
+
+    #[test]
+    fn cap_spans_respects_max_duration() {
+        let spans = vec![(0.0, 20.0), (30.0, 50.0), (60.0, 80.0)];
+        let (capped, dur) = cap_spans_to_duration(&spans, 30.0);
+        assert!((dur - 30.0).abs() < 1e-6);
+        assert_eq!(capped.len(), 2);
+        assert_eq!(capped[0], (0.0, 20.0));
+        assert!((capped[1].1 - capped[1].0 - 10.0).abs() < 1e-6);
+        assert!((capped[1].0 - 30.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn cap_spans_empty_or_zero_max() {
+        assert_eq!(cap_spans_to_duration(&[], 30.0).1, 0.0);
+        assert_eq!(cap_spans_to_duration(&[(0.0, 5.0)], 0.0).0.len(), 0);
+    }
+
+    #[test]
+    fn within_meeting_uf_merges_pairs() {
+        let mut parent = vec![0, 1, 2];
+        uf_union(&mut parent, 0, 2);
+        assert_eq!(uf_find(&mut parent, 0), uf_find(&mut parent, 2));
+        assert_ne!(uf_find(&mut parent, 0), uf_find(&mut parent, 1));
     }
 }
