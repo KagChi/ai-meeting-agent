@@ -659,12 +659,13 @@ impl MeetingStorage {
         };
 
         let query = format!(
-            "SELECT segment_id, start, end, text, speaker, tokens, temperature,
-                    avg_logprob, compression_ratio, no_speech_prob, refined_text,
-                    person_id, identify_confidence
-             FROM transcript_segments
-             WHERE meeting_id = ? {}
-             ORDER BY segment_id ASC
+            "SELECT ts.segment_id, ts.start, ts.end, ts.text, ts.speaker, ts.tokens, ts.temperature,
+                    ts.avg_logprob, ts.compression_ratio, ts.no_speech_prob, ts.refined_text,
+                    ts.person_id, ts.identify_confidence, p.name AS display_name
+             FROM transcript_segments ts
+             LEFT JOIN persons p ON ts.person_id = p.id
+             WHERE ts.meeting_id = ? {}
+             ORDER BY ts.segment_id ASC
              LIMIT ? OFFSET ?",
             version_clause
         );
@@ -692,6 +693,7 @@ impl MeetingStorage {
                 let refined_text = row
                     .try_get::<Option<String>, _>(10)?
                     .filter(|s| !s.is_empty());
+                let display_name: Option<String> = row.try_get(13)?;
                 Ok(TranscriptSegment {
                     id: row.try_get::<i64, _>(0)? as u32,
                     start,
@@ -707,6 +709,7 @@ impl MeetingStorage {
                     refined_text,
                     person_id: row.try_get(11)?,
                     identify_confidence: row.try_get::<Option<f64>, _>(12)?.map(|v| v as f32),
+                    display_name,
                 })
             })
             .collect()
@@ -914,6 +917,7 @@ impl MeetingStorage {
                     compression_ratio: None,
                     no_speech_prob: None,
                     refined_text: None,
+                    display_name: None,
                     person_id: row.try_get(5)?,
                     identify_confidence: row.try_get::<Option<f64>, _>(6)?.map(|v| v as f32),
                 })
@@ -1714,16 +1718,15 @@ impl MeetingStorage {
         }
 
         let mut total: u64 = 0;
-        for (old_label, (display, person_id, confidence)) in assignments {
+        for (old_label, (_display, person_id, confidence)) in assignments {
             if let Some(pid) = person_id.as_deref() {
                 self.get_person(pid).await?;
             }
             let result = sqlx::query(
                 "UPDATE transcript_segments
-                 SET speaker = ?, person_id = ?, identify_confidence = ?
+                 SET person_id = ?, identify_confidence = ?
                  WHERE meeting_id = ? AND version = ? AND speaker = ?",
             )
-            .bind(display)
             .bind(person_id.as_deref())
             .bind(confidence.map(|c| c as f64))
             .bind(meeting_id)
@@ -1806,6 +1809,7 @@ mod tests {
             compression_ratio: None,
             no_speech_prob: None,
             speaker: None,
+            display_name: None,
             person_id: None,
             identify_confidence: None,
             refined_text: None,

@@ -875,6 +875,7 @@ mod tests {
             compression_ratio: None,
             no_speech_prob: None,
             speaker: None,
+            display_name: None,
             person_id: None,
             identify_confidence: None,
             refined_text: None,

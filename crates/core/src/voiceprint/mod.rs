@@ -666,7 +666,7 @@ pub async fn identify_transcript_with_meeting(
 
         for seg in segments.iter_mut() {
             if seg.speaker.as_deref() == Some(item.label.as_str()) {
-                seg.speaker = Some(display_name.clone());
+                // Keep speaker unchanged (raw diarization label)
                 seg.person_id = person_id.clone();
                 seg.identify_confidence = confidence;
             }
@@ -863,6 +863,7 @@ mod tests {
                 compression_ratio: None,
                 no_speech_prob: None,
                 speaker: Some("SPEAKER_00".into()),
+                display_name: None,
                 person_id: None,
                 identify_confidence: None,
                 refined_text: None,
@@ -879,6 +880,7 @@ mod tests {
                 compression_ratio: None,
                 no_speech_prob: None,
                 speaker: Some("SPEAKER_01".into()),
+                display_name: None,
                 person_id: None,
                 identify_confidence: None,
                 refined_text: None,
