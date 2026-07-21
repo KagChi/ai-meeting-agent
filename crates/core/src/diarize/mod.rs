@@ -157,7 +157,7 @@ pub struct Diarizer;
 /// Parse a string into an [`ExecutionMode`]. Unknown values fall back
 /// to `Cpu` (portable) and are logged.
 pub fn parse_execution_mode(s: &str) -> ExecutionMode {
-    match s.to_lowercase().as_str() {
+    match s.trim().to_lowercase().as_str() {
         "cpu" => ExecutionMode::Cpu,
         "coreml" => ExecutionMode::CoreMl,
         "coreml-fast" => ExecutionMode::CoreMlFast,
@@ -200,10 +200,11 @@ fn detect_best_execution_mode() -> ExecutionMode {
 /// - `"auto"` → platform-specific GPU priority via [`detect_best_execution_mode`]
 /// - Explicit mode string → parsed directly via [`parse_execution_mode`]
 pub fn resolve_execution_mode(config_string: &str) -> ExecutionMode {
-    if config_string.to_lowercase() == "auto" {
+    let s = config_string.trim();
+    if s.eq_ignore_ascii_case("auto") {
         detect_best_execution_mode()
     } else {
-        parse_execution_mode(config_string)
+        parse_execution_mode(s)
     }
 }
 

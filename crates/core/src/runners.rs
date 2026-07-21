@@ -152,8 +152,16 @@ async fn run_import_inner(
         maybe_diarize(final_audio, transcription, config, registry, job_id).await;
     check_cancelled(cancel_token)?;
 
-    let transcription =
-        maybe_identify(final_audio, transcription, storage, config, registry, job_id).await;
+    let transcription = maybe_identify(
+        final_audio,
+        transcription,
+        storage,
+        config,
+        registry,
+        job_id,
+        &meeting.id,
+    )
+    .await;
     check_cancelled(cancel_token)?;
 
     let transcription = refine_transcript(transcription, config, registry, job_id).await;
@@ -567,6 +575,7 @@ async fn run_import_memory_pipeline(
         &cfg.config,
         &cfg.registry,
         &cfg.job_id,
+        &meeting.id,
     )
     .await;
     check_cancelled(&cfg.cancel_token)?;
@@ -657,7 +666,7 @@ async fn maybe_diarize(
 
 /// Optional voiceprint identify after diarize. Soft-fails: keeps diar labels.
 ///
-/// Runs when diarization is enabled and the voice bank has at least one centroid.
+/// Unmatched speakers with enough speech are auto-enrolled into the voice bank.
 async fn maybe_identify(
     audio_path: &std::path::Path,
     mut transcription: TranscriptionResponse,
@@ -665,6 +674,7 @@ async fn maybe_identify(
     config: &Config,
     registry: &Arc<JobRegistry>,
     job_id: &str,
+    meeting_id: &str,
 ) -> TranscriptionResponse {
     #[cfg(feature = "diarization")]
     {
@@ -679,27 +689,17 @@ async fn maybe_identify(
         if !has_labels {
             return transcription;
         }
-        match storage.list_voiceprints().await {
-            Ok(bank) if bank.is_empty() => {
-                log::info!("[identify] voice bank empty; skip");
-                return transcription;
-            }
-            Err(e) => {
-                log::warn!("[identify] list voiceprints failed: {e:#}");
-                return transcription;
-            }
-            Ok(_) => {}
-        }
         registry.update_progress(
             job_id,
             ProgressEvent::new("identifying", "Speaker identification").with_percent(78.0),
         );
-        match crate::voiceprint::identify_transcript(
+        match crate::voiceprint::identify_transcript_with_meeting(
             audio_path,
             &mut transcription,
             storage,
             &config.diarize,
             crate::voiceprint::DEFAULT_IDENTIFY_THRESHOLD,
+            Some(meeting_id),
         )
         .await
         {
@@ -720,7 +720,7 @@ async fn maybe_identify(
     }
     #[cfg(not(feature = "diarization"))]
     {
-        let _ = (audio_path, storage, config, registry, job_id);
+        let _ = (audio_path, storage, config, registry, job_id, meeting_id);
         transcription
     }
 }
@@ -876,6 +876,7 @@ async fn run_retranscribe_inner(cfg: &RetranscribeConfig) -> Result<()> {
         &cfg.config,
         &cfg.registry,
         &cfg.job_id,
+        &cfg.meeting_id,
     )
     .await;
 

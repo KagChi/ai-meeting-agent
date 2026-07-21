@@ -135,7 +135,10 @@ services:
       - SUMMARY_API_KEY=${SUMMARY_API_KEY:-not-needed-local}
       - DIARIZE_ENABLED=${DIARIZE_ENABLED:-false}
       - DIARIZE_SERVICE_URL=${DIARIZE_SERVICE_URL:-http://diarize-service:8001}
-      - DIARIZE_EXECUTION_MODE=${DIARIZE_EXECUTION_MODE:-cpu}
+      # Same default as diarize-service: voiceprint embed runs in-process on this
+      # container and must honor DIARIZE_EXECUTION_MODE (not stuck on cpu).
+      # Server image is CPU-only unless GPU-enabled; cuda fails → CPU fallback.
+      - DIARIZE_EXECUTION_MODE=${DIARIZE_EXECUTION_MODE:-auto}
     ports:
       - "${SERVER_HOST_PORT:-8080}:8080"
     volumes:

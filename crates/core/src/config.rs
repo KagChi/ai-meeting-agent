@@ -136,8 +136,9 @@ impl DiarizeConfig {
             self.enabled = matches!(enabled.to_lowercase().as_str(), "1" | "true" | "yes");
         }
         if let Ok(mode) = std::env::var("DIARIZE_EXECUTION_MODE") {
-            if !mode.trim().is_empty() {
-                self.execution_mode = mode;
+            let mode = mode.trim();
+            if !mode.is_empty() {
+                self.execution_mode = mode.to_string();
             }
         }
         if let Ok(dir) = std::env::var("DIARIZE_MODEL_DIR") {

@@ -566,3 +566,140 @@ pub fn needs_conversion_by_filename(filename: &str) -> bool {
     let path = Path::new(filename);
     needs_conversion(path)
 }
+
+/// Extract one time span from an audio file as mono 16 kHz PCM WAV bytes.
+pub fn extract_span_to_wav_bytes(path: &Path, start_s: f64, end_s: f64) -> Result<Vec<u8>> {
+    let duration = (end_s - start_s).max(0.0);
+    if duration < 0.05 {
+        anyhow::bail!("span too short: {start_s:.3}-{end_s:.3}");
+    }
+    let input = path.to_str().context("Invalid input path")?;
+    let child = std::process::Command::new(ffmpeg_sidecar::paths::ffmpeg_path())
+        .arg("-ss")
+        .arg(start_s.to_string())
+        .arg("-t")
+        .arg(duration.to_string())
+        .arg("-i")
+        .arg(input)
+        .args(["-vn"])
+        .args(["-f", "wav"])
+        .args(["-c:a", "pcm_s16le"])
+        .args(["-ar", "16000"])
+        .args(["-ac", "1"])
+        .arg("pipe:1")
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .context("Failed to spawn FFmpeg for span extract")?;
+
+    let output = child
+        .wait_with_output()
+        .context("Failed to wait for FFmpeg span extract")?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!(
+            "FFmpeg extract span {start_s:.2}-{end_s:.2} failed: {}",
+            stderr
+        );
+    }
+    if output.stdout.is_empty() {
+        anyhow::bail!("FFmpeg extract produced empty WAV for {start_s:.2}-{end_s:.2}");
+    }
+    Ok(output.stdout)
+}
+
+/// Concatenate multiple time spans from one recording into a single mono 16 kHz WAV.
+///
+/// Spans are extracted individually then concatenated with ffmpeg's concat demuxer.
+/// Empty / failed spans are skipped. Returns error if no span yields audio.
+pub fn extract_spans_to_wav_bytes(path: &Path, spans: &[(f64, f64)]) -> Result<Vec<u8>> {
+    let mut valid: Vec<(f64, f64)> = spans
+        .iter()
+        .copied()
+        .filter(|(a, b)| b - a >= 0.05)
+        .collect();
+    if valid.is_empty() {
+        anyhow::bail!("no valid spans to extract");
+    }
+    // Cap total extract work: keep longest spans first if many.
+    if valid.len() > 40 {
+        valid.sort_by(|a, b| (b.1 - b.0).partial_cmp(&(a.1 - a.0)).unwrap_or(std::cmp::Ordering::Equal));
+        valid.truncate(40);
+        valid.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+    }
+
+    if valid.len() == 1 {
+        return extract_span_to_wav_bytes(path, valid[0].0, valid[0].1);
+    }
+
+    let temp_dir = std::env::temp_dir();
+    let session = uuid::Uuid::new_v4();
+    let mut part_paths: Vec<PathBuf> = Vec::new();
+    let mut cleanup = Vec::new();
+
+    for (i, (start, end)) in valid.iter().enumerate() {
+        match extract_span_to_wav_bytes(path, *start, *end) {
+            Ok(bytes) => {
+                let p = temp_dir.join(format!("meeting-agent-enroll-{session}-{i:03}.wav"));
+                std::fs::write(&p, &bytes)
+                    .with_context(|| format!("Failed to write temp span {}", p.display()))?;
+                part_paths.push(p.clone());
+                cleanup.push(p);
+            }
+            Err(e) => {
+                log::debug!(
+                    "[audio] skip enroll span {start:.2}-{end:.2}: {e:#}"
+                );
+            }
+        }
+    }
+
+    if part_paths.is_empty() {
+        anyhow::bail!("all span extracts failed");
+    }
+    if part_paths.len() == 1 {
+        let bytes = std::fs::read(&part_paths[0])
+            .with_context(|| format!("Failed to read {}", part_paths[0].display()))?;
+        for p in &cleanup {
+            let _ = std::fs::remove_file(p);
+        }
+        return Ok(bytes);
+    }
+
+    let list_path = temp_dir.join(format!("meeting-agent-enroll-{session}-list.txt"));
+    let mut list_body = String::new();
+    for p in &part_paths {
+        // ffmpeg concat demuxer: single-quoted paths, escape ' as '\''
+        let s = p.to_string_lossy().replace('\'', "'\\''");
+        list_body.push_str(&format!("file '{s}'\n"));
+    }
+    std::fs::write(&list_path, list_body)
+        .with_context(|| format!("Failed to write concat list {}", list_path.display()))?;
+    cleanup.push(list_path.clone());
+
+    let out_path = temp_dir.join(format!("meeting-agent-enroll-{session}-out.wav"));
+    cleanup.push(out_path.clone());
+
+    let status = FfmpegCommand::new()
+        .args(["-f", "concat"])
+        .args(["-safe", "0"])
+        .input(list_path.to_str().context("Invalid list path")?)
+        .args(["-c", "copy"])
+        .overwrite()
+        .output(out_path.to_str().context("Invalid out path")?)
+        .spawn()
+        .context("Failed to spawn FFmpeg concat")?
+        .wait()
+        .context("Failed to wait for FFmpeg concat")?;
+
+    let result = if status.success() {
+        std::fs::read(&out_path).with_context(|| format!("Failed to read {}", out_path.display()))
+    } else {
+        Err(anyhow::anyhow!("FFmpeg concat of enroll spans failed"))
+    };
+
+    for p in &cleanup {
+        let _ = std::fs::remove_file(p);
+    }
+    result
+}

@@ -7,7 +7,7 @@ use chrono::Utc;
 use uuid::Uuid;
 
 use crate::config::DiarizeConfig;
-use crate::models::{Voiceprint, VoiceprintEnrolledFrom};
+use crate::models::{Person, Voiceprint, VoiceprintEnrolledFrom, VoiceprintSampleSource};
 use crate::storage::MeetingStorage;
 use crate::transcription::TranscriptionResponse;
 
@@ -18,6 +18,9 @@ use crate::diarize::embed::{
 
 /// Default minimum total enrolled speech (seconds) before building a centroid.
 pub const DEFAULT_ENROLL_MIN_SPEECH_S: f64 = 30.0;
+
+/// Minimum speech (seconds) before auto-enrolling a guest as a new person + sample.
+pub const DEFAULT_AUTO_ENROLL_MIN_SPEECH_S: f64 = 10.0;
 
 /// Default cosine threshold for person match (tuned later on lab voices).
 pub const DEFAULT_IDENTIFY_THRESHOLD: f32 = 0.55;
@@ -200,16 +203,97 @@ pub struct IdentifyResult {
     pub skipped: u32,
 }
 
+/// Next free `Guest-N` index from existing person names.
+fn next_guest_index(name_by_id: &HashMap<String, String>) -> u32 {
+    let mut max_n = 0u32;
+    for name in name_by_id.values() {
+        if let Some(rest) = name.strip_prefix("Guest-") {
+            if let Ok(n) = rest.parse::<u32>() {
+                max_n = max_n.max(n);
+            }
+        }
+    }
+    max_n + 1
+}
+
+/// Create person + meeting-turn sample (+ optional centroid) for an unmatched speaker.
+#[cfg(feature = "diarization")]
+async fn auto_enroll_guest(
+    storage: &MeetingStorage,
+    audio_path: &Path,
+    meeting_id: Option<&str>,
+    spans: &[(f64, f64)],
+    speech_s: f64,
+    query: &[f32],
+    display_name: &str,
+    segment_ids: &[u32],
+) -> anyhow::Result<String> {
+    let person = Person::new(display_name.to_string());
+    storage.create_person(&person).await?;
+
+    match crate::audio::extract_spans_to_wav_bytes(audio_path, spans) {
+        Ok(bytes) => {
+            if let Err(e) = storage
+                .add_voiceprint_sample(
+                    &person.id,
+                    &bytes,
+                    speech_s,
+                    VoiceprintSampleSource::MeetingTurn,
+                    meeting_id,
+                    segment_ids,
+                )
+                .await
+            {
+                log::warn!(
+                    "[identify] auto-enroll sample save failed for {}: {e:#}",
+                    person.id
+                );
+            }
+        }
+        Err(e) => {
+            log::warn!(
+                "[identify] auto-enroll extract failed for {}: {e:#}",
+                display_name
+            );
+        }
+    }
+
+    // Store centroid from the identify query so future meetings can match immediately.
+    if let Err(e) = store_centroid(
+        storage,
+        &person.id,
+        EMBED_MODEL_ID,
+        query.to_vec(),
+        VoiceprintEnrolledFrom::MeetingTurn,
+    )
+    .await
+    {
+        log::warn!(
+            "[identify] auto-enroll centroid failed for {}: {e:#}",
+            person.id
+        );
+    } else {
+        log::info!(
+            "[identify] auto-enrolled {display_name} ({}) speech={speech_s:.1}s",
+            person.id
+        );
+    }
+
+    Ok(person.id)
+}
+
 /// Identify diarized speakers in a transcript against the voice bank.
 ///
 /// For each unique non-empty `speaker` label:
 /// 1. Collect segment time spans
 /// 2. Embed those spans from `audio_path` (mean-pool)
 /// 3. Cosine-match vs enrolled centroids
-/// 4. ≥ threshold → person name + `person_id`; else `Guest-N`
+/// 4. ≥ threshold → person name + `person_id`
+/// 5. else auto-enroll as `Guest-N` when speech ≥ [`DEFAULT_AUTO_ENROLL_MIN_SPEECH_S`]
+///    (person + sample + centroid); short speech stays label-only guest
 ///
 /// Mutates `transcript.segments` speaker/person_id/confidence in place.
-/// Does **not** write to DB — caller applies via storage or saves transcript.
+/// Does **not** write segment renames to DB — caller applies via storage.
 #[cfg(feature = "diarization")]
 pub async fn identify_transcript(
     audio_path: &Path,
@@ -218,9 +302,29 @@ pub async fn identify_transcript(
     cfg: &DiarizeConfig,
     threshold: f32,
 ) -> anyhow::Result<IdentifyResult> {
-    let bank = storage.list_voiceprints().await?;
+    identify_transcript_with_meeting(
+        audio_path,
+        transcript,
+        storage,
+        cfg,
+        threshold,
+        None,
+    )
+    .await
+}
+
+/// Same as [`identify_transcript`] but tags auto-enrolled samples with `meeting_id`.
+#[cfg(feature = "diarization")]
+pub async fn identify_transcript_with_meeting(
+    audio_path: &Path,
+    transcript: &mut TranscriptionResponse,
+    storage: &MeetingStorage,
+    cfg: &DiarizeConfig,
+    threshold: f32,
+    meeting_id: Option<&str>,
+) -> anyhow::Result<IdentifyResult> {
     let persons = storage.list_persons().await?;
-    let name_by_id: HashMap<String, String> = persons
+    let mut name_by_id: HashMap<String, String> = persons
         .into_iter()
         .map(|p| (p.id, p.name))
         .collect();
@@ -259,16 +363,18 @@ pub async fn identify_transcript(
     let mut matched = 0u32;
     let mut guests = 0u32;
     let mut skipped = 0u32;
-    let mut guest_n = 0u32;
-
-    // Preload bank for matching without re-query
-    let bank_empty = bank.is_empty();
+    let mut guest_n = next_guest_index(&name_by_id);
 
     for label in &labels {
         let spans: Vec<(f64, f64)> = segments
             .iter()
             .filter(|s| s.speaker.as_deref() == Some(label.as_str()))
             .map(|s| (s.start, s.end))
+            .collect();
+        let segment_ids: Vec<u32> = segments
+            .iter()
+            .filter(|s| s.speaker.as_deref() == Some(label.as_str()))
+            .map(|s| s.id)
             .collect();
         let speech_s: f64 = spans.iter().map(|(a, b)| (b - a).max(0.0)).sum();
 
@@ -303,24 +409,48 @@ pub async fn identify_transcript(
         }
 
         let query = mean_pool_l2(&embs)?;
-        let (person_id, confidence, display_name) = if bank_empty {
+        let m = match_embedding(storage, &query, threshold).await?;
+
+        let (person_id, confidence, display_name) = if let Some(pid) = m.person_id {
+            matched += 1;
+            let name = name_by_id
+                .get(&pid)
+                .cloned()
+                .unwrap_or_else(|| pid.clone());
+            (Some(pid), Some(m.confidence), name)
+        } else if speech_s + f64::EPSILON >= DEFAULT_AUTO_ENROLL_MIN_SPEECH_S {
+            let name = format!("Guest-{guest_n}");
             guest_n += 1;
             guests += 1;
-            (None, None, format!("Guest-{guest_n}"))
-        } else {
-            let m = match_embedding(storage, &query, threshold).await?;
-            if let Some(pid) = m.person_id {
-                matched += 1;
-                let name = name_by_id
-                    .get(&pid)
-                    .cloned()
-                    .unwrap_or_else(|| pid.clone());
-                (Some(pid), Some(m.confidence), name)
-            } else {
-                guest_n += 1;
-                guests += 1;
-                (None, Some(m.confidence), format!("Guest-{guest_n}"))
+            match auto_enroll_guest(
+                storage,
+                audio_path,
+                meeting_id,
+                &spans,
+                speech_s,
+                &query,
+                &name,
+                &segment_ids,
+            )
+            .await
+            {
+                Ok(pid) => {
+                    name_by_id.insert(pid.clone(), name.clone());
+                    (Some(pid), Some(m.confidence), name)
+                }
+                Err(e) => {
+                    log::warn!("[identify] auto-enroll failed for {label}: {e:#}");
+                    (None, Some(m.confidence), name)
+                }
             }
+        } else {
+            let name = format!("Guest-{guest_n}");
+            guest_n += 1;
+            guests += 1;
+            log::info!(
+                "[identify] {label}: speech {speech_s:.1}s < auto-enroll min {DEFAULT_AUTO_ENROLL_MIN_SPEECH_S}s; label only"
+            );
+            (None, Some(m.confidence), name)
         };
 
         identities.push(SpeakerIdentity {
@@ -359,8 +489,21 @@ pub async fn identify_transcript(
     anyhow::bail!("speaker identify requires the `diarization` feature")
 }
 
+#[cfg(not(feature = "diarization"))]
+pub async fn identify_transcript_with_meeting(
+    _audio_path: &Path,
+    _transcript: &mut TranscriptionResponse,
+    _storage: &MeetingStorage,
+    _cfg: &DiarizeConfig,
+    _threshold: f32,
+    _meeting_id: Option<&str>,
+) -> anyhow::Result<IdentifyResult> {
+    anyhow::bail!("speaker identify requires the `diarization` feature")
+}
+
 /// Identify speakers on a stored meeting (latest transcript + recording).
 ///
+/// Unmatched speakers with enough speech are auto-enrolled into the voice bank.
 /// Writes results to DB via [`MeetingStorage::apply_speaker_identities`].
 #[cfg(feature = "diarization")]
 pub async fn identify_meeting(
@@ -374,7 +517,15 @@ pub async fn identify_meeting(
         anyhow::bail!("Recording not found for meeting: {meeting_id}");
     }
     let mut transcript = storage.get_transcript(meeting_id, None).await?;
-    let result = identify_transcript(&audio_path, &mut transcript, storage, cfg, threshold).await?;
+    let result = identify_transcript_with_meeting(
+        &audio_path,
+        &mut transcript,
+        storage,
+        cfg,
+        threshold,
+        Some(meeting_id),
+    )
+    .await?;
 
     let mut assignments: HashMap<String, (String, Option<String>, Option<f32>)> = HashMap::new();
     for id in &result.identities {
@@ -543,7 +694,7 @@ mod tests {
         );
         map.insert(
             "SPEAKER_01".to_string(),
-            ("Guest-1".to_string(), None, Some(0.2)),
+            ("Guest-1".to_string(), Some("guest-pid".into()), Some(0.2)),
         );
         let n = storage
             .apply_speaker_identities(&meeting.id, &map)
@@ -556,6 +707,16 @@ mod tests {
         assert_eq!(segs[0].speaker.as_deref(), Some("Alice"));
         assert_eq!(segs[0].person_id.as_deref(), Some(person.id.as_str()));
         assert_eq!(segs[1].speaker.as_deref(), Some("Guest-1"));
-        assert!(segs[1].person_id.is_none());
+        assert_eq!(segs[1].person_id.as_deref(), Some("guest-pid"));
+    }
+
+    #[test]
+    fn next_guest_index_from_names() {
+        let mut m = HashMap::new();
+        m.insert("a".into(), "Alice".into());
+        m.insert("b".into(), "Guest-3".into());
+        m.insert("c".into(), "Guest-1".into());
+        assert_eq!(next_guest_index(&m), 4);
+        assert_eq!(next_guest_index(&HashMap::new()), 1);
     }
 }
