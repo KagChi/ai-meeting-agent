@@ -97,6 +97,10 @@ pub fn build_router(state: AppState) -> Router {
             axum::routing::delete(person_handlers::delete_sample),
         )
         .route(
+            "/persons/:person_id/samples/:sample_id/audio",
+            get(person_handlers::get_sample_audio),
+        )
+        .route(
             "/persons/:id/voiceprint/rebuild",
             post(person_handlers::rebuild_person_voiceprint),
         )

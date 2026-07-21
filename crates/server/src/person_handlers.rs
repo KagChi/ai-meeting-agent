@@ -375,3 +375,45 @@ pub async fn list_voiceprints(
         total,
     }))
 }
+
+#[utoipa::path(
+    get,
+    path = "/persons/{person_id}/samples/{sample_id}/audio",
+    tag = "persons",
+    params(
+        ("person_id" = String, Path, description = "Person UUID"),
+        ("sample_id" = String, Path, description = "Sample UUID"),
+    ),
+    responses(
+        (status = 200, description = "Sample audio file (WAV)", content_type = "audio/wav"),
+        (status = 404, description = "Not found", body = crate::types::ErrorResponse),
+    )
+)]
+pub async fn get_sample_audio(
+    State(state): State<AppState>,
+    Path((person_id, sample_id)): Path<(String, String)>,
+) -> Result<axum::response::Response, ApiError> {
+    use axum::http::{header, HeaderValue};
+    use axum::response::IntoResponse;
+
+    validate_uuid(&person_id)?;
+    validate_uuid(&sample_id)?;
+    let _ = state.storage.get_person(&person_id).await?;
+
+    let samples = state.storage.list_voiceprint_samples(&person_id).await?;
+    let sample = samples
+        .iter()
+        .find(|s| s.id == sample_id)
+        .ok_or_else(|| ApiError::NotFound(format!("Sample not found: {sample_id}")))?;
+
+    let path = state.storage.voiceprint_sample_abs_path(sample);
+    let bytes = tokio::fs::read(&path)
+        .await
+        .map_err(|e| ApiError::InternalServerError(format!("Failed to read sample audio: {e}")))?;
+
+    let mut response = bytes.into_response();
+    response
+        .headers_mut()
+        .insert(header::CONTENT_TYPE, HeaderValue::from_static("audio/wav"));
+    Ok(response)
+}
