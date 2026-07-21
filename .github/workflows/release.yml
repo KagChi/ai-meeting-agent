@@ -20,7 +20,7 @@ jobs:
     strategy:
       matrix:
         include:
-          - os: self-hosted
+          - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
             artifact_name: meeting-agent
             asset_name: meeting-agent-linux-amd64
@@ -68,7 +68,7 @@ jobs:
   release:
     name: Release
     needs: [build]
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     if: always() && needs.build.result == 'success'
     steps:
       - uses: actions/checkout@v4
