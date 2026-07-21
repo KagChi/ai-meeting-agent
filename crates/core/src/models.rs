@@ -229,6 +229,87 @@ pub struct MatchedSegment {
     pub timestamp: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub speaker: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub person_id: Option<String>,
+}
+
+/// Source of a voiceprint enrollment sample.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[serde(rename_all = "snake_case")]
+pub enum VoiceprintSampleSource {
+    Upload,
+    MeetingTurn,
+}
+
+/// How the current voiceprint centroid was enrolled.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[serde(rename_all = "snake_case")]
+pub enum VoiceprintEnrolledFrom {
+    Sample,
+    MeetingTurn,
+}
+
+/// A person in the voice bank (stable identity across meetings).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+pub struct Person {
+    pub id: String,
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub aliases: Vec<String>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+impl Person {
+    pub fn new(name: String) -> Self {
+        let now = Utc::now();
+        Self {
+            id: Uuid::new_v4().to_string(),
+            name,
+            aliases: Vec::new(),
+            created_at: now,
+            updated_at: now,
+        }
+    }
+}
+
+/// Embedding centroid for a person (match key for identification).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+pub struct Voiceprint {
+    pub id: String,
+    pub person_id: String,
+    /// Embedding model id (e.g. wespeaker-voxceleb-resnet34).
+    pub model: String,
+    pub dim: u32,
+    /// L2-normalized f32 embedding (not serialized in API by default).
+    #[serde(skip_serializing)]
+    pub centroid: Vec<f32>,
+    pub enrolled_from: VoiceprintEnrolledFrom,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+/// Metadata for an enrollment audio sample (bytes on disk at `audio_path`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+pub struct VoiceprintSample {
+    pub id: String,
+    pub person_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub voiceprint_id: Option<String>,
+    /// Relative path under the storage base (e.g. voiceprints/{person_id}/samples/{id}.wav).
+    pub audio_path: String,
+    pub duration_s: f64,
+    pub source: VoiceprintSampleSource,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub meeting_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub segment_ids: Vec<u32>,
+    pub created_at: DateTime<Utc>,
 }
 
 /// A meeting with matched transcript segments from global search.

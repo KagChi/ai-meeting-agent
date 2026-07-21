@@ -104,6 +104,12 @@ pub struct TranscriptSegment {
     /// or no overlap was found). speakrs emits labels like "SPEAKER_00".
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub speaker: Option<String>,
+    /// Voice-bank person id when identified or enrolled (FK → persons.id).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub person_id: Option<String>,
+    /// Cosine similarity from identify step (None if manual rename only).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub identify_confidence: Option<f32>,
     /// LLM-refined segment text (punctuation/capitalization). None when refine skipped/failed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub refined_text: Option<String>,
@@ -204,6 +210,8 @@ fn parse_response(raw: &str) -> Result<TranscriptionResponse> {
                     compression_ratio: None,
                     no_speech_prob: None,
                     speaker: None,
+                    person_id: None,
+                    identify_confidence: None,
                     refined_text: None,
                 }
             })
@@ -894,6 +902,8 @@ fn merge_chunk_responses(
                     compression_ratio: seg.compression_ratio,
                     no_speech_prob: seg.no_speech_prob,
                     speaker: seg.speaker.clone(),
+                    person_id: None,
+                    identify_confidence: None,
                     refined_text: None,
                 });
                 global_id += 1;
@@ -1054,6 +1064,8 @@ mod tests {
                     compression_ratio: None,
                     no_speech_prob: None,
                     speaker: None,
+                    person_id: None,
+                    identify_confidence: None,
                     refined_text: None,
                 },
                 TranscriptSegment {
@@ -1068,6 +1080,8 @@ mod tests {
                     compression_ratio: None,
                     no_speech_prob: None,
                     speaker: None,
+                    person_id: None,
+                    identify_confidence: None,
                     refined_text: None,
                 },
             ]),
@@ -1090,6 +1104,8 @@ mod tests {
                     compression_ratio: None,
                     no_speech_prob: None,
                     speaker: None,
+                    person_id: None,
+                    identify_confidence: None,
                     refined_text: None,
                 },
                 TranscriptSegment {
@@ -1104,6 +1120,8 @@ mod tests {
                     compression_ratio: None,
                     no_speech_prob: None,
                     speaker: None,
+                    person_id: None,
+                    identify_confidence: None,
                     refined_text: None,
                 },
             ]),
@@ -1153,6 +1171,8 @@ mod tests {
                 compression_ratio: None,
                 no_speech_prob: None,
                 speaker: None,
+                person_id: None,
+                identify_confidence: None,
                 refined_text: None,
             }]),
             refined_text: None,

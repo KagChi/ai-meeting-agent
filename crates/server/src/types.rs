@@ -1,7 +1,8 @@
 use chrono::{DateTime, Utc};
 use meeting_agent_core::jobs::{Job, JobState, JobType};
 use meeting_agent_core::models::{
-    Meeting, MeetingSearchResult, MeetingStatus, Summary, SummaryFormat, SummaryTemplate,
+    Meeting, MeetingSearchResult, MeetingStatus, Person, Summary, SummaryFormat, SummaryTemplate,
+    VoiceprintSample,
 };
 use meeting_agent_core::transcription::TranscriptionResponse;
 use serde::{Deserialize, Serialize};
@@ -143,6 +144,97 @@ pub struct ErrorResponse {
     pub error: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub details: Option<String>,
+}
+
+// === Voice bank / persons ===
+
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub struct CreatePersonRequest {
+    pub name: String,
+    #[serde(default)]
+    pub aliases: Vec<String>,
+}
+
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub struct UpdatePersonRequest {
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub aliases: Option<Vec<String>>,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct PersonResponse {
+    #[serde(flatten)]
+    pub person: Person,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct ListPersonsResponse {
+    pub persons: Vec<Person>,
+    pub total: u64,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct VoiceprintSampleResponse {
+    #[serde(flatten)]
+    pub sample: VoiceprintSample,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct ListVoiceprintSamplesResponse {
+    pub samples: Vec<VoiceprintSample>,
+    pub total: u64,
+}
+
+/// Public view of a voiceprint (no raw centroid bytes).
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct VoiceprintMetaResponse {
+    pub id: String,
+    pub person_id: String,
+    pub model: String,
+    pub dim: u32,
+    pub enrolled_from: String,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct ListVoiceprintsResponse {
+    pub voiceprints: Vec<VoiceprintMetaResponse>,
+    pub total: u64,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct RebuildVoiceprintResponse {
+    /// True when a centroid was written (enough speech + successful embed).
+    pub rebuilt: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub voiceprint: Option<VoiceprintMetaResponse>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct SpeakerIdentityResponse {
+    /// Original diarization label (e.g. SPEAKER_00).
+    pub diar_label: String,
+    pub display_name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub person_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub confidence: Option<f32>,
+    pub speech_s: f64,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct IdentifySpeakersResponse {
+    pub meeting_id: String,
+    pub updated_segments: u64,
+    pub matched: u32,
+    pub guests: u32,
+    pub skipped: u32,
+    pub identities: Vec<SpeakerIdentityResponse>,
 }
 
 // === Import Types ===

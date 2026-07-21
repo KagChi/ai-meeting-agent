@@ -22,4 +22,18 @@ impl AppState {
             config: Arc::new(RwLock::new(config)),
         })
     }
+
+    /// Build state with an isolated storage base (tests).
+    pub async fn with_storage(
+        config: Config,
+        storage: MeetingStorage,
+        config_path: PathBuf,
+    ) -> Self {
+        Self {
+            storage: Arc::new(storage),
+            jobs: Arc::new(JobRegistry::new()),
+            config_path,
+            config: Arc::new(RwLock::new(config)),
+        }
+    }
 }

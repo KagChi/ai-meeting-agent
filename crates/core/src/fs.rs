@@ -14,6 +14,21 @@ pub fn meetings_dir() -> Result<PathBuf> {
     Ok(data_dir()?.join("meetings"))
 }
 
+/// Get the voiceprints directory path (`~/.meeting-agent/voiceprints`)
+pub fn voiceprints_dir() -> Result<PathBuf> {
+    Ok(data_dir()?.join("voiceprints"))
+}
+
+/// Directory for one person's voiceprint assets
+pub fn person_voiceprint_dir(person_id: &str) -> Result<PathBuf> {
+    Ok(voiceprints_dir()?.join(person_id))
+}
+
+/// Directory for enrollment sample WAVs for one person
+pub fn person_samples_dir(person_id: &str) -> Result<PathBuf> {
+    Ok(person_voiceprint_dir(person_id)?.join("samples"))
+}
+
 /// Get the config file path
 pub fn config_path() -> Result<PathBuf> {
     Ok(data_dir()?.join("config.json"))
@@ -23,9 +38,11 @@ pub fn config_path() -> Result<PathBuf> {
 pub fn ensure_data_dir() -> Result<()> {
     let data = data_dir()?;
     let meetings = meetings_dir()?;
+    let voiceprints = voiceprints_dir()?;
 
     std::fs::create_dir_all(&data)?;
     std::fs::create_dir_all(&meetings)?;
+    std::fs::create_dir_all(&voiceprints)?;
 
     Ok(())
 }

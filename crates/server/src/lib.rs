@@ -9,6 +9,7 @@ pub mod handlers;
 pub mod import_handlers;
 pub mod logging;
 pub mod openapi;
+pub mod person_handlers;
 pub mod state;
 pub mod summary_handlers;
 pub mod types;
@@ -73,6 +74,33 @@ pub fn build_router(state: AppState) -> Router {
             "/meetings/:id/speakers/rename",
             post(handlers::rename_speakers),
         )
+        .route(
+            "/meetings/:id/speakers/identify",
+            post(handlers::identify_speakers),
+        )
+        .route(
+            "/persons",
+            get(person_handlers::list_persons).post(person_handlers::create_person),
+        )
+        .route(
+            "/persons/:id",
+            get(person_handlers::get_person)
+                .patch(person_handlers::update_person)
+                .delete(person_handlers::delete_person),
+        )
+        .route(
+            "/persons/:id/samples",
+            get(person_handlers::list_samples).post(person_handlers::add_sample),
+        )
+        .route(
+            "/persons/:person_id/samples/:sample_id",
+            axum::routing::delete(person_handlers::delete_sample),
+        )
+        .route(
+            "/persons/:id/voiceprint/rebuild",
+            post(person_handlers::rebuild_person_voiceprint),
+        )
+        .route("/voiceprints", get(person_handlers::list_voiceprints))
         .route(
             "/meetings/:id/summary",
             get(summary_handlers::list_summaries).post(summary_handlers::create_summary),
