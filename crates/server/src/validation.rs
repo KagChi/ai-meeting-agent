@@ -22,18 +22,63 @@ pub fn validate_uuid(id: &str) -> Result<(), ApiError> {
     Ok(())
 }
 
+const MAX_PARTICIPANTS: usize = 50;
+const MAX_PARTICIPANT_NAME_LEN: usize = 100;
+
 /// Validate UpdateMeetingRequest has at least one field
 pub fn validate_update_request(
     title: &Option<String>,
     date: &Option<chrono::DateTime<chrono::Utc>>,
+    participants: &Option<Vec<String>>,
 ) -> Result<(), ApiError> {
-    if title.is_none() && date.is_none() {
+    if title.is_none() && date.is_none() && participants.is_none() {
         return Err(ApiError::BadRequest(
-            "At least one field (title or date) must be provided".to_string(),
+            "At least one field (title, date, or participants) must be provided".to_string(),
         ));
     }
     if let Some(t) = title {
         validate_meeting_title(t)?;
+    }
+    if let Some(list) = participants {
+        validate_participants(list)?;
+    }
+    Ok(())
+}
+
+/// Validate participants list (names trimmed; empty strings rejected)
+pub fn validate_participants(participants: &[String]) -> Result<(), ApiError> {
+    if participants.len() > MAX_PARTICIPANTS {
+        return Err(ApiError::BadRequest(format!(
+            "At most {MAX_PARTICIPANTS} participants allowed"
+        )));
+    }
+    for name in participants {
+        let trimmed = name.trim();
+        if trimmed.is_empty() {
+            return Err(ApiError::BadRequest(
+                "Participant names cannot be empty".to_string(),
+            ));
+        }
+        if trimmed.len() > MAX_PARTICIPANT_NAME_LEN {
+            return Err(ApiError::BadRequest(format!(
+                "Participant name must be {MAX_PARTICIPANT_NAME_LEN} characters or less"
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// Validate freeform summary content for PUT
+pub fn validate_summary_content(content: &str) -> Result<(), ApiError> {
+    if content.trim().is_empty() {
+        return Err(ApiError::BadRequest(
+            "Summary content cannot be empty".to_string(),
+        ));
+    }
+    if content.len() > 500_000 {
+        return Err(ApiError::BadRequest(
+            "Summary content must be 500000 characters or less".to_string(),
+        ));
     }
     Ok(())
 }
@@ -83,29 +128,48 @@ mod tests {
     fn test_validate_update_request_both_fields() {
         let title = Some("Title".to_string());
         let date = Some(chrono::Utc::now());
-        assert!(validate_update_request(&title, &date).is_ok());
+        assert!(validate_update_request(&title, &date, &None).is_ok());
     }
 
     #[test]
     fn test_validate_update_request_title_only() {
         let title = Some("Title".to_string());
-        assert!(validate_update_request(&title, &None).is_ok());
+        assert!(validate_update_request(&title, &None, &None).is_ok());
     }
 
     #[test]
     fn test_validate_update_request_date_only() {
         let date = Some(chrono::Utc::now());
-        assert!(validate_update_request(&None, &date).is_ok());
+        assert!(validate_update_request(&None, &date, &None).is_ok());
+    }
+
+    #[test]
+    fn test_validate_update_request_participants_only() {
+        let participants = Some(vec!["Alice".to_string(), "Bob".to_string()]);
+        assert!(validate_update_request(&None, &None, &participants).is_ok());
     }
 
     #[test]
     fn test_validate_update_request_empty() {
-        assert!(validate_update_request(&None, &None).is_err());
+        assert!(validate_update_request(&None, &None, &None).is_err());
     }
 
     #[test]
     fn test_validate_update_request_invalid_title() {
         let title = Some("".to_string());
-        assert!(validate_update_request(&title, &None).is_err());
+        assert!(validate_update_request(&title, &None, &None).is_err());
+    }
+
+    #[test]
+    fn test_validate_participants_empty_name() {
+        assert!(validate_participants(&["".to_string()]).is_err());
+        assert!(validate_participants(&["  ".to_string()]).is_err());
+    }
+
+    #[test]
+    fn test_validate_summary_content() {
+        assert!(validate_summary_content("hello").is_ok());
+        assert!(validate_summary_content("").is_err());
+        assert!(validate_summary_content("   ").is_err());
     }
 }

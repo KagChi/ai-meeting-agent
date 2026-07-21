@@ -23,11 +23,20 @@ pub struct RefineResult {
     pub segment_refined: Vec<String>,
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct MeetingContext {
+    pub title: Option<String>,
+    pub date: Option<String>,
+    pub participants: Option<Vec<String>>,
+}
+
 #[derive(Debug, Clone)]
 pub struct SummarizeOptions {
     pub template: SummaryTemplate,
     pub format: SummaryFormat,
     pub language: Option<String>,
+    /// Known meeting metadata injected into the LLM prompt.
+    pub meeting: MeetingContext,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -109,6 +118,7 @@ impl SummaryClient {
                 .language
                 .as_deref()
                 .or(self.config.language.as_deref()),
+            &options.meeting,
         );
 
         let url = self.config.resolve_base_url();
@@ -601,28 +611,96 @@ fn meeting_notes_system_prompt(format: SummaryFormat) -> String {
         "You are a meeting notes assistant for an internship program. \
          Produce meeting notes that match this exact document structure and section order. \
          {format_note} \
-         Be detailed, factual, and comprehensive. Infer date, participants, and topic from the transcript when not explicit. \
+         Be detailed, factual, and comprehensive. \
+         When Meeting Context supplies title, date, or participants, use those values and do not invent replacements. \
+         Only infer date, participants, or topic from the transcript when the corresponding context field is missing. \
          Action items must be measurable deliverables with owners when possible."
     )
 }
 
-fn build_prompt(template: SummaryTemplate, format: SummaryFormat, transcript: &str, language: Option<&str>) -> String {
+fn format_meeting_context(meeting: &MeetingContext) -> String {
+    let mut lines = Vec::new();
+    if let Some(title) = meeting.title.as_ref().map(|t| t.trim()).filter(|t| !t.is_empty()) {
+        lines.push(format!("- Title: {title}"));
+    }
+    if let Some(date) = meeting.date.as_ref().map(|d| d.trim()).filter(|d| !d.is_empty()) {
+        lines.push(format!("- Date: {date}"));
+    }
+    if let Some(participants) = &meeting.participants {
+        let names: Vec<&str> = participants
+            .iter()
+            .map(|n| n.trim())
+            .filter(|n| !n.is_empty())
+            .collect();
+        if !names.is_empty() {
+            lines.push(format!("- Participants: {}", names.join(", ")));
+        }
+    }
+    if lines.is_empty() {
+        return String::new();
+    }
+    format!(
+        "Meeting Context:\n{}\n\
+         Use Title/Date/Participants above when filling those fields. \
+         Do not invent participant names that conflict with the list; \
+         the transcript may mention additional speakers not listed.\n\n",
+        lines.join("\n")
+    )
+}
+
+fn build_prompt(
+    template: SummaryTemplate,
+    format: SummaryFormat,
+    transcript: &str,
+    language: Option<&str>,
+    meeting: &MeetingContext,
+) -> String {
     let lang_note = match language {
         Some(l) => format!("\n\nWrite the notes in this language: {l}."),
         None => String::new(),
     };
+    let context_block = format_meeting_context(meeting);
+
+    let participants_cell = meeting
+        .participants
+        .as_ref()
+        .map(|p| {
+            p.iter()
+                .map(|n| n.trim())
+                .filter(|n| !n.is_empty())
+                .collect::<Vec<_>>()
+                .join(", ")
+        })
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "<comma-separated names>".to_string());
+
+    let date_cell = meeting
+        .date
+        .as_ref()
+        .map(|d| d.trim())
+        .filter(|d| !d.is_empty())
+        .unwrap_or("<full date with weekday if known>")
+        .to_string();
+
+    let topic_hint = meeting
+        .title
+        .as_ref()
+        .map(|t| t.trim())
+        .filter(|t| !t.is_empty())
+        .unwrap_or("<short meeting topic>");
 
     if matches!(template, SummaryTemplate::MeetingNotes) {
         return format!(
             "Generate internship meeting notes from the transcript below.\n\n\
+             {context_block}\
              Use this exact Markdown structure (fill every section; use 'N/A' or '- (none)' when empty):\n\n\
              # Meeting Notes\n\n\
              ## Meeting Information\n\n\
              | Item | Description |\n\
              |------|-------------|\n\
-             | Date | <full date with weekday if known> |\n\
-             | Participants | <comma-separated names> |\n\
-             | Topic | <short meeting topic> |\n\n\
+             | Date | {date_cell} |\n\
+             | Participants | {participants_cell} |\n\
+             | Topic | {topic_hint} |\n\n\
              ---\n\n\
              ## 1. Review Pending Tasks\n\n\
              | Pending Task | Owner | Status | Remarks |\n\
@@ -657,7 +735,8 @@ fn build_prompt(template: SummaryTemplate, format: SummaryFormat, transcript: &s
         SummaryFormat::RawText => " Use plain text without any markdown syntax.",
     };
     format!(
-        "Please summarize the following meeting transcript.\n\n\
+        "{context_block}\
+         Please summarize the following meeting transcript.\n\n\
          Sections to include: {template_name}.{format_note}{lang_note}\n\n\
          --- TRANSCRIPT START ---\n{transcript}\n--- TRANSCRIPT END ---"
     )
@@ -680,7 +759,8 @@ fn format_transcript(transcript: &TranscriptionResponse) -> String {
     }
 }
 
-fn parse_sections(
+/// Parse markdown section bullets into structured lists (public for manual summary updates).
+pub fn parse_sections(
     content: &str,
     template: SummaryTemplate,
 ) -> (Vec<String>, Vec<String>, Vec<String>) {
@@ -924,23 +1004,63 @@ data: [DONE]\n";
 
     #[test]
     fn test_build_prompt_key_points() {
-        let p = build_prompt(SummaryTemplate::KeyPoints, SummaryFormat::Markdown, "transcript text", None);
+        let p = build_prompt(
+            SummaryTemplate::KeyPoints,
+            SummaryFormat::Markdown,
+            "transcript text",
+            None,
+            &MeetingContext::default(),
+        );
         assert!(p.contains("key points only"));
         assert!(p.contains("transcript text"));
+        assert!(!p.contains("Meeting Context:"));
     }
 
     #[test]
     fn test_build_prompt_full() {
-        let p = build_prompt(SummaryTemplate::Full, SummaryFormat::Markdown, "t", Some("zh"));
+        let p = build_prompt(
+            SummaryTemplate::Full,
+            SummaryFormat::Markdown,
+            "t",
+            Some("zh"),
+            &MeetingContext::default(),
+        );
         assert!(p.contains("all three sections"));
         assert!(p.contains("language: zh"));
     }
 
     #[test]
     fn test_build_prompt_raw_text() {
-        let p = build_prompt(SummaryTemplate::Full, SummaryFormat::RawText, "t", None);
+        let p = build_prompt(
+            SummaryTemplate::Full,
+            SummaryFormat::RawText,
+            "t",
+            None,
+            &MeetingContext::default(),
+        );
         assert!(p.contains("plain text"));
         assert!(p.contains("without any markdown syntax"));
+    }
+
+    #[test]
+    fn test_build_prompt_with_participants() {
+        let ctx = MeetingContext {
+            title: Some("Weekly Sync".to_string()),
+            date: Some("2026-07-21T10:00:00Z".to_string()),
+            participants: Some(vec!["Alice".to_string(), "Bob".to_string()]),
+        };
+        let p = build_prompt(
+            SummaryTemplate::MeetingNotes,
+            SummaryFormat::Markdown,
+            "hello transcript",
+            None,
+            &ctx,
+        );
+        assert!(p.contains("Meeting Context:"));
+        assert!(p.contains("Participants: Alice, Bob"));
+        assert!(p.contains("| Participants | Alice, Bob |"));
+        assert!(p.contains("| Date | 2026-07-21T10:00:00Z |"));
+        assert!(p.contains("Weekly Sync"));
     }
 
     #[test]

@@ -60,6 +60,8 @@ pub struct UpdateMeetingRequest {
     pub title: Option<String>,
     /// RFC3339 date/time, for example 2026-07-09T10:00:00Z.
     pub date: Option<String>,
+    /// Replace meeting participants when provided.
+    pub participants: Option<Vec<String>>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]

@@ -19,6 +19,17 @@ pub struct CreateMeetingRequest {
 pub struct UpdateMeetingRequest {
     pub title: Option<String>,
     pub date: Option<DateTime<Utc>>,
+    /// Replace meeting participants list when provided (including empty list).
+    #[serde(default)]
+    pub participants: Option<Vec<String>>,
+}
+
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub struct UpdateSummaryRequest {
+    /// Full summary body (markdown or plain text matching format).
+    pub content: String,
+    #[serde(default)]
+    pub format: Option<SummaryFormat>,
 }
 
 // === Response Types ===

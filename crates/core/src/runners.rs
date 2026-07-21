@@ -249,6 +249,10 @@ async fn run_summary_inner(
         job_id,
         ProgressEvent::new("loading_transcript", "Loading meeting transcript"),
     );
+    let meeting = storage
+        .get_meeting(meeting_id)
+        .await
+        .context("Failed to load meeting")?;
     let transcript = storage
         .get_transcript(meeting_id, None)
         .await
@@ -270,6 +274,11 @@ async fn run_summary_inner(
         template: template.clone(),
         format: format.clone(),
         language: language.clone(),
+        meeting: crate::summary::MeetingContext {
+            title: Some(meeting.title.clone()),
+            date: Some(meeting.date.to_rfc3339()),
+            participants: meeting.participants.clone(),
+        },
     };
 
     let result = client
