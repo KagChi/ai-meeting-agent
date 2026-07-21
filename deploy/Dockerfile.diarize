@@ -8,8 +8,10 @@ ENV DEBIAN_FRONTEND=noninteractive
 ENV ORT_CUDA_VERSION=12
 ENV ORT_RUST_USE_CUDA=1
 
+# clang/cmake: knf-rs-sys (CAM++ fbank) bindgen + C++ build
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        ca-certificates curl pkg-config g++ git make perl \
+        ca-certificates curl pkg-config g++ git make perl cmake \
+        clang libclang-dev \
         libssl-dev libopenblas-dev \
     && rm -rf /var/lib/apt/lists/*
 
