@@ -244,8 +244,9 @@ fn normalize_template(template: Option<&str>) -> Result<&'static str, McpError> 
         "action_items" | "actionitems" | "action-items" => Ok("action_items"),
         "decisions" => Ok("decisions"),
         "full" => Ok("full"),
+        "meeting_notes" | "meetingnotes" | "meeting-notes" => Ok("meeting_notes"),
         other => Err(ClientError::InvalidInput(format!(
-            "invalid template '{other}'. Use key_points, action_items, decisions, or full"
+            "invalid template '{other}'. Use key_points, action_items, decisions, full, or meeting_notes"
         ))
         .into()),
     }

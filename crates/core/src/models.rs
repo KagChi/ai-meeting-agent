@@ -140,6 +140,9 @@ pub enum SummaryTemplate {
     Decisions,
     /// All three sections (key points, action items, decisions) in one LLM call.
     Full,
+    /// Internship meeting notes format (`docs/meetings/YYYY-MM-DD-meeting-notes.md`).
+    #[serde(rename = "meetingnotes", alias = "meeting_notes")]
+    MeetingNotes,
 }
 
 /// Output format for summary content.
