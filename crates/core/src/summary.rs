@@ -44,6 +44,9 @@ struct ChatRequest {
     messages: Vec<ChatMessage>,
     temperature: f32,
     max_tokens: u32,
+    /// Always false: prefer a single JSON completion. Some proxies still stream;
+    /// response parsing handles both modes.
+    stream: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -65,6 +68,22 @@ struct ChatChoice {
 #[derive(Debug, Deserialize)]
 struct ChatChoiceMessage {
     content: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct StreamChunk {
+    choices: Vec<StreamChoice>,
+}
+
+#[derive(Debug, Deserialize)]
+struct StreamChoice {
+    #[serde(default)]
+    delta: StreamDelta,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct StreamDelta {
+    content: Option<String>,
 }
 
 impl SummaryClient {
@@ -108,6 +127,7 @@ impl SummaryClient {
             ],
             temperature: self.config.temperature,
             max_tokens: self.config.max_tokens,
+            stream: false,
         };
 
         log::info!(
@@ -284,6 +304,7 @@ impl SummaryClient {
             ],
             temperature: 0.3,
             max_tokens: self.config.max_tokens.max(1024),
+            stream: false,
         };
         Ok(self
             .send_chat_request(url, &request, "refinement")
@@ -329,17 +350,120 @@ impl SummaryClient {
             );
         }
 
-        let chat_response: ChatResponse = response
-            .json()
-            .await
-            .with_context(|| format!("Failed to parse {operation} response"))?;
+        let content_type = response
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("")
+            .to_string();
 
-        chat_response
-            .choices
-            .into_iter()
-            .next()
-            .map(|c| c.message.content)
-            .with_context(|| format!("{operation} response contained no choices"))
+        let body = response
+            .text()
+            .await
+            .with_context(|| format!("Failed to read {operation} response body"))?;
+
+        parse_chat_completion_body(&body, &content_type)
+            .with_context(|| format!("Failed to parse {operation} response"))
+    }
+}
+
+/// Parse OpenAI-compatible chat completion body in either non-stream JSON or SSE form.
+fn parse_chat_completion_body(body: &str, content_type: &str) -> Result<String> {
+    let trimmed = body.trim();
+    if trimmed.is_empty() {
+        anyhow::bail!("chat completion response body was empty");
+    }
+
+    let looks_like_sse = content_type.to_ascii_lowercase().contains("text/event-stream")
+        || trimmed.lines().any(|line| {
+            let t = line.trim_start();
+            t.starts_with("data:") || t.starts_with("data: ")
+        });
+
+    if looks_like_sse {
+        log::info!("chat completion response mode: stream (SSE)");
+        let content = parse_sse_chat_completion(trimmed)?;
+        if content.is_empty() {
+            anyhow::bail!(
+                "SSE chat completion produced empty content (body preview: {})",
+                preview_body(trimmed)
+            );
+        }
+        return Ok(content);
+    }
+
+    log::info!("chat completion response mode: json");
+    let chat_response: ChatResponse = serde_json::from_str(trimmed).with_context(|| {
+        format!(
+            "invalid non-stream chat completion JSON (body preview: {})",
+            preview_body(trimmed)
+        )
+    })?;
+
+    chat_response
+        .choices
+        .into_iter()
+        .next()
+        .map(|c| c.message.content)
+        .filter(|c| !c.is_empty())
+        .with_context(|| {
+            format!(
+                "chat completion response contained no content (body preview: {})",
+                preview_body(trimmed)
+            )
+        })
+}
+
+/// Accumulate `choices[0].delta.content` from OpenAI-style SSE chunks.
+fn parse_sse_chat_completion(body: &str) -> Result<String> {
+    let mut out = String::new();
+
+    for raw_line in body.lines() {
+        let line = raw_line.trim();
+        if line.is_empty() || line.starts_with(':') {
+            continue;
+        }
+
+        let Some(data) = line.strip_prefix("data:") else {
+            continue;
+        };
+        let data = data.trim_start();
+        if data.is_empty() || data == "[DONE]" {
+            if data == "[DONE]" {
+                break;
+            }
+            continue;
+        }
+
+        match serde_json::from_str::<StreamChunk>(data) {
+            Ok(chunk) => {
+                for choice in chunk.choices {
+                    if let Some(piece) = choice.delta.content {
+                        out.push_str(&piece);
+                    }
+                }
+            }
+            Err(err) => {
+                // Some proxies emit non-chunk JSON (e.g. error objects) mid-stream.
+                log::warn!(
+                    "skipping unparseable SSE data line: {} (err: {})",
+                    preview_body(data),
+                    err
+                );
+            }
+        }
+    }
+
+    Ok(out)
+}
+
+fn preview_body(body: &str) -> String {
+    const MAX: usize = 300;
+    let collapsed: String = body.chars().take(MAX).collect();
+    if body.chars().count() > MAX {
+        format!("{collapsed}…")
+    } else {
+        collapsed
     }
 }
 
@@ -689,6 +813,58 @@ mod tests {
         assert_eq!(map.get(&0).map(String::as_str), Some("Hello world."));
         assert_eq!(map.get(&1).map(String::as_str), Some("Second line."));
         assert_eq!(map.get(&2).map(String::as_str), Some("Third."));
+    }
+
+    #[test]
+    fn test_parse_chat_completion_non_stream_json() {
+        let body = r#"{"id":"x","choices":[{"index":0,"message":{"role":"assistant","content":"Hello world"},"finish_reason":"stop"}]}"#;
+        let content = parse_chat_completion_body(body, "application/json").unwrap();
+        assert_eq!(content, "Hello world");
+    }
+
+    #[test]
+    fn test_parse_chat_completion_sse_stream() {
+        let body = "\
+data: {\"id\":\"c\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"## Key\"},\"finish_reason\":null}]}\n\
+\n\
+data: {\"id\":\"c\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\" Points\"},\"finish_reason\":null}]}\n\
+\n\
+data: {\"id\":\"c\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\
+\n\
+data: [DONE]\n";
+        let content = parse_chat_completion_body(body, "text/event-stream").unwrap();
+        assert_eq!(content, "## Key Points");
+    }
+
+    #[test]
+    fn test_parse_chat_completion_sse_detected_from_body() {
+        // No event-stream content-type; body still has data: lines (9router-style).
+        let body = "data: {\"choices\":[{\"delta\":{\"content\":\"Hi\"}}]}\n\ndata: [DONE]\n";
+        let content = parse_chat_completion_body(body, "application/json").unwrap();
+        assert_eq!(content, "Hi");
+    }
+
+    #[test]
+    fn test_parse_chat_completion_empty_sse_errors() {
+        let body = "data: {\"choices\":[{\"delta\":{}}]}\n\ndata: [DONE]\n";
+        let err = parse_chat_completion_body(body, "text/event-stream").unwrap_err();
+        assert!(err.to_string().contains("empty content"));
+    }
+
+    #[test]
+    fn test_chat_request_serializes_stream_false() {
+        let req = ChatRequest {
+            model: "m".into(),
+            messages: vec![ChatMessage {
+                role: "user".into(),
+                content: "hi".into(),
+            }],
+            temperature: 0.3,
+            max_tokens: 64,
+            stream: false,
+        };
+        let json = serde_json::to_value(&req).unwrap();
+        assert_eq!(json["stream"], false);
     }
 
     #[test]
