@@ -104,6 +104,9 @@ pub struct TranscriptSegment {
     /// or no overlap was found). speakrs emits labels like "SPEAKER_00".
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub speaker: Option<String>,
+    /// LLM-refined segment text (punctuation/capitalization). None when refine skipped/failed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refined_text: Option<String>,
 }
 
 impl TranscriptSegment {
@@ -201,6 +204,7 @@ fn parse_response(raw: &str) -> Result<TranscriptionResponse> {
                     compression_ratio: None,
                     no_speech_prob: None,
                     speaker: None,
+                    refined_text: None,
                 }
             })
             .collect();
@@ -890,6 +894,7 @@ fn merge_chunk_responses(
                     compression_ratio: seg.compression_ratio,
                     no_speech_prob: seg.no_speech_prob,
                     speaker: seg.speaker.clone(),
+                    refined_text: None,
                 });
                 global_id += 1;
             }
@@ -1049,6 +1054,7 @@ mod tests {
                     compression_ratio: None,
                     no_speech_prob: None,
                     speaker: None,
+                    refined_text: None,
                 },
                 TranscriptSegment {
                     id: 1,
@@ -1062,6 +1068,7 @@ mod tests {
                     compression_ratio: None,
                     no_speech_prob: None,
                     speaker: None,
+                    refined_text: None,
                 },
             ]),
             refined_text: None,
@@ -1083,6 +1090,7 @@ mod tests {
                     compression_ratio: None,
                     no_speech_prob: None,
                     speaker: None,
+                    refined_text: None,
                 },
                 TranscriptSegment {
                     id: 1,
@@ -1096,6 +1104,7 @@ mod tests {
                     compression_ratio: None,
                     no_speech_prob: None,
                     speaker: None,
+                    refined_text: None,
                 },
             ]),
             refined_text: None,
@@ -1144,6 +1153,7 @@ mod tests {
                 compression_ratio: None,
                 no_speech_prob: None,
                 speaker: None,
+                refined_text: None,
             }]),
             refined_text: None,
         };
