@@ -26,6 +26,8 @@ pub async fn init_database(db_path: &Path) -> Result<Pool<Sqlite>> {
         .await
         .context("Failed to run database migrations")?;
 
+    ensure_voice_bank_segment_columns(&pool).await?;
+
     log::info!("Database initialized at {}", db_path.display());
 
     Ok(pool)
@@ -46,9 +48,50 @@ pub async fn init_memory_database() -> Result<Pool<Sqlite>> {
         .await
         .context("Failed to run database migrations")?;
 
+    ensure_voice_bank_segment_columns(&pool).await?;
+
     log::info!("In-memory database initialized");
 
     Ok(pool)
+}
+
+/// Idempotent column adds for voice-bank segment identity fields.
+///
+/// Kept out of pure SQL migrations because SQLite `ALTER TABLE ADD COLUMN`
+/// is not `IF NOT EXISTS` and concurrent migrators / re-runs fail with
+/// "duplicate column name".
+async fn ensure_voice_bank_segment_columns(pool: &Pool<Sqlite>) -> Result<()> {
+    let cols: Vec<String> = sqlx::query_scalar(
+        "SELECT name FROM pragma_table_info('transcript_segments')",
+    )
+    .fetch_all(pool)
+    .await
+    .context("Failed to read transcript_segments columns")?;
+
+    if !cols.iter().any(|c| c == "person_id") {
+        sqlx::query(
+            "ALTER TABLE transcript_segments ADD COLUMN person_id TEXT REFERENCES persons(id) ON DELETE SET NULL",
+        )
+        .execute(pool)
+        .await
+        .context("Failed to add transcript_segments.person_id")?;
+    }
+
+    if !cols.iter().any(|c| c == "identify_confidence") {
+        sqlx::query("ALTER TABLE transcript_segments ADD COLUMN identify_confidence REAL")
+            .execute(pool)
+            .await
+            .context("Failed to add transcript_segments.identify_confidence")?;
+    }
+
+    sqlx::query(
+        "CREATE INDEX IF NOT EXISTS idx_segments_person ON transcript_segments(person_id)",
+    )
+    .execute(pool)
+    .await
+    .context("Failed to create idx_segments_person")?;
+
+    Ok(())
 }
 
 #[cfg(test)]
@@ -65,13 +108,16 @@ mod tests {
 
         // Verify tables exist
         let table_count: i32 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('meetings', 'transcript_segments', 'summaries', 'transcript_versions')"
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN (
+                'meetings', 'transcript_segments', 'summaries', 'transcript_versions',
+                'persons', 'voiceprints', 'voiceprint_samples'
+            )"
         )
         .fetch_one(&pool)
         .await
         .unwrap();
 
-        assert_eq!(table_count, 4, "Expected 4 main tables");
+        assert_eq!(table_count, 7, "Expected 7 main tables");
 
         // Verify FTS table exists
         let fts_exists: bool = sqlx::query_scalar(

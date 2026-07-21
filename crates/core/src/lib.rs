@@ -17,11 +17,15 @@ pub mod runners;
 pub mod storage;
 pub mod summary;
 pub mod transcription;
+pub mod voiceprint;
 
 // Re-export commonly used types
 pub use config::Config;
 pub use jobs::{Job, JobRegistry, JobState, JobType};
-pub use models::{Meeting, Summary, SummaryTemplate, Transcript};
+pub use models::{
+    Meeting, Person, Summary, SummaryTemplate, Transcript, Voiceprint, VoiceprintEnrolledFrom,
+    VoiceprintSample, VoiceprintSampleSource,
+};
 pub use storage::MeetingStorage;
 pub use summary::{MeetingContext, SummarizeOptions, SummaryClient};
 pub use transcription::{TranscriptionClient, TranscriptionRequest, TranscriptionResponse};

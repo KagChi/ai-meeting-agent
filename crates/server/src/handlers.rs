@@ -12,9 +12,9 @@ use serde_json::{json, Value};
 use crate::error::ApiError;
 use crate::state::AppState;
 use crate::types::{
-    CreateMeetingRequest, ListMeetingsResponse, MeetingResponse, PaginationQuery,
-    RenameSpeakersRequest, RenameSpeakersResponse, SearchTranscriptsQuery,
-    SearchTranscriptsResponse, TranscriptResponse, UpdateMeetingRequest,
+    CreateMeetingRequest, IdentifySpeakersResponse, ListMeetingsResponse, MeetingResponse,
+    PaginationQuery, RenameSpeakersRequest, RenameSpeakersResponse, SearchTranscriptsQuery,
+    SearchTranscriptsResponse, SpeakerIdentityResponse, TranscriptResponse, UpdateMeetingRequest,
 };
 use crate::validation;
 
@@ -381,6 +381,63 @@ pub async fn rename_speakers(
     Ok(Json(RenameSpeakersResponse {
         updated_segments: updated,
         mapping: cleaned,
+    }))
+}
+
+/// Identify diarized speakers against the voice bank (WeSpeaker cosine match).
+#[utoipa::path(
+    post,
+    path = "/meetings/{id}/speakers/identify",
+    tag = "transcripts",
+    params(
+        ("id" = String, Path, description = "Meeting ID")
+    ),
+    responses(
+        (status = 200, description = "Speakers identified", body = IdentifySpeakersResponse),
+        (status = 400, description = "Invalid request", body = ErrorResponse),
+        (status = 404, description = "Meeting, transcript, or recording not found", body = ErrorResponse),
+    )
+)]
+pub async fn identify_speakers(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<IdentifySpeakersResponse>, ApiError> {
+    validation::validate_uuid(&id)?;
+    let _meeting = state.storage.get_meeting(&id).await?;
+    let cfg = state.config.read().await.diarize.clone();
+    let (result, updated) = meeting_agent_core::voiceprint::identify_meeting(
+        &state.storage,
+        &id,
+        &cfg,
+        meeting_agent_core::voiceprint::DEFAULT_IDENTIFY_THRESHOLD,
+    )
+    .await
+    .map_err(|e| {
+        let msg = e.to_string();
+        if msg.contains("not found") || msg.contains("Transcript not found") || msg.contains("Recording not found") {
+            ApiError::NotFound(msg)
+        } else {
+            ApiError::InternalServerError(msg)
+        }
+    })?;
+
+    Ok(Json(IdentifySpeakersResponse {
+        meeting_id: id,
+        updated_segments: updated,
+        matched: result.matched,
+        guests: result.guests,
+        skipped: result.skipped,
+        identities: result
+            .identities
+            .into_iter()
+            .map(|i| SpeakerIdentityResponse {
+                diar_label: i.diar_label,
+                display_name: i.display_name,
+                person_id: i.person_id,
+                confidence: i.confidence,
+                speech_s: i.speech_s,
+            })
+            .collect(),
     }))
 }
 

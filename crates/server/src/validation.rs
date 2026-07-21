@@ -148,6 +148,49 @@ pub fn validate_summary_content(content: &str) -> Result<(), ApiError> {
     Ok(())
 }
 
+const MAX_PERSON_NAME_LEN: usize = 100;
+const MAX_PERSON_ALIASES: usize = 20;
+const MAX_ALIAS_LEN: usize = 100;
+
+/// Validate voice-bank person display name.
+pub fn validate_person_name(name: &str) -> Result<(), ApiError> {
+    let trimmed = name.trim();
+    if trimmed.is_empty() {
+        return Err(ApiError::BadRequest(
+            "Person name cannot be empty".to_string(),
+        ));
+    }
+    if trimmed.len() > MAX_PERSON_NAME_LEN {
+        return Err(ApiError::BadRequest(format!(
+            "Person name must be {MAX_PERSON_NAME_LEN} characters or less"
+        )));
+    }
+    Ok(())
+}
+
+/// Validate optional aliases list for a person.
+pub fn validate_person_aliases(aliases: &[String]) -> Result<(), ApiError> {
+    if aliases.len() > MAX_PERSON_ALIASES {
+        return Err(ApiError::BadRequest(format!(
+            "At most {MAX_PERSON_ALIASES} aliases allowed"
+        )));
+    }
+    for alias in aliases {
+        let trimmed = alias.trim();
+        if trimmed.is_empty() {
+            return Err(ApiError::BadRequest(
+                "Aliases cannot be empty".to_string(),
+            ));
+        }
+        if trimmed.len() > MAX_ALIAS_LEN {
+            return Err(ApiError::BadRequest(format!(
+                "Alias must be {MAX_ALIAS_LEN} characters or less"
+            )));
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -6,7 +6,9 @@ use crate::db;
 use crate::fs;
 use crate::models::{
     FileMetadata, MatchedSegment, Meeting, MeetingSearchResult, MeetingStatus, MetadataSource,
-    Summary, SummaryFormat, SummaryStatus, SummaryTemplate, TranscriptionInfo, TranscriptVersion,
+    Person, Summary, SummaryFormat, SummaryStatus, SummaryTemplate, TranscriptionInfo,
+    TranscriptVersion, Voiceprint, VoiceprintEnrolledFrom, VoiceprintSample,
+    VoiceprintSampleSource,
 };
 use crate::transcription::{TranscriptSegment, TranscriptionResponse};
 use anyhow::{Context, Result};
@@ -496,8 +498,8 @@ impl MeetingStorage {
                     "INSERT INTO transcript_segments (
                         meeting_id, version, segment_id, start, end, text, speaker,
                         tokens, temperature, avg_logprob, compression_ratio, no_speech_prob,
-                        refined_text
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        refined_text, person_id, identify_confidence
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 )
                 .bind(meeting_id)
                 .bind(version)
@@ -517,6 +519,8 @@ impl MeetingStorage {
                 .bind(segment.compression_ratio.map(|v| v as f64))
                 .bind(segment.no_speech_prob.map(|v| v as f64))
                 .bind(segment.refined_text.as_deref())
+                .bind(segment.person_id.as_deref())
+                .bind(segment.identify_confidence.map(|v| v as f64))
                 .execute(&self.db)
                 .await;
 
@@ -629,7 +633,8 @@ impl MeetingStorage {
 
         let query = format!(
             "SELECT segment_id, start, end, text, speaker, tokens, temperature,
-                    avg_logprob, compression_ratio, no_speech_prob, refined_text
+                    avg_logprob, compression_ratio, no_speech_prob, refined_text,
+                    person_id, identify_confidence
              FROM transcript_segments
              WHERE meeting_id = ? {}
              ORDER BY segment_id ASC
@@ -673,6 +678,8 @@ impl MeetingStorage {
                     compression_ratio: row.try_get::<Option<f64>, _>(8)?.map(|v| v as f32),
                     no_speech_prob: row.try_get::<Option<f64>, _>(9)?.map(|v| v as f32),
                     refined_text,
+                    person_id: row.try_get(11)?,
+                    identify_confidence: row.try_get::<Option<f64>, _>(12)?.map(|v| v as f32),
                 })
             })
             .collect()
@@ -770,10 +777,12 @@ impl MeetingStorage {
             let latest_version = latest_version.unwrap_or(1);
 
             let segment_rows = sqlx::query(
-                "SELECT segment_id, start, end, text, speaker
+                "SELECT ts.segment_id, ts.start, ts.end, ts.text, ts.speaker, ts.person_id
                  FROM transcript_search
-                 WHERE meeting_id = ? AND version = ? AND transcript_search MATCH ?
-                 ORDER BY rank
+                 INNER JOIN transcript_segments AS ts ON ts.rowid = transcript_search.rowid
+                 WHERE transcript_search.meeting_id = ? AND transcript_search.version = ?
+                   AND transcript_search MATCH ?
+                 ORDER BY transcript_search.rank
                  LIMIT ?",
             )
             .bind(&meeting_id)
@@ -795,6 +804,7 @@ impl MeetingStorage {
                         text: srow.try_get(3)?,
                         timestamp: crate::transcription::format_timestamp_readable(start),
                         speaker: srow.try_get(4)?,
+                        person_id: srow.try_get(5)?,
                     })
                 })
                 .collect::<Result<Vec<_>>>()?;
@@ -843,10 +853,13 @@ impl MeetingStorage {
         };
 
         let rows = sqlx::query(
-            "SELECT segment_id, start, end, text, speaker
+            "SELECT ts.segment_id, ts.start, ts.end, ts.text, ts.speaker,
+                    ts.person_id, ts.identify_confidence
              FROM transcript_search
-             WHERE meeting_id = ? AND version = ? AND transcript_search MATCH ?
-             ORDER BY rank
+             INNER JOIN transcript_segments AS ts ON ts.rowid = transcript_search.rowid
+             WHERE transcript_search.meeting_id = ? AND transcript_search.version = ?
+               AND transcript_search MATCH ?
+             ORDER BY transcript_search.rank
              LIMIT ? OFFSET ?",
         )
         .bind(meeting_id)
@@ -874,6 +887,8 @@ impl MeetingStorage {
                     compression_ratio: None,
                     no_speech_prob: None,
                     refined_text: None,
+                    person_id: row.try_get(5)?,
+                    identify_confidence: row.try_get::<Option<f64>, _>(6)?.map(|v| v as f32),
                 })
             })
             .collect()
@@ -1207,6 +1222,493 @@ impl MeetingStorage {
         }
         Ok(())
     }
+
+    // ── Voice bank ──────────────────────────────────────────────────────
+
+    fn voiceprints_dir(&self) -> PathBuf {
+        self.base.join("voiceprints")
+    }
+
+    fn person_samples_dir(&self, person_id: &str) -> PathBuf {
+        self.voiceprints_dir().join(person_id).join("samples")
+    }
+
+    /// Relative path stored in DB: `voiceprints/{person_id}/samples/{sample_id}.wav`
+    fn sample_relative_path(person_id: &str, sample_id: &str) -> String {
+        format!("voiceprints/{person_id}/samples/{sample_id}.wav")
+    }
+
+    fn absolute_from_relative(&self, relative: &str) -> PathBuf {
+        self.base.join(relative)
+    }
+
+    fn aliases_to_db(aliases: &[String]) -> Option<String> {
+        if aliases.is_empty() {
+            None
+        } else {
+            Some(serde_json::to_string(aliases).unwrap_or_else(|_| "[]".to_string()))
+        }
+    }
+
+    fn aliases_from_db(raw: Option<String>) -> Vec<String> {
+        raw.and_then(|s| serde_json::from_str(&s).ok())
+            .unwrap_or_default()
+    }
+
+    fn enrolled_from_to_db(v: &VoiceprintEnrolledFrom) -> &'static str {
+        match v {
+            VoiceprintEnrolledFrom::Sample => "sample",
+            VoiceprintEnrolledFrom::MeetingTurn => "meeting_turn",
+        }
+    }
+
+    fn enrolled_from_from_db(s: &str) -> Result<VoiceprintEnrolledFrom> {
+        match s {
+            "sample" => Ok(VoiceprintEnrolledFrom::Sample),
+            "meeting_turn" => Ok(VoiceprintEnrolledFrom::MeetingTurn),
+            other => anyhow::bail!("unknown enrolled_from: {other}"),
+        }
+    }
+
+    fn sample_source_to_db(v: &VoiceprintSampleSource) -> &'static str {
+        match v {
+            VoiceprintSampleSource::Upload => "upload",
+            VoiceprintSampleSource::MeetingTurn => "meeting_turn",
+        }
+    }
+
+    fn sample_source_from_db(s: &str) -> Result<VoiceprintSampleSource> {
+        match s {
+            "upload" => Ok(VoiceprintSampleSource::Upload),
+            "meeting_turn" => Ok(VoiceprintSampleSource::MeetingTurn),
+            other => anyhow::bail!("unknown sample source: {other}"),
+        }
+    }
+
+    fn centroid_to_bytes(centroid: &[f32]) -> Vec<u8> {
+        let mut bytes = Vec::with_capacity(centroid.len() * 4);
+        for v in centroid {
+            bytes.extend_from_slice(&v.to_le_bytes());
+        }
+        bytes
+    }
+
+    fn centroid_from_bytes(bytes: &[u8], dim: u32) -> Result<Vec<f32>> {
+        let expected = dim as usize * 4;
+        if bytes.len() != expected {
+            anyhow::bail!(
+                "centroid blob size {} does not match dim {} (expected {} bytes)",
+                bytes.len(),
+                dim,
+                expected
+            );
+        }
+        let mut out = Vec::with_capacity(dim as usize);
+        for chunk in bytes.chunks_exact(4) {
+            out.push(f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]));
+        }
+        Ok(out)
+    }
+
+    fn row_to_person(row: sqlx::sqlite::SqliteRow) -> Result<Person> {
+        Ok(Person {
+            id: row.try_get(0)?,
+            name: row.try_get(1)?,
+            aliases: Self::aliases_from_db(row.try_get(2)?),
+            created_at: row.try_get(3)?,
+            updated_at: row.try_get(4)?,
+        })
+    }
+
+    fn row_to_voiceprint(row: sqlx::sqlite::SqliteRow) -> Result<Voiceprint> {
+        let dim: i64 = row.try_get(3)?;
+        let centroid_blob: Vec<u8> = row.try_get(4)?;
+        let enrolled: String = row.try_get(5)?;
+        Ok(Voiceprint {
+            id: row.try_get(0)?,
+            person_id: row.try_get(1)?,
+            model: row.try_get(2)?,
+            dim: dim as u32,
+            centroid: Self::centroid_from_bytes(&centroid_blob, dim as u32)?,
+            enrolled_from: Self::enrolled_from_from_db(&enrolled)?,
+            created_at: row.try_get(6)?,
+            updated_at: row.try_get(7)?,
+        })
+    }
+
+    fn row_to_sample(row: sqlx::sqlite::SqliteRow) -> Result<VoiceprintSample> {
+        let source: String = row.try_get(5)?;
+        let segment_ids = row
+            .try_get::<Option<String>, _>(7)?
+            .and_then(|s| serde_json::from_str(&s).ok())
+            .unwrap_or_default();
+        Ok(VoiceprintSample {
+            id: row.try_get(0)?,
+            person_id: row.try_get(1)?,
+            voiceprint_id: row.try_get(2)?,
+            audio_path: row.try_get(3)?,
+            duration_s: row.try_get(4)?,
+            source: Self::sample_source_from_db(&source)?,
+            meeting_id: row.try_get(6)?,
+            segment_ids,
+            created_at: row.try_get(8)?,
+        })
+    }
+
+    /// Create a person in the voice bank.
+    pub async fn create_person(&self, person: &Person) -> Result<()> {
+        sqlx::query(
+            "INSERT INTO persons (id, name, aliases, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?)",
+        )
+        .bind(&person.id)
+        .bind(&person.name)
+        .bind(Self::aliases_to_db(&person.aliases))
+        .bind(person.created_at)
+        .bind(person.updated_at)
+        .execute(&self.db)
+        .await
+        .context("Failed to create person")?;
+
+        let samples_dir = self.person_samples_dir(&person.id);
+        std::fs::create_dir_all(&samples_dir)
+            .with_context(|| format!("Failed to create samples dir {}", samples_dir.display()))?;
+        Ok(())
+    }
+
+    /// Get a person by id.
+    pub async fn get_person(&self, person_id: &str) -> Result<Person> {
+        let row = sqlx::query(
+            "SELECT id, name, aliases, created_at, updated_at FROM persons WHERE id = ?",
+        )
+        .bind(person_id)
+        .fetch_optional(&self.db)
+        .await
+        .context("Failed to query person")?
+        .ok_or_else(|| anyhow::anyhow!("Person not found: {person_id}"))?;
+        Self::row_to_person(row)
+    }
+
+    /// List all persons ordered by name.
+    pub async fn list_persons(&self) -> Result<Vec<Person>> {
+        let rows = sqlx::query(
+            "SELECT id, name, aliases, created_at, updated_at FROM persons ORDER BY name ASC",
+        )
+        .fetch_all(&self.db)
+        .await
+        .context("Failed to list persons")?;
+        rows.into_iter().map(Self::row_to_person).collect()
+    }
+
+    /// Update person name/aliases.
+    pub async fn update_person(
+        &self,
+        person_id: &str,
+        name: &str,
+        aliases: &[String],
+    ) -> Result<()> {
+        let result = sqlx::query("UPDATE persons SET name = ?, aliases = ? WHERE id = ?")
+            .bind(name)
+            .bind(Self::aliases_to_db(aliases))
+            .bind(person_id)
+            .execute(&self.db)
+            .await
+            .context("Failed to update person")?;
+        if result.rows_affected() == 0 {
+            anyhow::bail!("Person not found: {person_id}");
+        }
+        Ok(())
+    }
+
+    /// Delete person, cascade voiceprint/samples rows, remove disk dir.
+    pub async fn delete_person(&self, person_id: &str) -> Result<()> {
+        let result = sqlx::query("DELETE FROM persons WHERE id = ?")
+            .bind(person_id)
+            .execute(&self.db)
+            .await
+            .context("Failed to delete person")?;
+        if result.rows_affected() == 0 {
+            anyhow::bail!("Person not found: {person_id}");
+        }
+        let dir = self.voiceprints_dir().join(person_id);
+        if dir.exists() {
+            std::fs::remove_dir_all(&dir)
+                .with_context(|| format!("Failed to remove voiceprint dir {}", dir.display()))?;
+        }
+        Ok(())
+    }
+
+    /// Upsert voiceprint centroid for a person (1:1 in v1).
+    pub async fn upsert_voiceprint(&self, vp: &Voiceprint) -> Result<()> {
+        self.get_person(&vp.person_id).await?;
+        if vp.centroid.len() != vp.dim as usize {
+            anyhow::bail!(
+                "centroid len {} does not match dim {}",
+                vp.centroid.len(),
+                vp.dim
+            );
+        }
+        let blob = Self::centroid_to_bytes(&vp.centroid);
+        sqlx::query(
+            "INSERT INTO voiceprints (id, person_id, model, dim, centroid, enrolled_from, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+             ON CONFLICT(person_id) DO UPDATE SET
+               id = excluded.id,
+               model = excluded.model,
+               dim = excluded.dim,
+               centroid = excluded.centroid,
+               enrolled_from = excluded.enrolled_from,
+               updated_at = excluded.updated_at",
+        )
+        .bind(&vp.id)
+        .bind(&vp.person_id)
+        .bind(&vp.model)
+        .bind(vp.dim as i64)
+        .bind(&blob)
+        .bind(Self::enrolled_from_to_db(&vp.enrolled_from))
+        .bind(vp.created_at)
+        .bind(vp.updated_at)
+        .execute(&self.db)
+        .await
+        .context("Failed to upsert voiceprint")?;
+        Ok(())
+    }
+
+    /// Get voiceprint for a person, if any.
+    pub async fn get_voiceprint(&self, person_id: &str) -> Result<Option<Voiceprint>> {
+        let row = sqlx::query(
+            "SELECT id, person_id, model, dim, centroid, enrolled_from, created_at, updated_at
+             FROM voiceprints WHERE person_id = ?",
+        )
+        .bind(person_id)
+        .fetch_optional(&self.db)
+        .await
+        .context("Failed to query voiceprint")?;
+        match row {
+            Some(r) => Ok(Some(Self::row_to_voiceprint(r)?)),
+            None => Ok(None),
+        }
+    }
+
+    /// Load all voiceprints for cosine matching.
+    pub async fn list_voiceprints(&self) -> Result<Vec<Voiceprint>> {
+        let rows = sqlx::query(
+            "SELECT id, person_id, model, dim, centroid, enrolled_from, created_at, updated_at
+             FROM voiceprints",
+        )
+        .fetch_all(&self.db)
+        .await
+        .context("Failed to list voiceprints")?;
+        rows.into_iter().map(Self::row_to_voiceprint).collect()
+    }
+
+    /// Write sample audio to disk and insert metadata row.
+    ///
+    /// `audio_bytes` is the WAV (or other) payload. Returns the sample record.
+    pub async fn add_voiceprint_sample(
+        &self,
+        person_id: &str,
+        audio_bytes: &[u8],
+        duration_s: f64,
+        source: VoiceprintSampleSource,
+        meeting_id: Option<&str>,
+        segment_ids: &[u32],
+    ) -> Result<VoiceprintSample> {
+        self.get_person(person_id).await?;
+
+        let sample_id = uuid::Uuid::new_v4().to_string();
+        let relative = Self::sample_relative_path(person_id, &sample_id);
+        let abs = self.absolute_from_relative(&relative);
+
+        if let Some(parent) = abs.parent() {
+            std::fs::create_dir_all(parent)
+                .with_context(|| format!("Failed to create {}", parent.display()))?;
+        }
+        std::fs::write(&abs, audio_bytes)
+            .with_context(|| format!("Failed to write sample {}", abs.display()))?;
+
+        let segment_ids_json = if segment_ids.is_empty() {
+            None
+        } else {
+            Some(serde_json::to_string(segment_ids)?)
+        };
+        let created_at = chrono::Utc::now();
+
+        sqlx::query(
+            "INSERT INTO voiceprint_samples (
+                id, person_id, voiceprint_id, audio_path, duration_s, source,
+                meeting_id, segment_ids, created_at
+             ) VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(&sample_id)
+        .bind(person_id)
+        .bind(&relative)
+        .bind(duration_s)
+        .bind(Self::sample_source_to_db(&source))
+        .bind(meeting_id)
+        .bind(segment_ids_json.as_deref())
+        .bind(created_at)
+        .execute(&self.db)
+        .await
+        .context("Failed to insert voiceprint sample")?;
+
+        Ok(VoiceprintSample {
+            id: sample_id,
+            person_id: person_id.to_string(),
+            voiceprint_id: None,
+            audio_path: relative,
+            duration_s,
+            source,
+            meeting_id: meeting_id.map(|s| s.to_string()),
+            segment_ids: segment_ids.to_vec(),
+            created_at,
+        })
+    }
+
+    /// List enrollment samples for a person.
+    pub async fn list_voiceprint_samples(&self, person_id: &str) -> Result<Vec<VoiceprintSample>> {
+        let rows = sqlx::query(
+            "SELECT id, person_id, voiceprint_id, audio_path, duration_s, source,
+                    meeting_id, segment_ids, created_at
+             FROM voiceprint_samples WHERE person_id = ? ORDER BY created_at ASC",
+        )
+        .bind(person_id)
+        .fetch_all(&self.db)
+        .await
+        .context("Failed to list voiceprint samples")?;
+        rows.into_iter().map(Self::row_to_sample).collect()
+    }
+
+    /// Absolute path to a sample's audio file on disk.
+    pub fn voiceprint_sample_abs_path(&self, sample: &VoiceprintSample) -> PathBuf {
+        self.absolute_from_relative(&sample.audio_path)
+    }
+
+    /// Delete one sample (row + file). Does not rebuild centroid.
+    pub async fn delete_voiceprint_sample(&self, sample_id: &str) -> Result<()> {
+        let row = sqlx::query(
+            "SELECT id, person_id, voiceprint_id, audio_path, duration_s, source,
+                    meeting_id, segment_ids, created_at
+             FROM voiceprint_samples WHERE id = ?",
+        )
+        .bind(sample_id)
+        .fetch_optional(&self.db)
+        .await
+        .context("Failed to query sample")?
+        .ok_or_else(|| anyhow::anyhow!("Voiceprint sample not found: {sample_id}"))?;
+        let sample = Self::row_to_sample(row)?;
+
+        sqlx::query("DELETE FROM voiceprint_samples WHERE id = ?")
+            .bind(sample_id)
+            .execute(&self.db)
+            .await
+            .context("Failed to delete voiceprint sample")?;
+
+        let abs = self.absolute_from_relative(&sample.audio_path);
+        if abs.exists() {
+            let _ = std::fs::remove_file(&abs);
+        }
+        Ok(())
+    }
+
+    /// Link segments on the latest transcript version to a person_id (and optional confidence).
+    ///
+    /// `speaker_label` is the current diarization/display label to match
+    /// (e.g. `SPEAKER_00` or `Alice`). Sets `person_id` and `identify_confidence`
+    /// on matching rows; does not change `speaker` text.
+    pub async fn set_segments_person(
+        &self,
+        meeting_id: &str,
+        speaker_label: &str,
+        person_id: Option<&str>,
+        confidence: Option<f32>,
+    ) -> Result<u64> {
+        self.get_meeting(meeting_id).await?;
+        if let Some(pid) = person_id {
+            self.get_person(pid).await?;
+        }
+
+        let version: i64 = sqlx::query_scalar(
+            "SELECT COALESCE(MAX(version), 0) FROM transcript_segments WHERE meeting_id = ?",
+        )
+        .bind(meeting_id)
+        .fetch_one(&self.db)
+        .await
+        .context("Failed to resolve latest transcript version")?;
+
+        if version == 0 {
+            anyhow::bail!("Transcript not found for meeting: {meeting_id}");
+        }
+
+        let result = sqlx::query(
+            "UPDATE transcript_segments
+             SET person_id = ?, identify_confidence = ?
+             WHERE meeting_id = ? AND version = ? AND speaker = ?",
+        )
+        .bind(person_id)
+        .bind(confidence.map(|c| c as f64))
+        .bind(meeting_id)
+        .bind(version)
+        .bind(speaker_label)
+        .execute(&self.db)
+        .await
+        .context("Failed to set segment person_id")?;
+
+        Ok(result.rows_affected())
+    }
+
+    /// Apply identify results on the latest transcript version.
+    ///
+    /// For each entry `(old_speaker_label → (display_name, person_id, confidence))`:
+    /// updates `speaker`, `person_id`, and `identify_confidence` on matching rows.
+    pub async fn apply_speaker_identities(
+        &self,
+        meeting_id: &str,
+        assignments: &std::collections::HashMap<
+            String,
+            (String, Option<String>, Option<f32>),
+        >,
+    ) -> Result<u64> {
+        self.get_meeting(meeting_id).await?;
+        if assignments.is_empty() {
+            return Ok(0);
+        }
+
+        let version: i64 = sqlx::query_scalar(
+            "SELECT COALESCE(MAX(version), 0) FROM transcript_segments WHERE meeting_id = ?",
+        )
+        .bind(meeting_id)
+        .fetch_one(&self.db)
+        .await
+        .context("Failed to resolve latest transcript version")?;
+
+        if version == 0 {
+            anyhow::bail!("Transcript not found for meeting: {meeting_id}");
+        }
+
+        let mut total: u64 = 0;
+        for (old_label, (display, person_id, confidence)) in assignments {
+            if let Some(pid) = person_id.as_deref() {
+                self.get_person(pid).await?;
+            }
+            let result = sqlx::query(
+                "UPDATE transcript_segments
+                 SET speaker = ?, person_id = ?, identify_confidence = ?
+                 WHERE meeting_id = ? AND version = ? AND speaker = ?",
+            )
+            .bind(display)
+            .bind(person_id.as_deref())
+            .bind(confidence.map(|c| c as f64))
+            .bind(meeting_id)
+            .bind(version)
+            .bind(old_label)
+            .execute(&self.db)
+            .await
+            .context("Failed to apply speaker identity")?;
+            total += result.rows_affected();
+        }
+        Ok(total)
+    }
 }
 
 impl std::fmt::Debug for MeetingStorage {
@@ -1245,6 +1747,8 @@ mod tests {
             compression_ratio: None,
             no_speech_prob: None,
             speaker: None,
+            person_id: None,
+            identify_confidence: None,
             refined_text: None,
         }
     }
@@ -1307,6 +1811,112 @@ mod tests {
         let segs = loaded.segments.as_ref().unwrap();
         assert_eq!(segs.len(), 1);
         assert_eq!(segs[0].refined_text.as_deref(), Some("Raw text."));
+    }
+
+    #[tokio::test]
+    async fn voice_bank_person_sample_and_centroid() {
+        let (dir, storage) = setup().await;
+
+        let mut person = Person::new("Alice".to_string());
+        person.aliases = vec!["Alicia".to_string()];
+        storage.create_person(&person).await.unwrap();
+
+        let loaded = storage.get_person(&person.id).await.unwrap();
+        assert_eq!(loaded.name, "Alice");
+        assert_eq!(loaded.aliases, vec!["Alicia".to_string()]);
+
+        let listed = storage.list_persons().await.unwrap();
+        assert_eq!(listed.len(), 1);
+
+        let wav = b"RIFF....WAVEfmt "; // dummy bytes; path/meta only in Phase A
+        let sample = storage
+            .add_voiceprint_sample(
+                &person.id,
+                wav,
+                32.0,
+                VoiceprintSampleSource::Upload,
+                None,
+                &[],
+            )
+            .await
+            .unwrap();
+        assert!(sample.audio_path.starts_with("voiceprints/"));
+        let abs = storage.voiceprint_sample_abs_path(&sample);
+        assert!(abs.exists());
+        assert_eq!(std::fs::read(&abs).unwrap(), wav);
+
+        let samples = storage.list_voiceprint_samples(&person.id).await.unwrap();
+        assert_eq!(samples.len(), 1);
+        assert_eq!(samples[0].duration_s, 32.0);
+
+        let centroid = vec![0.1f32, 0.2, 0.3, 0.4];
+        let now = chrono::Utc::now();
+        let vp = Voiceprint {
+            id: uuid::Uuid::new_v4().to_string(),
+            person_id: person.id.clone(),
+            model: "test-embed".to_string(),
+            dim: 4,
+            centroid: centroid.clone(),
+            enrolled_from: VoiceprintEnrolledFrom::Sample,
+            created_at: now,
+            updated_at: now,
+        };
+        storage.upsert_voiceprint(&vp).await.unwrap();
+        let loaded_vp = storage.get_voiceprint(&person.id).await.unwrap().unwrap();
+        assert_eq!(loaded_vp.dim, 4);
+        assert_eq!(loaded_vp.centroid, centroid);
+        assert_eq!(loaded_vp.model, "test-embed");
+
+        let all = storage.list_voiceprints().await.unwrap();
+        assert_eq!(all.len(), 1);
+
+        // Cascade delete person removes sample file dir
+        storage.delete_person(&person.id).await.unwrap();
+        assert!(storage.get_person(&person.id).await.is_err());
+        assert!(storage.get_voiceprint(&person.id).await.unwrap().is_none());
+        assert!(storage.list_voiceprint_samples(&person.id).await.unwrap().is_empty());
+        let person_dir = dir.path().join("voiceprints").join(&person.id);
+        assert!(!person_dir.exists());
+    }
+
+    #[tokio::test]
+    async fn set_segments_person_links_identity() {
+        let (_dir, storage) = setup().await;
+        let mut meeting = Meeting::new("ID link".to_string());
+        meeting.status = MeetingStatus::Ready;
+        storage.create_meeting(&meeting).await.unwrap();
+
+        let mut s0 = segment(0, 0.0, "hello");
+        s0.speaker = Some("SPEAKER_00".to_string());
+        let mut s1 = segment(1, 5.0, "world");
+        s1.speaker = Some("SPEAKER_01".to_string());
+        let response = TranscriptionResponse {
+            text: "hello world".to_string(),
+            language: Some("en".to_string()),
+            duration: Some(10.0),
+            segments: Some(vec![s0, s1]),
+            refined_text: None,
+        };
+        storage
+            .save_transcript(&meeting.id, &response, "test", "test-model", 10)
+            .await
+            .unwrap();
+
+        let person = Person::new("Alice".to_string());
+        storage.create_person(&person).await.unwrap();
+
+        let n = storage
+            .set_segments_person(&meeting.id, "SPEAKER_00", Some(&person.id), Some(0.91))
+            .await
+            .unwrap();
+        assert_eq!(n, 1);
+
+        let loaded = storage.get_transcript(&meeting.id, None).await.unwrap();
+        let segs = loaded.segments.as_ref().unwrap();
+        assert_eq!(segs[0].person_id.as_deref(), Some(person.id.as_str()));
+        assert!((segs[0].identify_confidence.unwrap() - 0.91).abs() < 1e-5);
+        assert_eq!(segs[0].speaker.as_deref(), Some("SPEAKER_00"));
+        assert!(segs[1].person_id.is_none());
     }
 
     #[tokio::test]

@@ -71,18 +71,29 @@ mod tests {
         routing::get,
         Router,
     };
-    use meeting_agent_core::Config;
+    use meeting_agent_core::{Config, MeetingStorage};
+    use tempfile::TempDir;
     use tower::ServiceExt;
 
     async fn dummy_handler() -> &'static str {
         "ok"
     }
 
+    async fn test_state(config: Config) -> (TempDir, AppState) {
+        let dir = TempDir::new().unwrap();
+        let storage = MeetingStorage::in_memory(dir.path().to_path_buf())
+            .await
+            .unwrap();
+        let config_path = dir.path().join("config.json");
+        let state = AppState::with_storage(config, storage, config_path).await;
+        (dir, state)
+    }
+
     #[tokio::test]
     async fn test_auth_with_valid_key() {
         let mut config = Config::default();
         config.server.api_key = Some("test-key".to_string());
-        let state = AppState::new(config).await.unwrap();
+        let (_dir, state) = test_state(config).await;
 
         let app = Router::new()
             .route("/test", get(dummy_handler))
@@ -106,7 +117,7 @@ mod tests {
     async fn test_auth_with_invalid_key() {
         let mut config = Config::default();
         config.server.api_key = Some("test-key".to_string());
-        let state = AppState::new(config).await.unwrap();
+        let (_dir, state) = test_state(config).await;
 
         let app = Router::new()
             .route("/test", get(dummy_handler))
@@ -130,7 +141,7 @@ mod tests {
     async fn test_auth_with_missing_key() {
         let mut config = Config::default();
         config.server.api_key = Some("test-key".to_string());
-        let state = AppState::new(config).await.unwrap();
+        let (_dir, state) = test_state(config).await;
 
         let app = Router::new()
             .route("/test", get(dummy_handler))
@@ -149,7 +160,7 @@ mod tests {
     #[tokio::test]
     async fn test_auth_open_access() {
         let config = Config::default(); // No API key
-        let state = AppState::new(config).await.unwrap();
+        let (_dir, state) = test_state(config).await;
 
         let app = Router::new()
             .route("/test", get(dummy_handler))

@@ -152,6 +152,10 @@ async fn run_import_inner(
         maybe_diarize(final_audio, transcription, config, registry, job_id).await;
     check_cancelled(cancel_token)?;
 
+    let transcription =
+        maybe_identify(final_audio, transcription, storage, config, registry, job_id).await;
+    check_cancelled(cancel_token)?;
+
     let transcription = refine_transcript(transcription, config, registry, job_id).await;
 
     registry.update_progress(
@@ -556,6 +560,17 @@ async fn run_import_memory_pipeline(
     .await;
     check_cancelled(&cfg.cancel_token)?;
 
+    let transcription = maybe_identify(
+        working_path,
+        transcription,
+        &cfg.storage,
+        &cfg.config,
+        &cfg.registry,
+        &cfg.job_id,
+    )
+    .await;
+    check_cancelled(&cfg.cancel_token)?;
+
     let transcription =
         refine_transcript(transcription, &cfg.config, &cfg.registry, &cfg.job_id).await;
 
@@ -636,6 +651,76 @@ async fn maybe_diarize(
         if config.diarize.enabled {
             log::warn!("[diarize] feature not enabled, skipping speaker diarization");
         }
+        transcription
+    }
+}
+
+/// Optional voiceprint identify after diarize. Soft-fails: keeps diar labels.
+///
+/// Runs when diarization is enabled and the voice bank has at least one centroid.
+async fn maybe_identify(
+    audio_path: &std::path::Path,
+    mut transcription: TranscriptionResponse,
+    storage: &Arc<MeetingStorage>,
+    config: &Config,
+    registry: &Arc<JobRegistry>,
+    job_id: &str,
+) -> TranscriptionResponse {
+    #[cfg(feature = "diarization")]
+    {
+        if !config.diarize.enabled {
+            return transcription;
+        }
+        let has_labels = transcription
+            .segments
+            .as_ref()
+            .map(|s| s.iter().any(|seg| seg.speaker.is_some()))
+            .unwrap_or(false);
+        if !has_labels {
+            return transcription;
+        }
+        match storage.list_voiceprints().await {
+            Ok(bank) if bank.is_empty() => {
+                log::info!("[identify] voice bank empty; skip");
+                return transcription;
+            }
+            Err(e) => {
+                log::warn!("[identify] list voiceprints failed: {e:#}");
+                return transcription;
+            }
+            Ok(_) => {}
+        }
+        registry.update_progress(
+            job_id,
+            ProgressEvent::new("identifying", "Speaker identification").with_percent(78.0),
+        );
+        match crate::voiceprint::identify_transcript(
+            audio_path,
+            &mut transcription,
+            storage,
+            &config.diarize,
+            crate::voiceprint::DEFAULT_IDENTIFY_THRESHOLD,
+        )
+        .await
+        {
+            Ok(result) => {
+                log::info!(
+                    "[identify] matched={} guests={} skipped={}",
+                    result.matched,
+                    result.guests,
+                    result.skipped
+                );
+                transcription
+            }
+            Err(e) => {
+                log::warn!("[identify] failed, keeping diarization labels: {e:#}");
+                transcription
+            }
+        }
+    }
+    #[cfg(not(feature = "diarization"))]
+    {
+        let _ = (audio_path, storage, config, registry, job_id);
         transcription
     }
 }
@@ -770,10 +855,24 @@ async fn run_retranscribe_inner(cfg: &RetranscribeConfig) -> Result<()> {
         anyhow::bail!("Job cancelled before diarization");
     }
 
-    // Same as import: diarize before refine so Enhance keeps speaker labels
+    // Same as import: diarize (+ optional identify) before refine so Enhance keeps labels
     let transcription = maybe_diarize(
         &cfg.audio_path,
         transcription,
+        &cfg.config,
+        &cfg.registry,
+        &cfg.job_id,
+    )
+    .await;
+
+    if cfg.cancel_token.is_cancelled() {
+        anyhow::bail!("Job cancelled before identification");
+    }
+
+    let transcription = maybe_identify(
+        &cfg.audio_path,
+        transcription,
+        &cfg.storage,
         &cfg.config,
         &cfg.registry,
         &cfg.job_id,
