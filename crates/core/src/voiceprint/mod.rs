@@ -27,7 +27,11 @@ pub const DEFAULT_AUTO_ENROLL_SAMPLE_MAX_S: f64 = 30.0;
 pub const DEFAULT_IDENTIFY_THRESHOLD: f32 = 0.55;
 
 /// Cosine threshold to merge two unmatched diarization clusters within one meeting.
-pub const DEFAULT_WITHIN_MEETING_MERGE_THRESHOLD: f32 = 0.55;
+///
+/// Must be **stricter** than [`DEFAULT_IDENTIFY_THRESHOLD`]: bank match at 0.55 is for
+/// known people; within-meeting merge only joins diarization over-splits of the *same*
+/// talker. At 0.55, different speakers in the same room often collapse into one Guest.
+pub const DEFAULT_WITHIN_MEETING_MERGE_THRESHOLD: f32 = 0.85;
 
 /// Result of matching a query embedding against the voice bank.
 #[derive(Debug, Clone)]
@@ -526,11 +530,17 @@ pub async fn identify_transcript_with_meeting(
             let score = cosine_similarity(&embedded[i].query, &embedded[j].query);
             if score >= merge_thr {
                 log::info!(
-                    "[identify] within-meeting merge {} ~ {} (cos={score:.3})",
+                    "[identify] within-meeting merge {} ~ {} (cos={score:.3} thr={merge_thr})",
                     embedded[i].label,
                     embedded[j].label
                 );
                 uf_union(&mut parent, i, j);
+            } else {
+                log::debug!(
+                    "[identify] no merge {} ~ {} (cos={score:.3} < thr={merge_thr})",
+                    embedded[i].label,
+                    embedded[j].label
+                );
             }
         }
     }
