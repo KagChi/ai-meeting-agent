@@ -75,6 +75,7 @@ pub async fn run(
             title: Some(meeting.title.clone()),
             date: Some(meeting.date.to_rfc3339()),
             participants: meeting.participants.clone(),
+            chat: None,
         },
     };
     let result = client.summarize(&transcript_resp, &opts).await?;

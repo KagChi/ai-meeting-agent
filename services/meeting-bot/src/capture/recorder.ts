@@ -5,6 +5,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync, mkdirSync, statSync } from "node:fs";
 import { dirname } from "node:path";
+import { log } from "../logger";
 
 export class AudioRecorder {
   private proc: ChildProcess | null = null;
@@ -50,13 +51,13 @@ export class AudioRecorder {
       this.stderrBuf += line;
       if (this.stderrBuf.length > 8000) this.stderrBuf = this.stderrBuf.slice(-4000);
       if (line.toLowerCase().includes("error")) {
-        console.warn("[recorder]", line.trim().slice(0, 240));
+        log.warn({ line: line.trim().slice(0, 240) }, "recorder ffmpeg stderr");
       }
     });
 
     this.proc.on("error", (err) => {
       this.spawnError = err.message;
-      console.error("[recorder] ffmpeg spawn error:", err.message);
+      log.error({ err: err.message }, "recorder ffmpeg spawn error");
     });
   }
 
@@ -102,8 +103,13 @@ export class AudioRecorder {
         error: `recording too short (${bytes} bytes)`,
       };
     }
-    console.log(
-      `[recorder] stopped path=${this.outPath} bytes=${bytes} elapsed_ms=${Date.now() - this.startedAt}`,
+    log.info(
+      {
+        path: this.outPath,
+        bytes,
+        elapsedMs: Date.now() - this.startedAt,
+      },
+      "recorder stopped",
     );
     return { path: this.outPath, bytes, ok: true };
   }

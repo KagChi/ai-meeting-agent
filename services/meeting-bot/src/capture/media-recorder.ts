@@ -1,14 +1,15 @@
 /**
- * In-page MediaRecorder capture — same approach Vexa uses for Teams/GMeet
- * (`MediaRecorderCapture` in @vexa/recording audio-pipeline).
+ * Vexa mixed-lane recording for Teams:
+ *   remote WebRTC streams (via installRemoteAudioHook) → mix → MediaRecorder
+ *   → webm chunks → 16 kHz mono WAV for meeting-agent import.
  *
- * Taps remote meeting audio via Web Audio API (all <audio>/<video> elements +
- * track events), encodes Opus in WebM, streams chunks to Node via
- * exposeFunction. No PulseAudio / host ffmpeg required for Teams.
+ * Aligns with Vexa capture-bridge mixed path + record-chunker (single file, not
+ * chunked upload).
  */
 import type { Page } from "playwright";
 import { mkdirSync, writeFileSync, existsSync, statSync } from "node:fs";
 import { dirname } from "node:path";
+import { log } from "../logger";
 
 export class MediaRecorderCapture {
   private page: Page;
@@ -39,77 +40,82 @@ export class MediaRecorderCapture {
             const buf = Buffer.from(payload.base64 || "", "base64");
             if (buf.length > 0) this.chunks.push(buf);
           } catch (e) {
-            console.warn("[media-recorder] chunk decode error", e);
+            log.warn({ err: e }, "media-recorder chunk decode error");
           }
         },
       );
       this.exposed = true;
     }
 
-    await this.page.evaluate(async () => {
+    const stats = await this.page.evaluate(async () => {
       const w = window as unknown as {
         __meetingBotRecorder?: MediaRecorder;
-        __meetingBotCtx?: AudioContext;
-        __meetingBotDest?: MediaStreamAudioDestinationNode;
+        __meetingBotMixCtx?: AudioContext;
+        __meetingBotMixDest?: MediaStreamAudioDestinationNode;
+        __meetingBotMixSeen?: Set<string>;
+        __meetingBotMixRescan?: number;
+        __meetingBotRemoteStreams?: MediaStream[];
         __meetingBotSaveChunk?: (p: {
           base64: string;
           isFinal?: boolean;
         }) => void | Promise<void>;
       };
 
-      // Tear down previous run if any
       try {
         w.__meetingBotRecorder?.stop();
       } catch {
         /* ignore */
       }
+      try {
+        if (w.__meetingBotMixRescan) window.clearInterval(w.__meetingBotMixRescan);
+      } catch {
+        /* ignore */
+      }
 
+      // Native-rate mix context (MediaRecorder handles encode); Vexa STT uses 16k separately
       const ctx = new AudioContext();
       const dest = ctx.createMediaStreamDestination();
-      w.__meetingBotCtx = ctx;
-      w.__meetingBotDest = dest;
+      w.__meetingBotMixCtx = ctx;
+      w.__meetingBotMixDest = dest;
+      w.__meetingBotMixSeen = new Set();
 
-      const connected = new WeakSet<Element>();
-
-      function connectEl(el: HTMLMediaElement) {
-        if (connected.has(el)) return;
-        try {
-          // Capture remote participants (typically not muted locally for playback)
-          const src = ctx.createMediaElementSource(el);
-          src.connect(dest);
-          // Keep hearing in the tab (optional for headless)
-          src.connect(ctx.destination);
-          connected.add(el);
-        } catch {
-          // Already connected or cross-origin — try captureStream
+      function connectStreams() {
+        const streams = w.__meetingBotRemoteStreams || [];
+        let n = 0;
+        for (const s of streams) {
+          if (!s || w.__meetingBotMixSeen!.has(s.id)) continue;
           try {
-            const cs = (
-              el as HTMLMediaElement & { captureStream?: () => MediaStream }
-            ).captureStream?.();
-            if (cs) {
-              cs.getAudioTracks().forEach((track) => {
-                dest.stream.addTrack(track);
-              });
-              connected.add(el);
-            }
+            if (s.getAudioTracks().length === 0) continue;
+            ctx.createMediaStreamSource(s).connect(dest);
+            w.__meetingBotMixSeen!.add(s.id);
+            n += 1;
           } catch {
-            /* ignore */
+            /* stream not ready */
           }
         }
+        // Also connect injected <audio> elements' srcObject streams
+        document
+          .querySelectorAll("audio[data-meeting-bot-injected='true']")
+          .forEach((el) => {
+            const media = el as HTMLAudioElement;
+            const s = media.srcObject;
+            if (!(s instanceof MediaStream) || w.__meetingBotMixSeen!.has(s.id)) return;
+            try {
+              if (s.getAudioTracks().length === 0) return;
+              ctx.createMediaStreamSource(s).connect(dest);
+              w.__meetingBotMixSeen!.add(s.id);
+              n += 1;
+            } catch {
+              /* ignore */
+            }
+          });
+        return { connected: n, total: w.__meetingBotMixSeen!.size };
       }
 
-      function scan() {
-        document.querySelectorAll("audio, video").forEach((node) => {
-          connectEl(node as HTMLMediaElement);
-        });
-      }
-
-      scan();
-      const mo = new MutationObserver(() => scan());
-      mo.observe(document.documentElement, { childList: true, subtree: true });
-
-      // Also pull tracks from any getUserMedia / RTCPeerConnection if exposed
-      // (best-effort; Teams may keep PC private)
+      const first = connectStreams();
+      w.__meetingBotMixRescan = window.setInterval(() => {
+        connectStreams();
+      }, 2000);
 
       const mimeCandidates = [
         "audio/webm;codecs=opus",
@@ -124,6 +130,10 @@ export class MediaRecorderCapture {
         }
       }
 
+      if (ctx.state === "suspended") {
+        await ctx.resume().catch(() => {});
+      }
+
       const rec = new MediaRecorder(
         dest.stream,
         mime ? { mimeType: mime, audioBitsPerSecond: 128_000 } : undefined,
@@ -135,31 +145,56 @@ export class MediaRecorderCapture {
         const buf = await ev.data.arrayBuffer();
         const bytes = new Uint8Array(buf);
         let binary = "";
-        for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
-        const base64 = btoa(binary);
-        await w.__meetingBotSaveChunk?.({ base64, isFinal: false });
+        const step = 0x8000;
+        for (let i = 0; i < bytes.length; i += step) {
+          binary += String.fromCharCode(...bytes.subarray(i, i + step));
+        }
+        await w.__meetingBotSaveChunk?.({ base64: btoa(binary), isFinal: false });
       };
 
       rec.onstop = async () => {
-        // final flush already via last ondataavailable; signal empty final
         await w.__meetingBotSaveChunk?.({ base64: "", isFinal: true });
         try {
-          mo.disconnect();
+          if (w.__meetingBotMixRescan) window.clearInterval(w.__meetingBotMixRescan);
         } catch {
           /* ignore */
         }
       };
 
-      if (ctx.state === "suspended") {
-        await ctx.resume().catch(() => {});
-      }
-
-      // 1s timeslices → frequent chunks (Vexa uses ~15s; shorter is fine for lab)
+      // 1s timeslices (import is single-file; shorter chunks are fine)
       rec.start(1000);
+
+      return {
+        connected: first.total,
+        remoteQueued: (w.__meetingBotRemoteStreams || []).length,
+        ctxState: ctx.state,
+        mime: mime || rec.mimeType || "default",
+      };
     });
 
     this.started = true;
-    console.log(`[media-recorder] started (in-page) → ${this.outPath}`);
+    log.info(
+      {
+        path: this.outPath,
+        connected: stats?.connected ?? 0,
+        remoteQueued: stats?.remoteQueued ?? 0,
+        ctx: stats?.ctxState,
+        mime: stats?.mime,
+      },
+      "media-recorder started (vexa mix)",
+    );
+  }
+
+  /** How many remote streams the page hook has seen (diagnostic). */
+  async remoteStreamCount(): Promise<number> {
+    try {
+      return await this.page.evaluate(() => {
+        const w = window as unknown as { __meetingBotRemoteStreams?: MediaStream[] };
+        return (w.__meetingBotRemoteStreams || []).length;
+      });
+    } catch {
+      return 0;
+    }
   }
 
   async stop(): Promise<{ path: string; bytes: number; ok: boolean; error?: string }> {
@@ -176,7 +211,8 @@ export class MediaRecorderCapture {
       await this.page.evaluate(async () => {
         const w = window as unknown as {
           __meetingBotRecorder?: MediaRecorder;
-          __meetingBotCtx?: AudioContext;
+          __meetingBotMixCtx?: AudioContext;
+          __meetingBotMixRescan?: number;
         };
         const rec = w.__meetingBotRecorder;
         if (rec && rec.state !== "inactive") {
@@ -191,16 +227,20 @@ export class MediaRecorderCapture {
           });
         }
         try {
-          await w.__meetingBotCtx?.close();
+          if (w.__meetingBotMixRescan) window.clearInterval(w.__meetingBotMixRescan);
+        } catch {
+          /* ignore */
+        }
+        try {
+          await w.__meetingBotMixCtx?.close();
         } catch {
           /* ignore */
         }
       });
     } catch (e) {
-      console.warn("[media-recorder] stop evaluate failed", e);
+      log.warn({ err: e }, "media-recorder stop evaluate failed");
     }
 
-    // Allow last chunks to arrive
     await new Promise((r) => setTimeout(r, 500));
 
     if (this.chunks.length === 0) {
@@ -209,19 +249,17 @@ export class MediaRecorderCapture {
         bytes: 0,
         ok: false,
         error:
-          "no audio chunks captured (Teams may not have attached remote audio elements yet)",
+          "no audio chunks (no remote WebRTC streams — check computer audio + remote participants)",
       };
     }
 
     const webm = Buffer.concat(this.chunks);
     const webmPath = this.outPath.replace(/\.wav$/i, ".webm");
     writeFileSync(webmPath, webm);
+    log.info({ bytes: webm.length, path: webmPath }, "media-recorder webm written");
 
-    // Transcode to 16 kHz mono WAV for meeting-agent import
     const wavOk = await transcodeToWav(webmPath, this.outPath);
     if (!wavOk) {
-      // Fall back: import webm if agent accepts it (it does via ffmpeg convert)
-      writeFileSync(this.outPath.replace(/\.wav$/i, ".webm"), webm);
       return {
         path: webmPath,
         bytes: webm.length,
@@ -234,7 +272,19 @@ export class MediaRecorderCapture {
     }
 
     const bytes = existsSync(this.outPath) ? statSync(this.outPath).size : 0;
-    console.log(`[media-recorder] stopped wav=${this.outPath} bytes=${bytes}`);
+    const rms = await roughPcmRms(this.outPath);
+    log.info(
+      { path: this.outPath, bytes, roughRms: rms },
+      "media-recorder stopped",
+    );
+
+    if (bytes > 1024 && rms !== null && rms < 0.0005) {
+      log.warn(
+        { roughRms: rms },
+        "recording near-silent — remote audio may not have been mixed",
+      );
+    }
+
     return {
       path: this.outPath,
       bytes,
@@ -264,8 +314,29 @@ async function transcodeToWav(input: string, output: string): Promise<boolean> {
   const code = await proc.exited;
   if (code !== 0) {
     const err = await new Response(proc.stderr).text().catch(() => "");
-    console.warn("[media-recorder] ffmpeg convert failed:", err.slice(-300));
+    log.warn({ stderr: err.slice(-300) }, "media-recorder ffmpeg convert failed");
     return false;
   }
   return existsSync(output);
+}
+
+async function roughPcmRms(wavPath: string): Promise<number | null> {
+  try {
+    const f = Bun.file(wavPath);
+    if (!(await f.exists())) return null;
+    const buf = Buffer.from(await f.arrayBuffer());
+    if (buf.length < 44) return null;
+    let sum = 0;
+    let n = 0;
+    const end = Math.min(buf.length, 44 + 16000 * 2 * 2);
+    for (let i = 44; i + 1 < end; i += 2) {
+      const s = buf.readInt16LE(i) / 32768;
+      sum += s * s;
+      n += 1;
+    }
+    if (n === 0) return null;
+    return Math.sqrt(sum / n);
+  } catch {
+    return null;
+  }
 }

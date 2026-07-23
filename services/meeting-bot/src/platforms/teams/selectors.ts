@@ -99,3 +99,13 @@ export const rejectionIndicators = [
 
 export const permissionGateText =
   /Select Allow to let Microsoft Teams use your mic and camera/i;
+
+/** Open in-meeting chat panel so messages appear in the DOM (Vexa teams-chat). */
+export const openChatPanelSelectors = [
+  'button[aria-label="Chat"]',
+  'button[aria-label*="Chat"]',
+  'button[data-tid="chat-button"]',
+  'button[id="chat-button"]',
+  '[role="toolbar"] button[aria-label*="Chat"]',
+  'button:has-text("Chat")',
+] as const;

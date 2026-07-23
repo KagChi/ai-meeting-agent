@@ -5,9 +5,9 @@
 use crate::db;
 use crate::fs;
 use crate::models::{
-    FileMetadata, MatchedSegment, Meeting, MeetingSearchResult, MeetingStatus, MetadataSource,
-    Person, Summary, SummaryFormat, SummaryStatus, SummaryTemplate, TranscriptVersion,
-    TranscriptionInfo, Voiceprint, VoiceprintEnrolledFrom, VoiceprintSample,
+    ChatMessage, FileMetadata, MatchedSegment, Meeting, MeetingSearchResult, MeetingStatus,
+    MetadataSource, Person, Summary, SummaryFormat, SummaryStatus, SummaryTemplate,
+    TranscriptVersion, TranscriptionInfo, Voiceprint, VoiceprintEnrolledFrom, VoiceprintSample,
     VoiceprintSampleSource,
 };
 use crate::orchestrator::{OrchestratorRun, OrchestratorRunStatus};
@@ -1158,6 +1158,65 @@ impl MeetingStorage {
             created_at: row.try_get(12)?,
             updated_at: row.try_get(13)?,
         })
+    }
+
+    /// Replace in-meeting chat messages for a meeting (import handoff).
+    pub async fn save_chat_messages(
+        &self,
+        meeting_id: &str,
+        messages: &[ChatMessage],
+    ) -> Result<()> {
+        self.get_meeting(meeting_id).await?;
+        let mut tx = self.db.begin().await.context("begin chat save tx")?;
+        sqlx::query("DELETE FROM meeting_chat_messages WHERE meeting_id = ?")
+            .bind(meeting_id)
+            .execute(&mut *tx)
+            .await
+            .context("clear chat messages")?;
+        for m in messages {
+            sqlx::query(
+                "INSERT INTO meeting_chat_messages
+                 (meeting_id, message_id, sent_at, author, body, source)
+                 VALUES (?, ?, ?, ?, ?, ?)",
+            )
+            .bind(meeting_id)
+            .bind(m.message_id as i64)
+            .bind(m.sent_at.as_deref())
+            .bind(m.author.as_deref())
+            .bind(&m.body)
+            .bind(&m.source)
+            .execute(&mut *tx)
+            .await
+            .with_context(|| format!("insert chat message {}", m.message_id))?;
+        }
+        tx.commit().await.context("commit chat save")?;
+        Ok(())
+    }
+
+    /// List in-meeting chat messages in order.
+    pub async fn list_chat_messages(&self, meeting_id: &str) -> Result<Vec<ChatMessage>> {
+        let rows = sqlx::query(
+            "SELECT message_id, sent_at, author, body, source
+             FROM meeting_chat_messages
+             WHERE meeting_id = ?
+             ORDER BY message_id ASC",
+        )
+        .bind(meeting_id)
+        .fetch_all(&self.db)
+        .await
+        .context("Failed to query chat messages")?;
+
+        let mut out = Vec::with_capacity(rows.len());
+        for row in rows {
+            out.push(ChatMessage {
+                message_id: row.try_get::<i64, _>(0)? as u32,
+                sent_at: row.try_get(1)?,
+                author: row.try_get(2)?,
+                body: row.try_get(3)?,
+                source: row.try_get(4)?,
+            });
+        }
+        Ok(out)
     }
 
     /// Save a summary for a meeting.

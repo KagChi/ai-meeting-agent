@@ -9,17 +9,128 @@ export interface BrowserSession {
 }
 
 /**
- * Install silent audio + black video for getUserMedia so Teams never shows
- * Chromium's green fake-device countdown pattern if the camera is on.
+ * Install page-start hooks (Vexa mixed-lane style):
+ * 1) blank getUserMedia fallback (no green Chromium fake-camera)
+ * 2) installRemoteAudioHook — mirror each remote WebRTC audio track into a
+ *    hidden playing <audio> so MediaRecorder can mix real meeting audio
  */
-async function installBlankMediaShim(context: BrowserContext): Promise<void> {
+async function installPageHooks(context: BrowserContext): Promise<void> {
   await context.addInitScript(() => {
     const g = globalThis as typeof globalThis & {
       __meetingBotMediaPatched?: boolean;
+      __meetingBotRemoteAudioHookInstalled?: boolean;
+      /** Vexa: remote streams mirrored for mixed capture */
+      __meetingBotRemoteStreams?: MediaStream[];
+      __meetingBotInjectedAudioElements?: HTMLAudioElement[];
+      __meetingBotRemoteAudioTracks?: MediaStreamTrack[];
     };
     if (g.__meetingBotMediaPatched) return;
     g.__meetingBotMediaPatched = true;
+    g.__meetingBotRemoteStreams = g.__meetingBotRemoteStreams || [];
+    g.__meetingBotInjectedAudioElements = g.__meetingBotInjectedAudioElements || [];
+    g.__meetingBotRemoteAudioTracks = g.__meetingBotRemoteAudioTracks || [];
 
+    // ── Vexa installRemoteAudioHook ─────────────────────────────────────
+    if (
+      !g.__meetingBotRemoteAudioHookInstalled &&
+      typeof RTCPeerConnection === "function"
+    ) {
+      g.__meetingBotRemoteAudioHookInstalled = true;
+      const streamIds = new Set<string>();
+      const trackIds = new Set<string>();
+
+      const handleTrack = (event: RTCTrackEvent) => {
+        try {
+          if (!event.track || event.track.kind !== "audio") return;
+          if (trackIds.has(event.track.id)) return;
+          trackIds.add(event.track.id);
+          g.__meetingBotRemoteAudioTracks!.push(event.track);
+
+          const stream =
+            (event.streams && event.streams[0]) || new MediaStream([event.track]);
+          if (!streamIds.has(stream.id)) {
+            streamIds.add(stream.id);
+            g.__meetingBotRemoteStreams!.push(stream);
+          }
+
+          // Critical: mirror into a real playing <audio> (Teams hides DOM audio)
+          const audioEl = document.createElement("audio");
+          audioEl.autoplay = true;
+          audioEl.muted = false;
+          audioEl.volume = 1.0;
+          audioEl.dataset.meetingBotInjected = "true";
+          audioEl.style.cssText =
+            "position:absolute;left:-9999px;width:1px;height:1px;opacity:0;pointer-events:none";
+          audioEl.srcObject = stream;
+          void audioEl.play?.().catch(() => {});
+
+          if (document.body) document.body.appendChild(audioEl);
+          else
+            document.addEventListener(
+              "DOMContentLoaded",
+              () => document.body?.appendChild(audioEl),
+              { once: true },
+            );
+
+          g.__meetingBotInjectedAudioElements!.push(audioEl);
+        } catch {
+          /* ignore */
+        }
+      };
+
+      const OriginalPC = RTCPeerConnection;
+      function wrapPeerConnection(
+        this: unknown,
+        ...args: ConstructorParameters<typeof RTCPeerConnection>
+      ) {
+        const pc = new OriginalPC(...args);
+        pc.addEventListener("track", handleTrack);
+
+        try {
+          const desc = Object.getOwnPropertyDescriptor(
+            OriginalPC.prototype,
+            "ontrack",
+          );
+          if (desc?.set) {
+            Object.defineProperty(pc, "ontrack", {
+              set(handler: ((this: RTCPeerConnection, ev: RTCTrackEvent) => void) | null) {
+                if (typeof handler !== "function") {
+                  return desc.set!.call(pc, handler);
+                }
+                const wrapped = function (
+                  this: RTCPeerConnection,
+                  event: RTCTrackEvent,
+                ) {
+                  handleTrack(event);
+                  return handler.call(this, event);
+                };
+                return desc.set!.call(pc, wrapped);
+              },
+              get: desc.get,
+              configurable: true,
+              enumerable: true,
+            });
+          }
+        } catch {
+          /* ignore */
+        }
+        return pc;
+      }
+      wrapPeerConnection.prototype = OriginalPC.prototype;
+      Object.setPrototypeOf(wrapPeerConnection, OriginalPC);
+      (globalThis as unknown as { RTCPeerConnection: typeof RTCPeerConnection }).RTCPeerConnection =
+        wrapPeerConnection as unknown as typeof RTCPeerConnection;
+      try {
+        (
+          globalThis as unknown as { webkitRTCPeerConnection: typeof RTCPeerConnection }
+        ).webkitRTCPeerConnection =
+          wrapPeerConnection as unknown as typeof RTCPeerConnection;
+      } catch {
+        /* ignore */
+      }
+    }
+
+    // ── Blank getUserMedia fallback ─────────────────────────────────────
     const md = navigator.mediaDevices;
     if (!md?.getUserMedia) return;
 
@@ -35,7 +146,6 @@ async function installBlankMediaShim(context: BrowserContext): Promise<void> {
       gain.connect(dest);
       oscillator.start();
       const track = dest.stream.getAudioTracks()[0];
-      // Keep context alive via track; stop osc when track ends
       track.addEventListener("ended", () => {
         try {
           oscillator.stop();
@@ -56,17 +166,13 @@ async function installBlankMediaShim(context: BrowserContext): Promise<void> {
         c2d.fillStyle = "#000000";
         c2d.fillRect(0, 0, canvas.width, canvas.height);
       }
-      // Drive frames so the track stays live
-      const stream = canvas.captureStream(5);
-      return stream.getVideoTracks()[0];
+      return canvas.captureStream(5).getVideoTracks()[0];
     }
 
     md.getUserMedia = async (constraints?: MediaStreamConstraints) => {
       try {
-        // Prefer real devices when available (Pulse/mic in Docker)
         return await original(constraints ?? { audio: true, video: false });
       } catch {
-        // Fallback: blank tracks so permission/join still works without green test pattern
         const tracks: MediaStreamTrack[] = [];
         const wantAudio =
           constraints === undefined ||
@@ -86,9 +192,7 @@ async function installBlankMediaShim(context: BrowserContext): Promise<void> {
 }
 
 export async function launchBrowser(): Promise<BrowserSession> {
-  // Do NOT use --use-fake-device-for-media-stream: that is the green countdown
-  // video Teams shows as the bot camera. Keep --use-fake-ui-for-media-stream
-  // only to auto-accept the browser permission prompt.
+  // Do NOT use --use-fake-device-for-media-stream: green countdown camera.
   const browser = await chromium.launch({
     headless: config.headless,
     args: [
@@ -112,7 +216,7 @@ export async function launchBrowser(): Promise<BrowserSession> {
   await context.grantPermissions(["microphone", "camera"], {
     origin: "https://teams.live.com",
   });
-  await installBlankMediaShim(context);
+  await installPageHooks(context);
 
   const page = await context.newPage();
   return {

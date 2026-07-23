@@ -147,6 +147,7 @@ pub async fn start_import_from_event(
                 organizer: None,
                 recording_date: None,
                 platform,
+                chat: None,
                 config: app_config,
                 storage: storage_bg.clone(),
                 registry: registry_bg.clone(),

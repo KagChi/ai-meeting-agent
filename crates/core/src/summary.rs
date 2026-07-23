@@ -28,6 +28,8 @@ pub struct MeetingContext {
     pub title: Option<String>,
     pub date: Option<String>,
     pub participants: Option<Vec<String>>,
+    /// In-meeting chat as (author, body) pairs for secondary LLM context.
+    pub chat: Option<Vec<(String, String)>>,
 }
 
 #[derive(Debug, Clone)]
@@ -607,7 +609,38 @@ fn meeting_notes_system_prompt(format: SummaryFormat) -> String {
          Be detailed, factual, and comprehensive. \
          When Meeting Context supplies title, date, or participants, use those values and do not invent replacements. \
          Only infer date, participants, or topic from the transcript when the corresponding context field is missing. \
+         When in-meeting chat is provided, treat it as secondary evidence (links, names, decisions not spoken); \
+         prefer the spoken transcript for narrative. \
          Action items must be measurable deliverables with owners when possible."
+    )
+}
+
+fn format_chat_block(meeting: &MeetingContext) -> String {
+    let Some(chat) = &meeting.chat else {
+        return String::new();
+    };
+    if chat.is_empty() {
+        return String::new();
+    }
+    let mut lines = Vec::with_capacity(chat.len());
+    for (author, body) in chat.iter().take(500) {
+        let a = author.trim();
+        let b = body.trim();
+        if b.is_empty() {
+            continue;
+        }
+        lines.push(format!(
+            "{}: {}",
+            if a.is_empty() { "Unknown" } else { a },
+            b
+        ));
+    }
+    if lines.is_empty() {
+        return String::new();
+    }
+    format!(
+        "\n\n--- IN-MEETING CHAT START ---\n{}\n--- IN-MEETING CHAT END ---",
+        lines.join("\n")
     )
 }
 
@@ -663,6 +696,7 @@ fn build_prompt(
         None => String::new(),
     };
     let context_block = format_meeting_context(meeting);
+    let chat_block = format_chat_block(meeting);
 
     let participants_cell = meeting
         .participants
@@ -722,7 +756,7 @@ fn build_prompt(
              | ... | ... | ... | ... | ... |\n\n\
              Do not wrap the whole document in a code fence. Output only the notes document.\n\
              {lang_note}\n\n\
-             --- TRANSCRIPT START ---\n{transcript}\n--- TRANSCRIPT END ---"
+             --- TRANSCRIPT START ---\n{transcript}\n--- TRANSCRIPT END ---{chat_block}"
         );
     }
 
@@ -741,7 +775,7 @@ fn build_prompt(
         "{context_block}\
          Please summarize the following meeting transcript.\n\n\
          Sections to include: {template_name}.{format_note}{lang_note}\n\n\
-         --- TRANSCRIPT START ---\n{transcript}\n--- TRANSCRIPT END ---"
+         --- TRANSCRIPT START ---\n{transcript}\n--- TRANSCRIPT END ---{chat_block}"
     )
 }
 
@@ -1054,6 +1088,7 @@ data: [DONE]\n";
             title: Some("Weekly Sync".to_string()),
             date: Some("2026-07-21T10:00:00Z".to_string()),
             participants: Some(vec!["Alice".to_string(), "Bob".to_string()]),
+            chat: None,
         };
         let p = build_prompt(
             SummaryTemplate::MeetingNotes,

@@ -7,6 +7,7 @@ import {
   insertJob,
   listJobs,
 } from "./db/client";
+import { log } from "./logger";
 import { isSupported, listPlatforms } from "./platforms/registry";
 import { abortJob, runBotJob } from "./runner";
 import type { BotJob, BotJobStatus, Platform } from "./types";
@@ -142,20 +143,23 @@ const app = new Elysia()
     hostname: config.host,
   });
 
-console.log(
-  `meeting-bot listening on http://${config.host}:${config.port} ` +
-    `sqlite=${config.sqlitePath} ` +
-    `MEETING_AGENT_URL=${config.meetingAgentUrl} ` +
-    `import_auth=${config.meetingAgentApiKey ? "yes" : "no"} ` +
-    `max_bots=${config.maxConcurrent}`,
+log.info(
+  {
+    host: config.host,
+    port: config.port,
+    sqlite: config.sqlitePath,
+    meetingAgentUrl: config.meetingAgentUrl,
+    importAuth: Boolean(config.meetingAgentApiKey),
+    maxBots: config.maxConcurrent,
+  },
+  "meeting-bot listening",
 );
 if (
   config.meetingAgentUrl.includes("127.0.0.1") ||
   config.meetingAgentUrl.includes("localhost")
 ) {
-  console.warn(
-    "[config] MEETING_AGENT_URL points at localhost — inside Docker this is the bot container itself. " +
-      "Use the API service hostname, e.g. http://meeting-agent-api:8080",
+  log.warn(
+    "MEETING_AGENT_URL points at localhost — inside Docker this is the bot container itself. Use the API service hostname, e.g. http://meeting-agent-api:8080",
   );
 }
 

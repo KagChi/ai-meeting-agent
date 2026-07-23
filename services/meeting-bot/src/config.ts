@@ -53,8 +53,8 @@ const EnvSchema = z.object({
 
 const parsed = EnvSchema.safeParse(process.env);
 if (!parsed.success) {
-  console.error("[config] invalid environment:");
-  console.error(z.prettifyError(parsed.error));
+  // logger may not be ready for pretty transport on boot — stderr is fine
+  process.stderr.write(`[config] invalid environment:\n${z.prettifyError(parsed.error)}\n`);
   process.exit(1);
 }
 

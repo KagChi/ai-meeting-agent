@@ -1,17 +1,29 @@
 import { config } from "../config";
+import { log } from "../logger";
+import type { Platform } from "../types";
+import type { ChatMessage } from "../capture/teams-chat";
 
 export interface ImportResult {
   job_id: string;
   status: string;
 }
 
+export interface ImportOptions {
+  filePath: string;
+  title?: string | null;
+  /** Bot platform id: teams | zoom | google_meet — stored as Teams/Zoom/Meet */
+  platform?: Platform | string | null;
+  /** In-meeting chat for LLM context */
+  chat?: ChatMessage[] | null;
+}
+
 /**
- * Upload local recording to meeting-agent POST /import.
+ * Upload local recording (+ optional chat) to meeting-agent POST /import.
  */
 export async function importToMeetingAgent(
-  filePath: string,
-  title?: string | null,
+  options: ImportOptions,
 ): Promise<ImportResult> {
+  const { filePath, title, platform, chat } = options;
   const file = Bun.file(filePath);
   if (!(await file.exists())) {
     throw new Error(`recording file missing: ${filePath}`);
@@ -27,6 +39,12 @@ export async function importToMeetingAgent(
   if (title?.trim()) {
     form.append("title", title.trim());
   }
+  if (platform?.toString().trim()) {
+    form.append("platform", platform.toString().trim());
+  }
+  if (chat && chat.length > 0) {
+    form.append("chat", JSON.stringify(chat));
+  }
 
   const headers: Record<string, string> = {};
   if (config.meetingAgentApiKey) {
@@ -34,8 +52,16 @@ export async function importToMeetingAgent(
   }
 
   const url = `${config.meetingAgentUrl}/import`;
-  console.log(
-    `[import] POST ${url} file=${name} bytes=${size} auth=${config.meetingAgentApiKey ? "yes" : "no"}`,
+  log.info(
+    {
+      url,
+      file: name,
+      bytes: size,
+      platform: platform ?? null,
+      chatMessages: chat?.length ?? 0,
+      auth: Boolean(config.meetingAgentApiKey),
+    },
+    "import POST",
   );
 
   let res: Response;
@@ -68,6 +94,6 @@ export async function importToMeetingAgent(
   if (!data.job_id) {
     throw new Error(`import response missing job_id: ${text.slice(0, 200)}`);
   }
-  console.log(`[import] ok job_id=${data.job_id} status=${data.status ?? "pending"}`);
+  log.info({ jobId: data.job_id, status: data.status ?? "pending" }, "import ok");
   return { job_id: data.job_id, status: data.status ?? "pending" };
 }

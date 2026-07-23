@@ -3,6 +3,7 @@
  * `core/meetings/modules/join/src/msteams/join.ts` + admission.ts + modals.ts
  */
 import type { Page } from "playwright";
+import { log } from "../../logger";
 import type { JoinContext, PlatformAdapter } from "../types";
 import {
   cameraOffSelectors,
@@ -16,6 +17,7 @@ import {
   leaveButtonSelectors,
   lobbyIndicators,
   nameInputSelectors,
+  openChatPanelSelectors,
   permissionGateText,
   rejectionIndicators,
 } from "./selectors";
@@ -67,7 +69,7 @@ async function fillFirst(page: Page, selectors: readonly string[], value: string
 async function dismissAvConfirmModal(page: Page): Promise<boolean> {
   const clicked = await clickFirst(page, continueWithoutMediaSelectors);
   if (clicked) {
-    console.log('[teams] dismissed "Continue without audio or video" modal');
+    log.info('[teams] dismissed "Continue without audio or video" modal');
     await page.waitForTimeout(500);
   }
   return clicked;
@@ -89,9 +91,9 @@ async function warmUpMedia(page: Page): Promise<void> {
         return `media warm-up failed: ${msg}`;
       }
     });
-    console.log(`[teams] ${result}`);
+    log.info(`[teams] ${result}`);
   } catch (e) {
-    console.warn("[teams] media warm-up evaluate failed", e);
+    log.warn({ err: e }, "teams media warm-up evaluate failed");
   }
 }
 
@@ -127,7 +129,7 @@ async function waitForPreJoinReadiness(page: Page, timeoutMs: number): Promise<b
     const audioOk = await isVisible(page, computerAudioSelectors[0]);
 
     if (joinNow || (cancel && (nameOk || camOk || audioOk))) {
-      console.log("[teams] pre-join controls ready");
+      log.info("[teams] pre-join controls ready");
       return true;
     }
 
@@ -148,14 +150,14 @@ async function waitForPreJoinReadiness(page: Page, timeoutMs: number): Promise<b
     const permGate2 = await page.getByText(permissionGateText).first().isVisible().catch(() => false);
     if ((permGate || permGate2) && !mediaWarmup) {
       mediaWarmup = true;
-      console.log("[teams] permission gate — media warm-up");
+      log.info("[teams] permission gate — media warm-up");
       await warmUpMedia(page);
     }
 
     await page.waitForTimeout(300);
   }
 
-  console.warn(`[teams] pre-join readiness timeout after ${timeoutMs}ms url=${page.url()}`);
+  log.warn(`[teams] pre-join readiness timeout after ${timeoutMs}ms url=${page.url()}`);
   return false;
 }
 
@@ -164,15 +166,15 @@ async function clickJoinNow(page: Page): Promise<boolean> {
   const joinNow = page.locator('button:has-text("Join now")').first();
   if (await joinNow.isVisible().catch(() => false)) {
     await joinNow.click();
-    console.log('[teams] clicked "Join now"');
+    log.info('[teams] clicked "Join now"');
     return true;
   }
   if (await clickFirst(page, joinNowSelectors)) {
-    console.log('[teams] clicked Join now (selector list)');
+    log.info('[teams] clicked Join now (selector list)');
     return true;
   }
   if (await clickFirst(page, joinButtonFallbackSelectors, { timeout: 10_000 })) {
-    console.log("[teams] clicked join (fallback)");
+    log.info("[teams] clicked join (fallback)");
     return true;
   }
   return false;
@@ -186,14 +188,14 @@ async function handlePostJoinAvModal(page: Page): Promise<void> {
       const again = page.locator('button:has-text("Join now")').first();
       if (await again.isVisible().catch(() => false)) {
         await again.click().catch(() => {});
-        console.log('[teams] re-clicked "Join now" after AV modal');
+        log.info('[teams] re-clicked "Join now" after AV modal');
       }
     }
 
     const inLobby = await isInLobby(page);
     const admitted = await isAdmitted(page);
     if (inLobby || admitted) {
-      console.log(inLobby ? "[teams] reached lobby" : "[teams] admitted after Join now");
+      log.info(inLobby ? "[teams] reached lobby" : "[teams] admitted after Join now");
       return;
     }
     if (!dismissed) {
@@ -257,16 +259,16 @@ export const teamsAdapter: PlatformAdapter = {
     const { page, meetingUrl, botName, signal, joinTimeoutMs } = ctx;
 
     // Step 1 — navigate
-    console.log(`[teams] navigate ${meetingUrl}`);
+    log.info(`[teams] navigate ${meetingUrl}`);
     await page.goto(meetingUrl, { waitUntil: "domcontentloaded", timeout: 60_000 });
     await page.waitForTimeout(500);
 
     // Step 2 — continue in browser
     if (await clickFirst(page, continueBrowserSelectors, { timeout: 10_000 })) {
-      console.log("[teams] clicked Continue on this browser");
+      log.info("[teams] clicked Continue on this browser");
       await page.waitForTimeout(500);
     } else {
-      console.log("[teams] Continue button not found, continuing…");
+      log.info("[teams] Continue button not found, continuing…");
     }
 
     // Step 2.5 — pre-join readiness (incl. without-media modal)
@@ -274,17 +276,17 @@ export const teamsAdapter: PlatformAdapter = {
 
     // Step 3 — camera OFF (avoid any preview; no green test pattern if cam was on)
     if (await clickFirst(page, cameraOffSelectors)) {
-      console.log("[teams] camera turned off");
+      log.info("[teams] camera turned off");
     } else {
       // Already off shows "Turn on camera" — leave it
-      console.log("[teams] camera off control not found (may already be off)");
+      log.info("[teams] camera off control not found (may already be off)");
     }
 
     // Step 4 — display name
     if (await fillFirst(page, nameInputSelectors, botName)) {
-      console.log(`[teams] display name set to "${botName}"`);
+      log.info(`[teams] display name set to "${botName}"`);
     } else {
-      console.log("[teams] name input not found");
+      log.info("[teams] name input not found");
     }
 
     // Step 5 — computer audio (capture needs this)
@@ -305,7 +307,7 @@ export const teamsAdapter: PlatformAdapter = {
     // Step 6 — Join now
     const joined = await clickJoinNow(page);
     if (!joined) {
-      console.warn("[teams] Join now not found — will wait for lobby/admission UI");
+      log.warn("[teams] Join now not found — will wait for lobby/admission UI");
     }
     await page.waitForTimeout(1000);
 
@@ -337,14 +339,16 @@ export const teamsAdapter: PlatformAdapter = {
       }
 
       if (await isAdmitted(page)) {
-        console.log("[teams] admitted (Leave / hangup control visible)");
+        log.info("[teams] admitted (Leave / hangup control visible)");
+        // Open chat panel so in-meeting messages are in the DOM (Vexa requirement)
+        await openChatPanel(page);
         return;
       }
 
       if (await isInLobby(page)) {
         if (!sawLobby) {
           sawLobby = true;
-          console.log("[teams] in lobby — waiting for host to admit…");
+          log.info("[teams] in lobby — waiting for host to admit…");
         }
       }
 
@@ -375,4 +379,15 @@ export const teamsAdapter: PlatformAdapter = {
 
 async function isTeamsAvConfirmModalVisible(page: Page): Promise<boolean> {
   return isVisible(page, continueWithoutMediaSelectors[0], 500);
+}
+
+/** Best-effort open of the meeting chat pane for chat scrape. */
+async function openChatPanel(page: Page): Promise<void> {
+  const opened = await clickFirst(page, openChatPanelSelectors, { timeout: 4000 });
+  if (opened) {
+    log.info("[teams] opened chat panel");
+    await page.waitForTimeout(800);
+  } else {
+    log.warn("[teams] chat panel button not found — chat scrape may be empty");
+  }
 }

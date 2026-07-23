@@ -34,7 +34,7 @@ const RECORDING_EXTENSIONS: &[&str] = &[
 
 /// POST /import
 ///
-/// Accept multipart upload with `file` (audio) and optional `title` field.
+/// Accept multipart upload with `file` (audio) and optional `title` / `platform`.
 /// Spawns a background transcription job. Returns 202 with job_id.
 #[utoipa::path(
     post,
@@ -52,6 +52,8 @@ pub async fn create_import(
     let mut audio_bytes: Option<Bytes> = None;
     let mut audio_filename: Option<String> = None;
     let mut title: Option<String> = None;
+    let mut platform: Option<String> = None;
+    let mut chat: Option<Vec<meeting_agent_core::models::ChatMessage>> = None;
 
     while let Some(field) = multipart
         .next_field()
@@ -77,6 +79,23 @@ pub async fn create_import(
                 })?;
                 if !text.trim().is_empty() {
                     title = Some(text);
+                }
+            }
+            "platform" => {
+                let text = field.text().await.map_err(|e| {
+                    ApiError::BadRequest(format!("Failed to read platform field: {e}"))
+                })?;
+                let p = text.trim();
+                if !p.is_empty() {
+                    platform = Some(normalize_import_platform(p));
+                }
+            }
+            "chat" => {
+                let text = field.text().await.map_err(|e| {
+                    ApiError::BadRequest(format!("Failed to read chat field: {e}"))
+                })?;
+                if !text.trim().is_empty() {
+                    chat = Some(parse_import_chat(&text, platform.as_deref())?);
                 }
             }
             _ => {
@@ -124,7 +143,8 @@ pub async fn create_import(
                 location: None,
                 organizer: None,
                 recording_date: None,
-                platform: None,
+                platform,
+                chat,
                 config,
                 storage,
                 registry,
@@ -359,5 +379,80 @@ fn validate_audio_extension(filename: &str) -> Result<(), ApiError> {
         None => Err(ApiError::BadRequest(
             "File has no extension. Cannot determine audio format.".to_string(),
         )),
+    }
+}
+
+/// Parse multipart `chat` JSON from meeting-bot into domain ChatMessages.
+fn parse_import_chat(
+    raw: &str,
+    platform_hint: Option<&str>,
+) -> Result<Vec<meeting_agent_core::models::ChatMessage>, ApiError> {
+    #[derive(serde::Deserialize)]
+    struct Incoming {
+        sender: Option<String>,
+        author: Option<String>,
+        text: Option<String>,
+        body: Option<String>,
+        ts: Option<String>,
+        sent_at: Option<String>,
+    }
+
+    let items: Vec<Incoming> = serde_json::from_str(raw)
+        .map_err(|e| ApiError::BadRequest(format!("Invalid chat JSON: {e}")))?;
+
+    let source = platform_hint
+        .map(|p| p.to_lowercase())
+        .unwrap_or_else(|| "teams".to_string());
+    let source = match source.as_str() {
+        "teams" | "ms_teams" | "microsoft_teams" => "teams".to_string(),
+        "zoom" => "zoom".to_string(),
+        "google_meet" | "meet" | "gmeet" => "google_meet".to_string(),
+        other => other.to_string(),
+    };
+
+    let mut out = Vec::with_capacity(items.len().min(2000));
+    for (i, item) in items.into_iter().take(2000).enumerate() {
+        let body = item
+            .body
+            .or(item.text)
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
+        let Some(body) = body else { continue };
+        let author = item
+            .author
+            .or(item.sender)
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
+        out.push(meeting_agent_core::models::ChatMessage {
+            message_id: (i + 1) as u32,
+            sent_at: item.sent_at.or(item.ts),
+            author,
+            body,
+            source: source.clone(),
+        });
+    }
+    Ok(out)
+}
+
+/// Map bot/API platform ids to display labels stored on meetings.
+fn normalize_import_platform(raw: &str) -> String {
+    match raw.trim().to_lowercase().as_str() {
+        "teams" | "ms_teams" | "microsoft_teams" => "Teams".to_string(),
+        "zoom" => "Zoom".to_string(),
+        "google_meet" | "meet" | "gmeet" => "Meet".to_string(),
+        "jitsi" => "Jitsi".to_string(),
+        "upload" | "userprovided" | "user_provided" => "Upload".to_string(),
+        other => {
+            // Preserve known title-case; otherwise capitalize first letter
+            if other.chars().next().is_some_and(|c| c.is_uppercase()) {
+                raw.trim().to_string()
+            } else {
+                let mut c = other.chars();
+                match c.next() {
+                    None => "Upload".to_string(),
+                    Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
+                }
+            }
+        }
     }
 }

@@ -74,6 +74,20 @@ pub struct Meeting {
     pub platform: Option<String>,
 }
 
+/// One in-meeting chat message (Teams / Zoom / …) for LLM context.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+pub struct ChatMessage {
+    pub message_id: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sent_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub author: Option<String>,
+    pub body: String,
+    /// Platform source: teams | zoom | google_meet | …
+    pub source: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[serde(rename_all = "lowercase")]

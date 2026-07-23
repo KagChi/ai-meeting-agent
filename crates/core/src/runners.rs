@@ -32,6 +32,8 @@ pub struct ImportMemoryConfig {
     pub recording_date: Option<chrono::NaiveDateTime>,
     /// Optional capture platform (e.g. teams, zoom) for live-bot imports.
     pub platform: Option<String>,
+    /// Optional in-meeting chat (Teams/Zoom) for LLM summary context.
+    pub chat: Option<Vec<crate::models::ChatMessage>>,
     pub config: Config,
     pub storage: Arc<MeetingStorage>,
     pub registry: Arc<JobRegistry>,
@@ -276,6 +278,26 @@ async fn run_summary_inner(
     let client =
         SummaryClient::new(config.summary.clone()).context("Failed to create summary client")?;
 
+    let chat_messages = storage
+        .list_chat_messages(meeting_id)
+        .await
+        .unwrap_or_default();
+    let chat_for_prompt: Option<Vec<(String, String)>> = if chat_messages.is_empty() {
+        None
+    } else {
+        Some(
+            chat_messages
+                .into_iter()
+                .map(|m| {
+                    (
+                        m.author.unwrap_or_else(|| "Unknown".to_string()),
+                        m.body,
+                    )
+                })
+                .collect(),
+        )
+    };
+
     let options = SummarizeOptions {
         template: template.clone(),
         format: format.clone(),
@@ -284,6 +306,7 @@ async fn run_summary_inner(
             title: Some(meeting.title.clone()),
             date: Some(meeting.date.to_rfc3339()),
             participants: meeting.participants.clone(),
+            chat: chat_for_prompt,
         },
     };
 
@@ -514,6 +537,20 @@ async fn run_import_memory_pipeline(
 
     cfg.storage.create_meeting(&meeting).await?;
     cfg.registry.set_meeting_id(&cfg.job_id, meeting.id.clone());
+
+    if let Some(chat) = &cfg.chat {
+        if !chat.is_empty() {
+            if let Err(e) = cfg.storage.save_chat_messages(&meeting.id, chat).await {
+                log::warn!("[import_memory] failed to save chat: {e}");
+            } else {
+                log::info!(
+                    "[import_memory] saved {} chat messages for {}",
+                    chat.len(),
+                    meeting.id
+                );
+            }
+        }
+    }
 
     check_cancelled(&cfg.cancel_token)?;
 
