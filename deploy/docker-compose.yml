@@ -1,13 +1,11 @@
 # ============================================================================
 # AI Meeting Agent — lab-intelligence stack (self-hosted, DGX Spark)
 # ----------------------------------------------------------------------------
-# OUR services: WhisperX ASR, minutes LLM, diarize, meeting-agent-server.
-# Transcription always runs HERE (import / pipeline) — never via Vexa live STT.
+# Services: WhisperX, minutes LLM, diarize, meeting-agent-server, meeting-bot.
+# Transcription runs HERE (import / pipeline). Live join is services/meeting-bot
+# (Teams v1); clients call only server :8080 (POST /bots proxies to meeting-bot).
 #
-# Vexa (bot join + record → MinIO) is optional. Bring it up with the bots overlay:
-#   docker compose -f deploy/docker-compose.yml \
-#     -f deploy/docker-compose.bots.yml --env-file deploy/.env up -d
-# See deploy/README.md.
+# Optional Vexa (legacy/sibling): docker-compose.bots.yml — see deploy/README.md.
 #
 # GPU: whisperx / minutes-llm / diarize request the DGX GPU. On a non-GPU host,
 # drop the deploy.resources.reservations.devices blocks (CPU fallback, slow).
@@ -98,8 +96,44 @@ services:
     restart: unless-stopped
 
   # -------------------------------------------------------------------------
+  # meeting-bot — internal join/record worker (Bun + Playwright).
+  # Clients never call this port; use POST /bots on meeting-agent-server.
+  # -------------------------------------------------------------------------
+  meeting-bot:
+    build:
+      context: ../services/meeting-bot
+      dockerfile: Dockerfile
+    image: ${MEETING_BOT_IMAGE:-ghcr.io/bmw-ece-ntust/ai-meeting-agent/meeting-bot:latest}
+    environment:
+      - BOT_HOST=0.0.0.0
+      - BOT_PORT=8091
+      - DATA_DIR=/data
+      - HEADLESS=${MEETING_BOT_HEADLESS:-true}
+      - BOT_API_KEY=${MEETING_BOT_INTERNAL_KEY:-}
+      - BOT_NAME=${BOT_NAME:-BMW-Lab-Bot}
+      - MEETING_AGENT_URL=http://meeting-agent-server:8080
+      - MEETING_AGENT_API_KEY=${MEETING_AGENT_API_KEY:-${TRANSCRIPTION_API_KEY:-not-needed-local}}
+      - JOIN_TIMEOUT_MS=${JOIN_TIMEOUT_MS:-900000}
+      - MAX_CONCURRENT_BOTS=${MAX_CONCURRENT_BOTS:-1}
+    # Optional host debug: MEETING_BOT_HOST_PORT=8091
+    ports:
+      - "${MEETING_BOT_HOST_PORT:-127.0.0.1:8091}:8091"
+    volumes:
+      - meeting-bot-data:/data
+    shm_size: "1gb"
+    healthcheck:
+      test: ["CMD", "bun", "-e", "fetch('http://127.0.0.1:8091/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks: [meeting-agent]
+    restart: unless-stopped
+
+  # -------------------------------------------------------------------------
   # meeting-agent HTTP API + storage (Rust, this repo).
   # Import path owns transcription (WhisperX) + optional diarize + summaries.
+  # Proxies public /bots* to meeting-bot when MEETING_BOT_ENABLED=true.
   # -------------------------------------------------------------------------
   meeting-agent-server:
     build:
@@ -122,36 +156,36 @@ services:
       - DIARIZE_EXECUTION_MODE=${DIARIZE_EXECUTION_MODE:-auto}
       - DIARIZE_EMBEDDING_MODEL=${DIARIZE_EMBEDDING_MODEL:-wespeaker-voxceleb-CAM++_LM}
       - DIARIZE_EMBEDDING_DIM=${DIARIZE_EMBEDDING_DIM:-512}
+      - MEETING_BOT_ENABLED=${MEETING_BOT_ENABLED:-true}
+      - MEETING_BOT_URL=http://meeting-bot:8091
+      - MEETING_BOT_INTERNAL_KEY=${MEETING_BOT_INTERNAL_KEY:-}
     ports:
       - "${SERVER_HOST_PORT:-8080}:8080"
     volumes:
       - meeting-data:/root/.meeting-agent
     networks: [meeting-agent, vexa]
-    depends_on: [whisperx, minutes-llm, diarize-service]
+    depends_on:
+      - whisperx
+      - minutes-llm
+      - diarize-service
+      - meeting-bot
     restart: unless-stopped
 
   # -------------------------------------------------------------------------
-  # Orchestrator — post-meeting glue (Phase 3-4, NOT YET IMPLEMENTED).
-  # Will: POST Vexa /bots → on meeting end pull MinIO recording → import into
-  # meeting-agent (ASR here) → identify + SOP minutes → daily-log + GCal.
+  # Orchestrator — post-meeting glue (Phase 3-4 remainder).
   # -------------------------------------------------------------------------
   # orchestrator:
   #   build:
   #     context: ..
   #     dockerfile: services/orchestrator/Dockerfile
   #   environment:
-  #     - VEXA_API_BASE=http://gateway:8000
-  #     - VEXA_API_KEY=${VEXA_API_KEY}
   #     - MEETING_AGENT_URL=http://meeting-agent-server:8080
-  #     - GOOGLE_CALENDAR_CREDENTIALS=/secrets/gcal.json
-  #     - DAILY_LOG_TARGET=${DAILY_LOG_TARGET}
-  #   networks: [vexa, meeting-agent]
+  #   networks: [meeting-agent]
   #   depends_on: [meeting-agent-server]
   #   restart: unless-stopped
 
 networks:
   # Shared with Vexa when docker-compose.bots.yml is merged (include).
-  # Lab-only up creates this network; no prior `make all` required.
   vexa:
     driver: bridge
   meeting-agent:
@@ -162,3 +196,4 @@ volumes:
   llm-models:
   diarize-models:
   meeting-data:
+  meeting-bot-data:

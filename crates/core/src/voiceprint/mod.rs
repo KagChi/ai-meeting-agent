@@ -1,13 +1,17 @@
 //! Voice bank: rebuild centroids from enrollment samples + identify match.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
+#[cfg(feature = "diarization")]
+use std::collections::HashSet;
 use std::path::Path;
 
 use chrono::Utc;
 use uuid::Uuid;
 
 use crate::config::DiarizeConfig;
-use crate::models::{Person, Voiceprint, VoiceprintEnrolledFrom, VoiceprintSampleSource};
+#[cfg(feature = "diarization")]
+use crate::models::{Person, VoiceprintSampleSource};
+use crate::models::{Voiceprint, VoiceprintEnrolledFrom};
 use crate::storage::MeetingStorage;
 use crate::transcription::TranscriptionResponse;
 
@@ -215,6 +219,7 @@ pub struct IdentifyResult {
 }
 
 /// Next free `Guest-N` index from existing person names.
+#[cfg(feature = "diarization")]
 fn next_guest_index(name_by_id: &HashMap<String, String>) -> u32 {
     let mut max_n = 0u32;
     for name in name_by_id.values() {
@@ -228,6 +233,7 @@ fn next_guest_index(name_by_id: &HashMap<String, String>) -> u32 {
 }
 
 /// Take spans in time order until total duration reaches `max_s` (trim last span).
+#[cfg(any(feature = "diarization", test))]
 fn cap_spans_to_duration(spans: &[(f64, f64)], max_s: f64) -> (Vec<(f64, f64)>, f64) {
     if max_s <= 0.0 || spans.is_empty() {
         return (Vec::new(), 0.0);
@@ -259,6 +265,7 @@ fn cap_spans_to_duration(spans: &[(f64, f64)], max_s: f64) -> (Vec<(f64, f64)>, 
 }
 
 /// Union-find parent for within-meeting cluster merge.
+#[cfg(any(feature = "diarization", test))]
 fn uf_find(parent: &mut [usize], i: usize) -> usize {
     let mut i = i;
     while parent[i] != i {
@@ -268,6 +275,7 @@ fn uf_find(parent: &mut [usize], i: usize) -> usize {
     i
 }
 
+#[cfg(any(feature = "diarization", test))]
 fn uf_union(parent: &mut [usize], a: usize, b: usize) {
     let ra = uf_find(parent, a);
     let rb = uf_find(parent, b);

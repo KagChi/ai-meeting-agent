@@ -7,6 +7,7 @@ A standalone meeting agent API & CLI for transcribing and summarizing meeting re
 - **HTTP API Server**: RESTful API for managing meetings, transcripts, and summaries
 - **CLI Tool**: Command-line interface for local operations
 - **MCP CLI and HTTP Server**: stdio MCP for local clients and Streamable HTTP MCP for API-based agent access
+- **Live meeting bots**: Join Teams (v1) via internal `services/meeting-bot`; clients use `POST /bots` on the agent only
 - **Interactive Config Wizard**: Guided setup via `meeting-agent config edit`
 - **Live Config API**: Update server config at runtime via `PUT /config` endpoints
 - **OpenAPI / Swagger UI**: Interactive API docs at `/docs`, spec at `/api-docs/openapi.json`
@@ -18,13 +19,26 @@ A standalone meeting agent API & CLI for transcribing and summarizing meeting re
 
 ## Architecture
 
-The project uses a workspace structure with three crates:
+```
+Meetily / clients  ──►  meeting-agent-server :8080
+                              │  POST /import, /meetings, /bots (proxy)
+                              ├─► whisperx / diarize / minutes-llm
+                              └─► meeting-bot :8091 (internal)
+                                    join Teams → local WAV → POST /import
+```
 
-- **`meeting-agent-core`**: Shared business logic, models, and file system operations
-- **`meeting-agent-server`**: Axum-based HTTP API server
+Rust workspace crates:
+
+- **`meeting-agent-core`**: Shared business logic, models, storage, bot client, orchestrator
+- **`meeting-agent-server`**: Axum HTTP API + OpenAPI
 - **`meeting-agent-cli`**: Command-line interface and API client
 - **`meeting-agent-mcp`**: stdio MCP CLI that wraps the REST API
 - **`meeting-agent-mcp-server`**: HTTP MCP server that wraps the REST API
+
+Node worker (not in Cargo workspace):
+
+- **`services/meeting-bot`**: Bun + Elysia + Playwright; SQLite job rows + local recordings  
+  See [services/meeting-bot/README.md](services/meeting-bot/README.md).
 
 ## Installation
 
@@ -224,18 +238,40 @@ All data is stored in `~/.meeting-agent/`:
         └── full.json
 ```
 
+## Docker deploy (lab stack)
+
+Build server, diarize, and **meeting-bot** images:
+
+```bash
+./deploy/docker-build.sh
+# DGX / arm64: PLATFORM=linux/arm64 ./deploy/docker-build.sh
+
+cp deploy/.env.example deploy/.env
+# MEETING_BOT_ENABLED=true (default in compose)
+docker compose -f deploy/docker-compose.yml --env-file deploy/.env up -d
+```
+
+- Public API: `http://127.0.0.1:8080` (Meetily / curl)  
+- Bot worker: internal `http://meeting-bot:8091` (do **not** point the UI at it)  
+- Dispatch a Teams bot: `POST /bots` with `{ "platform":"teams", "meeting_url":"…" }` — see [docs/API.md](docs/API.md)  
+- Full runbook: [deploy/README.md](deploy/README.md)
+
 ## Workspace Structure
 
 ```
 ai-meeting-agent/
 ├── Cargo.toml              # Workspace root
 ├── crates/
-│   ├── core/               # meeting-agent-core: business logic, models, storage, diarization
-│   ├── server/             # meeting-agent-server: Axum HTTP API + OpenAPI
-│   └── cli/                # meeting-agent-cli: command-line interface
+│   ├── core/               # business logic, models, storage, bots client
+│   ├── server/             # Axum HTTP API + OpenAPI
+│   ├── cli/                # CLI
+│   ├── mcp/                # MCP
+│   └── diarize-service/    # remote diarize microservice
+├── services/
+│   └── meeting-bot/        # Bun live join/record worker (Teams v1)
+├── deploy/                 # docker-compose, docker-build.sh, Dockerfiles
 ├── docs/
-│   └── API.md              # API specification document
-├── .env.example            # Configuration template
+│   └── API.md
 └── README.md
 ```
 

@@ -81,9 +81,7 @@ impl MeetingBotClient {
     }
 
     async fn get_json(&self, path: &str) -> Result<Value> {
-        let (status, v) = self
-            .request_json(reqwest::Method::GET, path, None)
-            .await?;
+        let (status, v) = self.request_json(reqwest::Method::GET, path, None).await?;
         if !(200..300).contains(&status) {
             bail!("meeting-bot GET {path} → HTTP {status}: {v}");
         }

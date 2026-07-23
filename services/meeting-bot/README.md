@@ -63,12 +63,45 @@ Auth: if `BOT_API_KEY` or `MEETING_BOT_INTERNAL_KEY` is set, require header `X-A
 
 ## Docker
 
+### Via lab deploy (recommended)
+
+From the **repo root**:
+
 ```bash
+# Builds server + diarize + meeting-bot
+./deploy/docker-build.sh
+# arm64: PLATFORM=linux/arm64 ./deploy/docker-build.sh
+
+cp deploy/.env.example deploy/.env
+docker compose -f deploy/docker-compose.yml --env-file deploy/.env up -d meeting-bot meeting-agent-server
+```
+
+GitHub Actions (`.github/workflows/docker-build.yml`) also builds/pushes `meeting-bot` to GHCR alongside server and diarize.
+
+Compose service name: **`meeting-bot`**. Agent env:
+
+- `MEETING_BOT_ENABLED=true`
+- `MEETING_BOT_URL=http://meeting-bot:8091`
+
+Meetily / clients still use **only** `http://…:8080` (`POST /bots`).
+
+### Standalone image
+
+```bash
+# From services/meeting-bot
 docker build -t meeting-bot:local .
-docker run --rm -p 8091:8091 \
+
+# Or from repo root (same as docker-build.sh)
+docker build -f services/meeting-bot/Dockerfile \
+  -t ghcr.io/bmw-ece-ntust/ai-meeting-agent/meeting-bot:latest \
+  services/meeting-bot
+
+docker run --rm -p 127.0.0.1:8091:8091 \
   -e MEETING_AGENT_URL=http://host.docker.internal:8080 \
   -e HEADLESS=true \
+  -e BOT_API_KEY=dev \
   -v meeting-bot-data:/data \
+  --shm-size=1g \
   meeting-bot:local
 ```
 

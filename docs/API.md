@@ -570,15 +570,16 @@ GET /meetings/550e8400/summary/full?format=rawtext
 
 ## Meeting bots (public; Meetily uses these)
 
-Live join + record is implemented by the internal **`services/meeting-bot`** worker.
+Live join + record is implemented by the internal **`services/meeting-bot`** worker
+(compose service `meeting-bot`, image from `./deploy/docker-build.sh`).
 **Clients only call meeting-agent-server** — never the bot port directly.
 
-Enable on the agent:
+Enable on the agent (compose defaults when using `deploy/docker-compose.yml`):
 
 ```bash
 MEETING_BOT_ENABLED=true
-MEETING_BOT_URL=http://127.0.0.1:8091
-MEETING_BOT_INTERNAL_KEY=   # if bot has BOT_API_KEY set
+MEETING_BOT_URL=http://meeting-bot:8091   # or http://127.0.0.1:8091 locally
+MEETING_BOT_INTERNAL_KEY=                 # if bot has BOT_API_KEY set
 ```
 
 | Method | Path | Description |

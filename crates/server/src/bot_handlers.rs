@@ -32,9 +32,8 @@ async fn require_client(state: &AppState) -> Result<MeetingBotClient, ApiError> 
             "MEETING_BOT_URL is not set".into(),
         ));
     }
-    MeetingBotClient::from_config(&cfg.meeting_bot).map_err(|e| {
-        ApiError::ServiceUnavailable(format!("meeting-bot client: {e}"))
-    })
+    MeetingBotClient::from_config(&cfg.meeting_bot)
+        .map_err(|e| ApiError::ServiceUnavailable(format!("meeting-bot client: {e}")))
 }
 
 fn map_upstream(status: u16, body: Value) -> Response {
@@ -51,9 +50,10 @@ fn map_upstream(status: u16, body: Value) -> Response {
 )]
 pub async fn list_platforms(State(state): State<AppState>) -> Result<Response, ApiError> {
     let client = require_client(&state).await?;
-    let v = client.platforms().await.map_err(|e| {
-        ApiError::ServiceUnavailable(format!("meeting-bot unreachable: {e}"))
-    })?;
+    let v = client
+        .platforms()
+        .await
+        .map_err(|e| ApiError::ServiceUnavailable(format!("meeting-bot unreachable: {e}")))?;
     Ok((StatusCode::OK, Json(v)).into_response())
 }
 
@@ -77,9 +77,10 @@ pub async fn list_bots(
         parts.push(format!("status={s}"));
     }
     let query = parts.join("&");
-    let v = client.list_bots(&query).await.map_err(|e| {
-        ApiError::ServiceUnavailable(format!("meeting-bot unreachable: {e}"))
-    })?;
+    let v = client
+        .list_bots(&query)
+        .await
+        .map_err(|e| ApiError::ServiceUnavailable(format!("meeting-bot unreachable: {e}")))?;
     Ok((StatusCode::OK, Json(v)).into_response())
 }
 
@@ -96,9 +97,10 @@ pub async fn get_bot(
     Path(id): Path<String>,
 ) -> Result<Response, ApiError> {
     let client = require_client(&state).await?;
-    let (status, v) = client.get_bot(&id).await.map_err(|e| {
-        ApiError::ServiceUnavailable(format!("meeting-bot unreachable: {e}"))
-    })?;
+    let (status, v) = client
+        .get_bot(&id)
+        .await
+        .map_err(|e| ApiError::ServiceUnavailable(format!("meeting-bot unreachable: {e}")))?;
     Ok(map_upstream(status, v))
 }
 
@@ -115,9 +117,10 @@ pub async fn create_bot(
     Json(body): Json<Value>,
 ) -> Result<Response, ApiError> {
     let client = require_client(&state).await?;
-    let (status, v) = client.create_bot(&body).await.map_err(|e| {
-        ApiError::ServiceUnavailable(format!("meeting-bot unreachable: {e}"))
-    })?;
+    let (status, v) = client
+        .create_bot(&body)
+        .await
+        .map_err(|e| ApiError::ServiceUnavailable(format!("meeting-bot unreachable: {e}")))?;
     Ok(map_upstream(status, v))
 }
 
@@ -134,9 +137,10 @@ pub async fn delete_bot(
     Path(id): Path<String>,
 ) -> Result<Response, ApiError> {
     let client = require_client(&state).await?;
-    let (status, v) = client.delete_bot(&id).await.map_err(|e| {
-        ApiError::ServiceUnavailable(format!("meeting-bot unreachable: {e}"))
-    })?;
+    let (status, v) = client
+        .delete_bot(&id)
+        .await
+        .map_err(|e| ApiError::ServiceUnavailable(format!("meeting-bot unreachable: {e}")))?;
     Ok(map_upstream(status, v))
 }
 
@@ -152,4 +156,3 @@ pub async fn bot_worker_health(State(state): State<AppState>) -> Result<Response
             .into_response()),
     }
 }
-

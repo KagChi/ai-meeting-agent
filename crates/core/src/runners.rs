@@ -7,7 +7,9 @@
 
 use crate::audio;
 use crate::config::Config;
-use crate::jobs::{JobRegistry, JobType, ProgressEvent};
+#[cfg(feature = "diarization")]
+use crate::jobs::JobType;
+use crate::jobs::{JobRegistry, ProgressEvent};
 use crate::models::{Meeting, SummaryFormat, SummaryStatus, SummaryTemplate};
 use crate::storage::MeetingStorage;
 use crate::summary::{SummarizeOptions, SummaryClient};
@@ -657,6 +659,7 @@ async fn maybe_diarize(
     }
 }
 
+#[cfg(feature = "diarization")]
 fn has_speaker_labels(transcription: &TranscriptionResponse) -> bool {
     transcription
         .segments
