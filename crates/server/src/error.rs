@@ -11,6 +11,7 @@ pub enum ApiError {
     BadRequest(String),          // 400
     Unauthorized,                // 401
     Conflict(String),            // 409
+    ServiceUnavailable(String),  // 503
     InternalServerError(String), // 500
 }
 
@@ -25,6 +26,11 @@ impl IntoResponse for ApiError {
             ),
             ApiError::Unauthorized => (StatusCode::UNAUTHORIZED, "Unauthorized".to_string(), None),
             ApiError::Conflict(msg) => (StatusCode::CONFLICT, "Conflict".to_string(), Some(msg)),
+            ApiError::ServiceUnavailable(msg) => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "Service Unavailable".to_string(),
+                Some(msg),
+            ),
             ApiError::InternalServerError(msg) => (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "Internal Server Error".to_string(),

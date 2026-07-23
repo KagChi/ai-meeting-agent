@@ -1,0 +1,8 @@
+{
+  "status": "completed",
+  "platform": "teams",
+  "native_meeting_id": "19:meeting_example@thread.v2",
+  "title": "BMW Lab standup",
+  "recording_url": "http://127.0.0.1:9000/vexa/recordings/example.webm",
+  "filename": "example.webm"
+}

@@ -568,6 +568,56 @@ GET /meetings/550e8400/summary/full?format=rawtext
 
 ---
 
+## Orchestrator (live bot → import)
+
+Phase 4 v1: after a Vexa bot meeting ends, download the **recording** and run the same pipeline as `POST /import`. Vexa live STT is not used.
+
+Enable with `ORCHESTRATOR_ENABLED=true`. Optional: `VEXA_API_BASE`, `VEXA_API_KEY`, `VEXA_WEBHOOK_SECRET`, `MINIO_*`.
+
+### `POST /orchestrator/import`
+
+Manual dispatch (API key auth when configured).
+
+**Request:** `application/json`
+```json
+{
+  "platform": "teams",
+  "native_meeting_id": "19:meeting_…@thread.v2",
+  "recording_url": "http://127.0.0.1:9000/vexa/rec.webm",
+  "title": "Lab meeting",
+  "filename": "rec.webm",
+  "force": false
+}
+```
+
+Provide at least one of: `recording_url`, `recording_key` (+ MinIO env), or `platform` + `native_meeting_id` (+ `VEXA_API_BASE`).
+
+**Response:** `202 Accepted`
+```json
+{
+  "run_id": "…",
+  "external_key": "vexa:teams:…",
+  "status": "downloading",
+  "job_id": "…",
+  "meeting_id": null,
+  "reused": false
+}
+```
+
+Poll `GET /jobs/{job_id}/status` and/or `GET /orchestrator/runs/{run_id}`.
+
+### `POST /webhooks/vexa`
+
+Public webhook (no server API key). If `VEXA_WEBHOOK_SECRET` is set, require header `X-Webhook-Secret`.
+
+Accepts loose Vexa-shaped JSON (`platform`, `native_meeting_id`, `status`, `recording_url`, nested `meeting` / `recording`, …). Non-completed statuses are stored as `skipped`.
+
+### `GET /orchestrator/runs/{id}`
+
+Durable run row (idempotency + status).
+
+---
+
 ## Import & Jobs
 
 ### `POST /import`

@@ -9,6 +9,7 @@ pub mod handlers;
 pub mod import_handlers;
 pub mod logging;
 pub mod openapi;
+pub mod orchestrator_handlers;
 pub mod person_handlers;
 pub mod state;
 pub mod summary_handlers;
@@ -28,11 +29,16 @@ pub fn build_router(state: AppState) -> Router {
     // Public routes — no auth middleware.
     // Health and version must be reachable by load balancers, monitoring,
     // Docker healthchecks, and k8s liveness/readiness probes without credentials.
+    // Vexa webhook is public but may require X-Webhook-Secret when configured.
     let public_routes = Router::new()
         // Swagger UI - publicly accessible (no auth)
         .merge(SwaggerUi::new("/docs").url("/api-docs/openapi.json", openapi::ApiDoc::openapi()))
         .route("/health", get(handlers::health))
-        .route("/version", get(handlers::version));
+        .route("/version", get(handlers::version))
+        .route(
+            "/webhooks/vexa",
+            post(orchestrator_handlers::vexa_webhook),
+        );
 
     // Protected routes — auth middleware applies to all of these.
     let protected_routes = Router::new()
@@ -119,6 +125,14 @@ pub fn build_router(state: AppState) -> Router {
         )
         .route("/import", post(import_handlers::create_import))
         .route("/import/validate", post(import_handlers::validate_import))
+        .route(
+            "/orchestrator/import",
+            post(orchestrator_handlers::create_orchestrator_import),
+        )
+        .route(
+            "/orchestrator/runs/:id",
+            get(orchestrator_handlers::get_orchestrator_run),
+        )
         .route("/jobs", get(import_handlers::list_jobs))
         .route(
             "/jobs/:job_id/status",

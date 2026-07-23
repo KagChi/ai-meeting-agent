@@ -13,6 +13,7 @@ pub mod fs;
 pub mod jobs;
 pub mod metadata;
 pub mod models;
+pub mod orchestrator;
 pub mod runners;
 pub mod storage;
 pub mod summary;

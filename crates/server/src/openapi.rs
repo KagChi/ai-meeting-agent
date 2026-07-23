@@ -3,6 +3,7 @@
 use crate::config_handlers;
 use crate::handlers;
 use crate::import_handlers;
+use crate::orchestrator_handlers;
 use crate::person_handlers;
 use crate::summary_handlers;
 use crate::types::*;
@@ -11,6 +12,9 @@ use meeting_agent_core::models::{
     FileMetadata, MatchedSegment, Meeting, MeetingSearchResult, MeetingStatus, MetadataSource,
     Person, Summary, SummaryStatus, SummaryTemplate, Transcript, TranscriptSegment,
     TranscriptionInfo, VoiceprintSample, VoiceprintSampleSource,
+};
+use meeting_agent_core::orchestrator::{
+    OrchestratorImportRequest, OrchestratorRun, OrchestratorRunStatus, OrchestratorStartResult,
 };
 use meeting_agent_core::transcription::TranscriptionResponse;
 use utoipa::OpenApi;
@@ -59,6 +63,10 @@ use utoipa::OpenApi;
         person_handlers::delete_sample,
         person_handlers::rebuild_person_voiceprint,
         person_handlers::list_voiceprints,
+        // Orchestrator
+        orchestrator_handlers::create_orchestrator_import,
+        orchestrator_handlers::vexa_webhook,
+        orchestrator_handlers::get_orchestrator_run,
     ),
     components(
         schemas(
@@ -120,6 +128,10 @@ use utoipa::OpenApi;
             Person,
             VoiceprintSample,
             VoiceprintSampleSource,
+            OrchestratorImportRequest,
+            OrchestratorRun,
+            OrchestratorRunStatus,
+            OrchestratorStartResult,
         )
     ),
     info(
@@ -135,6 +147,7 @@ use utoipa::OpenApi;
         (name = "jobs", description = "Background job status and control endpoints"),
         (name = "config", description = "Configuration management endpoints"),
         (name = "persons", description = "Voice bank: persons, enrollment samples, voiceprints"),
+        (name = "orchestrator", description = "Live-bot meeting-end → download → import"),
     )
 )]
 pub struct ApiDoc;

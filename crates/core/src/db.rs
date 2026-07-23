@@ -110,14 +110,14 @@ mod tests {
         let table_count: i32 = sqlx::query_scalar(
             "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN (
                 'meetings', 'transcript_segments', 'summaries', 'transcript_versions',
-                'persons', 'voiceprints', 'voiceprint_samples'
+                'persons', 'voiceprints', 'voiceprint_samples', 'orchestrator_runs'
             )"
         )
         .fetch_one(&pool)
         .await
         .unwrap();
 
-        assert_eq!(table_count, 7, "Expected 7 main tables");
+        assert_eq!(table_count, 8, "Expected 8 main tables");
 
         // Verify FTS table exists
         let fts_exists: bool = sqlx::query_scalar(

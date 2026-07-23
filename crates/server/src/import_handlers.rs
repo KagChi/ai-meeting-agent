@@ -124,6 +124,7 @@ pub async fn create_import(
                 location: None,
                 organizer: None,
                 recording_date: None,
+                platform: None,
                 config,
                 storage,
                 registry,

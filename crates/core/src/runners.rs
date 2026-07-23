@@ -28,6 +28,8 @@ pub struct ImportMemoryConfig {
     pub location: Option<String>,
     pub organizer: Option<String>,
     pub recording_date: Option<chrono::NaiveDateTime>,
+    /// Optional capture platform (e.g. teams, zoom) for live-bot imports.
+    pub platform: Option<String>,
     pub config: Config,
     pub storage: Arc<MeetingStorage>,
     pub registry: Arc<JobRegistry>,
@@ -509,6 +511,11 @@ async fn run_import_memory_pipeline(
     let mut meeting = Meeting::new("Temporary Title".to_string());
     let filename_path = std::path::Path::new(&cfg.audio_filename);
     crate::metadata::enrich_meeting_with_metadata(&mut meeting, filename_path, user_metadata)?;
+    if let Some(platform) = &cfg.platform {
+        if !platform.is_empty() {
+            meeting.platform = Some(platform.clone());
+        }
+    }
 
     cfg.storage.create_meeting(&meeting).await?;
     cfg.registry.set_meeting_id(&cfg.job_id, meeting.id.clone());

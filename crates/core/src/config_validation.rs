@@ -240,6 +240,7 @@ mod tests {
             summary: good_summary(),
             server: good_server(),
             diarize: good_diarize(),
+            orchestrator: Default::default(),
         };
         assert!(validate_config(&c).is_ok());
     }

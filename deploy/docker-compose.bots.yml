@@ -1,0 +1,43 @@
+# ============================================================================
+# Vexa bot spine — record only (join Teams/Zoom/Meet → MinIO audio)
+# ----------------------------------------------------------------------------
+# Merge with the lab stack:
+#   docker compose -f deploy/docker-compose.yml \
+#     -f deploy/docker-compose.bots.yml --env-file deploy/.env up -d
+#
+# Prerequisites:
+#   1. Clone Vexa next to this repo (or set VEXA_DIR to the checkout):
+#        git clone https://github.com/Vexa-ai/vexa.git ../vexa
+#   2. Seed Vexa env (once):
+#        cp "$VEXA_DIR/deploy/compose/.env.example" "$VEXA_DIR/deploy/compose/.env"
+#      Keep TRANSCRIPTION_SERVICE_URL empty; capture-only overrides below force
+#      TRANSCRIBE_ENABLED=false so Vexa never runs live STT.
+#   3. Bot image (v0.12): BROWSER_IMAGE=vexaai/vexa-bot:v012 (or build via
+#      `make -C "$VEXA_DIR/deploy/compose" bot`). Do NOT use :dev (0.10 line).
+#   4. Docker engine with socket access (runtime spawns bot containers).
+#   5. Full Vexa compose wants ~8 vCPU / 16 GB RAM.
+#
+# Transcription of recordings is done by ai-meeting-agent after import — not Vexa.
+# ============================================================================
+
+# Path is relative to this file (deploy/). Sibling of ai-meeting-agent → ../../vexa
+include:
+  - path: ${VEXA_DIR:-../../vexa}/deploy/compose/docker-compose.yml
+    env_file: ${VEXA_DIR:-../../vexa}/deploy/compose/.env
+
+# Capture-only: force no Vexa STT; keep MinIO recordings on.
+# Compose merges these env entries into the included services.
+# Project name is `meeting-agent` (from docker-compose.yml). Runtime must spawn
+# bots onto that project's vexa network (not vexa-v012_vexa).
+services:
+  meeting-api:
+    environment:
+      - TRANSCRIBE_ENABLED=false
+      - RECORDING_ENABLED=true
+      - TRANSCRIPTION_SERVICE_URL=
+      - TRANSCRIPTION_SERVICE_TOKEN=
+      - TRANSCRIPTION_MODEL=
+
+  runtime:
+    environment:
+      - DOCKER_NETWORK=${COMPOSE_PROJECT_NAME:-meeting-agent}_vexa

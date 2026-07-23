@@ -10,6 +10,7 @@ use crate::models::{
     TranscriptVersion, Voiceprint, VoiceprintEnrolledFrom, VoiceprintSample,
     VoiceprintSampleSource,
 };
+use crate::orchestrator::{OrchestratorRun, OrchestratorRunStatus};
 use crate::transcription::{TranscriptSegment, TranscriptionResponse};
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
@@ -1771,6 +1772,143 @@ impl MeetingStorage {
 
         Ok(result.rows_affected())
     }
+
+    // --- Orchestrator runs (idempotent live-bot import) ---
+
+    pub async fn insert_orchestrator_run(&self, run: &OrchestratorRun) -> Result<()> {
+        sqlx::query(
+            "INSERT INTO orchestrator_runs (
+                id, source, platform, native_meeting_id, recording_key, external_key,
+                status, job_id, meeting_id, title, error, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(&run.id)
+        .bind(&run.source)
+        .bind(run.platform.as_deref())
+        .bind(run.native_meeting_id.as_deref())
+        .bind(run.recording_key.as_deref())
+        .bind(&run.external_key)
+        .bind(run.status.as_str())
+        .bind(run.job_id.as_deref())
+        .bind(run.meeting_id.as_deref())
+        .bind(run.title.as_deref())
+        .bind(run.error.as_deref())
+        .bind(run.created_at.to_rfc3339())
+        .bind(run.updated_at.to_rfc3339())
+        .execute(&self.db)
+        .await
+        .context("Failed to insert orchestrator_run")?;
+        Ok(())
+    }
+
+    pub async fn get_orchestrator_run(&self, id: &str) -> Result<Option<OrchestratorRun>> {
+        let row = sqlx::query(
+            "SELECT id, source, platform, native_meeting_id, recording_key, external_key,
+                    status, job_id, meeting_id, title, error, created_at, updated_at
+             FROM orchestrator_runs WHERE id = ?",
+        )
+        .bind(id)
+        .fetch_optional(&self.db)
+        .await
+        .context("Failed to get orchestrator_run")?;
+        match row {
+            Some(r) => Ok(Some(self.row_to_orchestrator_run(r)?)),
+            None => Ok(None),
+        }
+    }
+
+    pub async fn get_orchestrator_run_by_key(
+        &self,
+        external_key: &str,
+    ) -> Result<Option<OrchestratorRun>> {
+        let row = sqlx::query(
+            "SELECT id, source, platform, native_meeting_id, recording_key, external_key,
+                    status, job_id, meeting_id, title, error, created_at, updated_at
+             FROM orchestrator_runs WHERE external_key = ?",
+        )
+        .bind(external_key)
+        .fetch_optional(&self.db)
+        .await
+        .context("Failed to get orchestrator_run by key")?;
+        match row {
+            Some(r) => Ok(Some(self.row_to_orchestrator_run(r)?)),
+            None => Ok(None),
+        }
+    }
+
+    pub async fn update_orchestrator_run(&self, run: &OrchestratorRun) -> Result<()> {
+        sqlx::query(
+            "UPDATE orchestrator_runs SET
+                status = ?, job_id = ?, meeting_id = ?, title = ?, error = ?, updated_at = ?
+             WHERE id = ?",
+        )
+        .bind(run.status.as_str())
+        .bind(run.job_id.as_deref())
+        .bind(run.meeting_id.as_deref())
+        .bind(run.title.as_deref())
+        .bind(run.error.as_deref())
+        .bind(run.updated_at.to_rfc3339())
+        .bind(&run.id)
+        .execute(&self.db)
+        .await
+        .context("Failed to update orchestrator_run")?;
+        Ok(())
+    }
+
+    pub async fn set_orchestrator_run_status(
+        &self,
+        id: &str,
+        status: OrchestratorRunStatus,
+        job_id: Option<&str>,
+        meeting_id: Option<&str>,
+        error: Option<&str>,
+    ) -> Result<()> {
+        let now = Utc::now().to_rfc3339();
+        sqlx::query(
+            "UPDATE orchestrator_runs SET
+                status = ?,
+                job_id = COALESCE(?, job_id),
+                meeting_id = COALESCE(?, meeting_id),
+                error = ?,
+                updated_at = ?
+             WHERE id = ?",
+        )
+        .bind(status.as_str())
+        .bind(job_id)
+        .bind(meeting_id)
+        .bind(error)
+        .bind(now)
+        .bind(id)
+        .execute(&self.db)
+        .await
+        .context("Failed to set orchestrator_run status")?;
+        Ok(())
+    }
+
+    fn row_to_orchestrator_run(&self, row: sqlx::sqlite::SqliteRow) -> Result<OrchestratorRun> {
+        let created_at: String = row.try_get(11)?;
+        let updated_at: String = row.try_get(12)?;
+        let status: String = row.try_get(6)?;
+        Ok(OrchestratorRun {
+            id: row.try_get(0)?,
+            source: row.try_get(1)?,
+            platform: row.try_get(2)?,
+            native_meeting_id: row.try_get(3)?,
+            recording_key: row.try_get(4)?,
+            external_key: row.try_get(5)?,
+            status: OrchestratorRunStatus::parse(&status),
+            job_id: row.try_get(7)?,
+            meeting_id: row.try_get(8)?,
+            title: row.try_get(9)?,
+            error: row.try_get(10)?,
+            created_at: DateTime::parse_from_rfc3339(&created_at)
+                .map(|d| d.with_timezone(&Utc))
+                .unwrap_or_else(|_| Utc::now()),
+            updated_at: DateTime::parse_from_rfc3339(&updated_at)
+                .map(|d| d.with_timezone(&Utc))
+                .unwrap_or_else(|_| Utc::now()),
+        })
+    }
 }
 
 impl std::fmt::Debug for MeetingStorage {
@@ -1794,6 +1932,48 @@ mod tests {
             .await
             .unwrap();
         (dir, storage)
+    }
+
+    #[tokio::test]
+    async fn orchestrator_run_insert_and_get_by_key() {
+        use crate::orchestrator::{OrchestratorRun, OrchestratorRunStatus};
+        let (_dir, storage) = setup().await;
+        let run = OrchestratorRun {
+            id: "run-1".into(),
+            source: "vexa".into(),
+            platform: Some("teams".into()),
+            native_meeting_id: Some("abc".into()),
+            recording_key: None,
+            external_key: "vexa:teams:abc".into(),
+            status: OrchestratorRunStatus::Received,
+            job_id: None,
+            meeting_id: None,
+            title: Some("t".into()),
+            error: None,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        };
+        storage.insert_orchestrator_run(&run).await.unwrap();
+        let loaded = storage
+            .get_orchestrator_run_by_key("vexa:teams:abc")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(loaded.id, "run-1");
+        storage
+            .set_orchestrator_run_status(
+                "run-1",
+                OrchestratorRunStatus::Completed,
+                Some("job-1"),
+                Some("meeting-1"),
+                None,
+            )
+            .await
+            .unwrap();
+        let done = storage.get_orchestrator_run("run-1").await.unwrap().unwrap();
+        assert_eq!(done.status, OrchestratorRunStatus::Completed);
+        assert_eq!(done.job_id.as_deref(), Some("job-1"));
+        assert_eq!(done.meeting_id.as_deref(), Some("meeting-1"));
     }
 
     fn segment(id: u32, start: f64, text: &str) -> TranscriptSegment {

@@ -1061,7 +1061,7 @@ mod tests {
                     id: 0,
                     start: 0.0,
                     end: 10.0,
-                    text: resp.text.clone(),
+                    text: "hello there".to_string(),
                     timestamp: Some(format_timestamp_readable(0.0)),
                     tokens: None,
                     temperature: None,

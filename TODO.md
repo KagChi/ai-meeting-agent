@@ -6,10 +6,13 @@ Branch: `ian`.
 ## Now
 - [x] PRD pivot to hybrid (Vexa spine + lab-intelligence layer)
 - [x] Deployment blueprint: `deploy/` compose + Dockerfile.server + .env + runbook
+- [x] Deploy: Vexa **record-only** overlay (`deploy/docker-compose.bots.yml` include;
+      `TRANSCRIBE_ENABLED=false`; ASR stays on meeting-agent import path)
 - [ ] **Phase 0 — bring-up spike** (needs DGX + Docker; not doable on this laptop):
-  - [ ] Stand up Vexa (`make all`), point `TRANSCRIPTION_SERVICE_URL` → DGX WhisperX
-  - [ ] `docker compose -f deploy/docker-compose.yml up` our stack on the `vexa` network
-  - [ ] Send a test bot to a Meet/Teams call; confirm audio + transcript land
+  - [ ] Clone Vexa; `docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.bots.yml up`
+  - [ ] Mint `VEXA_API_KEY`; `POST :18056/bots` to a Teams/Meet test call
+  - [ ] Confirm **recording** in Vexa MinIO (no Vexa live transcript required)
+  - [ ] `meeting-agent import <recording>` → transcript via our WhisperX
 
 ## Next
 - [ ] **Phase 1 — canonical pipeline (DGX):** WhisperX large-v3 re-transcription pass;
@@ -24,9 +27,9 @@ Branch: `ian`.
       checkboxes; human `Reviewed by` certification gate.
 
 ## Later
-- [ ] **Phase 4 — automation chain:** orchestrator service (Vexa webhook → identify →
-      minutes → daily-log update → Google Calendar link-back). Decide language (Rust vs
-      Python) first. Uncomment its block in `deploy/docker-compose.yml`.
+- [x] **Phase 4 v1 — orchestrator in core + server:** meeting-end → download recording →
+      `run_import_memory` (POST `/webhooks/vexa`, POST `/orchestrator/import`, runs table)
+- [ ] **Phase 4 remainder:** auto-summary / SOP minutes → review gate → daily-log + GCal
 - [ ] **Phase 5 — mobile (optional):** one-tap in-person recorder → same ingest API.
 - [ ] **Phase 6 — realtime (optional):** live captions / MCP agent hooks off Vexa WS.
 - [ ] Consent + retention policy before enabling identification on real meetings (BIPA risk, PRD §8).

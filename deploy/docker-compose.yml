@@ -1,20 +1,17 @@
 # ============================================================================
 # AI Meeting Agent — lab-intelligence stack (self-hosted, DGX Spark)
 # ----------------------------------------------------------------------------
-# This compose file defines OUR services. It is designed to run ALONGSIDE the
-# Vexa stack (the meeting-bot spine), which is deployed from its own repo with
-# `make all`. Both stacks share Docker network `vexa` (declared external here),
-# so our services can reach Vexa's api-gateway and vice-versa.
+# OUR services: WhisperX ASR, minutes LLM, diarize, meeting-agent-server.
+# Transcription always runs HERE (import / pipeline) — never via Vexa live STT.
 #
-# Bring-up order (see deploy/README.md for the full runbook):
-#   1. Clone + start Vexa   (creates the `vexa` network + api-gateway :8056)
-#      - override Vexa's TRANSCRIPTION_SERVICE_URL -> http://whisperx:8000/v1/audio/transcriptions
-#        so Vexa's realtime transcription runs on OUR DGX WhisperX.
-#   2. docker compose -f deploy/docker-compose.yml --env-file deploy/.env up -d
+# Vexa (bot join + record → MinIO) is optional. Bring it up with the bots overlay:
+#   docker compose -f deploy/docker-compose.yml \
+#     -f deploy/docker-compose.bots.yml --env-file deploy/.env up -d
+# See deploy/README.md.
 #
-# GPU: whisperx and minutes-llm request the DGX Spark GPU. On a non-GPU host,
-# drop the `deploy.resources.reservations.devices` blocks (models fall back to CPU,
-# slowly). DGX Spark is aarch64 — pin arm64-capable images / build multi-arch.
+# GPU: whisperx / minutes-llm / diarize request the DGX GPU. On a non-GPU host,
+# drop the deploy.resources.reservations.devices blocks (CPU fallback, slow).
+# DGX Spark is aarch64 — pin arm64-capable images / build multi-arch.
 # ============================================================================
 
 name: meeting-agent
@@ -22,18 +19,14 @@ name: meeting-agent
 services:
   # -------------------------------------------------------------------------
   # DGX model service 1 — WhisperX ASR (OpenAI-compatible)
-  # Serves /v1/audio/transcriptions. Used by BOTH:
-  #   - Vexa (realtime, via TRANSCRIPTION_SERVICE_URL override), and
-  #   - our orchestrator (canonical re-transcription pass).
-  # Recommended image: OpenAI-compatible faster-whisper/whisperx server.
-  # `speaches` (formerly faster-whisper-server) exposes the OpenAI STT API.
+  # Used only by meeting-agent-server (post-capture import pipeline).
+  # Vexa is configured record-only and does NOT call this service.
   # -------------------------------------------------------------------------
   whisperx:
     image: ${WHISPERX_IMAGE:-ghcr.io/speaches-ai/speaches:latest-cuda}
     environment:
       - WHISPER__MODEL=${ASR_MODEL:-Systran/faster-whisper-large-v3}
       - WHISPER__COMPUTE_TYPE=${ASR_COMPUTE_TYPE:-float16}
-      # Multilingual: leave language auto-detect on; per-segment LID handled upstream.
       - WHISPER__INFERENCE_DEVICE=cuda
     ports:
       - "${WHISPERX_HOST_PORT:-8010}:8000"
@@ -51,8 +44,6 @@ services:
 
   # -------------------------------------------------------------------------
   # DGX model service 2 — Minutes / action-item LLM (OpenAI-compatible)
-  # Serves /v1/chat/completions. Ollama is simplest on aarch64; swap for vLLM
-  # if you need higher throughput. Pull the model on first run (see README).
   # -------------------------------------------------------------------------
   minutes-llm:
     image: ${LLM_IMAGE:-ollama/ollama:latest}
@@ -74,9 +65,6 @@ services:
 
   # -------------------------------------------------------------------------
   # DGX model service 3 — Diarization (speaker identification)
-  # Separate GPU-enabled service for speaker diarization using speakrs/pyannote.
-  # Called by meeting-agent-server when DIARIZE_ENABLED=true.
-  # Serves HTTP API on port 8001: POST /v1/diarize
   # -------------------------------------------------------------------------
   diarize-service:
     build:
@@ -86,12 +74,10 @@ services:
     environment:
       - DIARIZE_HOST=0.0.0.0
       - DIARIZE_PORT=8001
-      # cuda-fast matches ORT cu12 + CUDA 12.6 image (auto also tries CUDA first on Linux)
       - DIARIZE_EXECUTION_MODE=${DIARIZE_EXECUTION_MODE:-cuda-fast}
       - DIARIZE_MODEL_DIR=${DIARIZE_MODEL_DIR:-}
       - DIARIZE_EMBEDDING_MODEL=${DIARIZE_EMBEDDING_MODEL:-wespeaker-voxceleb-CAM++_LM}
       - DIARIZE_EMBEDDING_DIM=${DIARIZE_EMBEDDING_DIM:-512}
-      # HF-aware download uses HF_HOME; HOME keeps legacy defaults on the volume
       - HOME=/app
       - HF_HOME=/app/.cache/huggingface
       - RUST_LOG=${DIARIZE_LOG_LEVEL:-info}
@@ -112,12 +98,8 @@ services:
     restart: unless-stopped
 
   # -------------------------------------------------------------------------
-  # Existing meeting-agent HTTP API + storage (Rust, this repo).
-  # Owns meeting metadata, transcript/summary storage, file-import path,
-  # and serves the OpenAPI/Swagger UI. Points its transcription + summary
-  # providers at the DGX services above (OpenAI-compatible).
-  # Diarization via remote diarize-service (GPU) when DIARIZE_SERVICE_URL is set;
-  # falls back to in-process speakrs when unset.
+  # meeting-agent HTTP API + storage (Rust, this repo).
+  # Import path owns transcription (WhisperX) + optional diarize + summaries.
   # -------------------------------------------------------------------------
   meeting-agent-server:
     build:
@@ -137,9 +119,6 @@ services:
       - SUMMARY_API_KEY=${SUMMARY_API_KEY:-not-needed-local}
       - DIARIZE_ENABLED=${DIARIZE_ENABLED:-false}
       - DIARIZE_SERVICE_URL=${DIARIZE_SERVICE_URL:-http://diarize-service:8001}
-      # Same default as diarize-service: voiceprint embed runs in-process on this
-      # container and must honor DIARIZE_EXECUTION_MODE (not stuck on cpu).
-      # Server image is CPU-only unless GPU-enabled; cuda fails → CPU fallback.
       - DIARIZE_EXECUTION_MODE=${DIARIZE_EXECUTION_MODE:-auto}
       - DIARIZE_EMBEDDING_MODEL=${DIARIZE_EMBEDDING_MODEL:-wespeaker-voxceleb-CAM++_LM}
       - DIARIZE_EMBEDDING_DIM=${DIARIZE_EMBEDDING_DIM:-512}
@@ -147,39 +126,34 @@ services:
       - "${SERVER_HOST_PORT:-8080}:8080"
     volumes:
       - meeting-data:/root/.meeting-agent
-    networks: [meeting-agent]
+    networks: [meeting-agent, vexa]
     depends_on: [whisperx, minutes-llm, diarize-service]
     restart: unless-stopped
 
   # -------------------------------------------------------------------------
-  # Orchestrator — the post-meeting glue (Phase 3-4, NOT YET IMPLEMENTED).
-  # Responsibilities:
-  #   - dispatch bots to Vexa (POST vexa/bots) and track meetings
-  #   - on meeting end (Vexa webhook / poll GET vexa/transcripts/...), pull
-  #     the transcript + per-speaker audio (MinIO), run identify + SOP minutes,
-  #     then update the daily-log and Google Calendar (attach minutes link).
-  # Left commented until the service exists so `up` doesn't fail on a missing
-  # build. Track: TODO.md Phase 3-4. Language TBD (see README "Open decision").
+  # Orchestrator — post-meeting glue (Phase 3-4, NOT YET IMPLEMENTED).
+  # Will: POST Vexa /bots → on meeting end pull MinIO recording → import into
+  # meeting-agent (ASR here) → identify + SOP minutes → daily-log + GCal.
   # -------------------------------------------------------------------------
   # orchestrator:
   #   build:
   #     context: ..
   #     dockerfile: services/orchestrator/Dockerfile
   #   environment:
-  #     - VEXA_API_BASE=http://api-gateway:8000
+  #     - VEXA_API_BASE=http://gateway:8000
   #     - VEXA_API_KEY=${VEXA_API_KEY}
   #     - MEETING_AGENT_URL=http://meeting-agent-server:8080
-  #     - DIARIZE_URL=http://diarize-identify:8002
   #     - GOOGLE_CALENDAR_CREDENTIALS=/secrets/gcal.json
   #     - DAILY_LOG_TARGET=${DAILY_LOG_TARGET}
   #   networks: [vexa, meeting-agent]
-  #   depends_on: [meeting-agent-server, diarize-identify]
+  #   depends_on: [meeting-agent-server]
   #   restart: unless-stopped
 
 networks:
-  # Vexa creates this network via its own compose. Start Vexa first.
+  # Shared with Vexa when docker-compose.bots.yml is merged (include).
+  # Lab-only up creates this network; no prior `make all` required.
   vexa:
-    external: true
+    driver: bridge
   meeting-agent:
     driver: bridge
 

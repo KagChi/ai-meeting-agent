@@ -10,6 +10,8 @@ pub struct Config {
     pub server: ServerConfig,
     #[serde(default)]
     pub diarize: DiarizeConfig,
+    #[serde(default)]
+    pub orchestrator: crate::orchestrator::OrchestratorConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -228,6 +230,7 @@ impl Default for Config {
                 api_key: None,
             },
             diarize: DiarizeConfig::default(),
+            orchestrator: crate::orchestrator::OrchestratorConfig::default(),
         }
     }
 }
@@ -317,6 +320,9 @@ impl Config {
 
         // Diarization overrides (shared with diarize-service via DiarizeConfig::apply_env)
         config.diarize.apply_env();
+
+        // Live-bot orchestrator (Vexa meeting-end → import)
+        config.orchestrator.apply_env();
 
         // Server overrides (MEETING_AGENT_* env vars documented in .env.example)
         if let Ok(port) = std::env::var("MEETING_AGENT_PORT") {

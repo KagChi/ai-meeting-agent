@@ -7,11 +7,10 @@ spec in [PRD.md](PRD.md); deployment in [deploy/README.md](deploy/README.md).
 
 Two cooperating stacks, all models on the **DGX Spark**, no meeting data leaves the lab:
 
-1. **Bot spine — Vexa** (external, `Vexa-ai/vexa`, Apache-2.0; run as a sibling stack).
-   Joins Teams/Zoom/Meet, records, realtime transcription, per-speaker audio (MinIO),
-   webhooks, MCP. We attach to its `vexa` Docker network and call `POST /bots` /
-   consume `GET /transcripts/...`. Its `TRANSCRIPTION_SERVICE_URL` is pointed at our DGX
-   WhisperX so ASR runs locally.
+1. **Bot spine — Vexa** (external, `Vexa-ai/vexa`, Apache-2.0; sibling checkout).
+   Joins Teams/Zoom/Meet and **records to MinIO only** (no Vexa live STT:
+   `TRANSCRIBE_ENABLED=false`). Include via `deploy/docker-compose.bots.yml`.
+   Call `POST /bots` on gateway `:18056`; pull recordings from MinIO / `GET /recordings`.
 2. **Lab-intelligence layer — this repo** (Rust workspace + DGX model services):
    - `crates/core` — models, storage (`~/.meeting-agent/`), transcription/summary
      clients, jobs. File-import path retained as an ingest source.
@@ -22,10 +21,11 @@ Two cooperating stacks, all models on the **DGX Spark**, no meeting data leaves 
      cosine match) — the differentiator that resolves the "several people on one Teams
      account" case (PRD §13). Serves `/v1/diarize` (+ planned `/v1/identify`,
      `/v1/voiceprints`).
-   - `deploy/` — compose stack (WhisperX + minutes-LLM + our services), Dockerfile.server,
-     env template, bring-up runbook.
-   - `orchestrator` (Phase 4, not yet built) — Vexa webhook → identify → SOP minutes →
-     daily-log → Google Calendar.
+    - `deploy/` — lab compose + optional bots overlay (Vexa include, record-only),
+      Dockerfile.server, env template, bring-up runbook.
+    - `orchestrator` (Phase 4 v1 in `crates/core/src/orchestrator` + server routes) —
+      Vexa meeting-end → download recording → import (ASR here). Publish (daily-log /
+      GCal) still later.
 
 ## Models (DGX Spark, GB10, 128 GB unified, aarch64)
 - ASR: Whisper large-v3 via WhisperX (EN/ZH/ID + code-switch). OpenAI-compatible server.
@@ -34,7 +34,7 @@ Two cooperating stacks, all models on the **DGX Spark**, no meeting data leaves 
 - Minutes LLM: Qwen2.5 (or GPT-OSS) via Ollama/vLLM, OpenAI-compatible.
 
 ## External services / integrations
-- Vexa api-gateway `:8056`; our services `:8080` (server), `:8002` (diarize), `:8010`
+- Vexa gateway `:18056` (0.12); our services `:8080` (server), `:8001` (diarize), `:8010`
   (whisperx), `:11434` (llm).
 - BMW-Lab SOP minutes template: `bmw-ece-ntust/SOP` → `logistics/meeting.md`.
 - Google Calendar API (event link-back); lab daily-log / progress-plan (action items).
