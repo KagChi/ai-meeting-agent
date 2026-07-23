@@ -90,9 +90,16 @@ impl MeetingAgentClient {
         self.send_json(request).await
     }
 
-    pub async fn get_summary(&self, meeting_id: &str, template: &str, format: &str) -> Result<Value> {
-        self.get_json(&format!("/meetings/{meeting_id}/summary/{template}?format={format}"))
-            .await
+    pub async fn get_summary(
+        &self,
+        meeting_id: &str,
+        template: &str,
+        format: &str,
+    ) -> Result<Value> {
+        self.get_json(&format!(
+            "/meetings/{meeting_id}/summary/{template}?format={format}"
+        ))
+        .await
     }
 
     pub async fn update_meeting(

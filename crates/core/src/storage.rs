@@ -6,8 +6,8 @@ use crate::db;
 use crate::fs;
 use crate::models::{
     FileMetadata, MatchedSegment, Meeting, MeetingSearchResult, MeetingStatus, MetadataSource,
-    Person, Summary, SummaryFormat, SummaryStatus, SummaryTemplate, TranscriptionInfo,
-    TranscriptVersion, Voiceprint, VoiceprintEnrolledFrom, VoiceprintSample,
+    Person, Summary, SummaryFormat, SummaryStatus, SummaryTemplate, TranscriptVersion,
+    TranscriptionInfo, Voiceprint, VoiceprintEnrolledFrom, VoiceprintSample,
     VoiceprintSampleSource,
 };
 use crate::orchestrator::{OrchestratorRun, OrchestratorRunStatus};
@@ -452,14 +452,14 @@ impl MeetingStorage {
             if old == new {
                 continue;
             }
-            
+
             // Check if this speaker is identified from voice bank
             let identified: Option<(String, String)> = sqlx::query_as(
                 "SELECT DISTINCT ts.speaker, p.name 
                  FROM transcript_segments ts
                  JOIN persons p ON ts.person_id = p.id
                  WHERE ts.meeting_id = ? AND ts.version = ? AND ts.speaker = ?
-                 LIMIT 1"
+                 LIMIT 1",
             )
             .bind(meeting_id)
             .bind(version)
@@ -467,18 +467,19 @@ impl MeetingStorage {
             .fetch_optional(&self.db)
             .await
             .context("Failed to check speaker identification")?;
-            
+
             if let Some((_, person_name)) = identified {
                 // Allow rename only for Guest entries
                 if !person_name.starts_with("Guest-") {
                     anyhow::bail!(
                         "Cannot rename speaker '{}' - identified as '{}' from voice bank. \
                          Use 'Clear Voice Identification' to reset.",
-                        old, person_name
+                        old,
+                        person_name
                     );
                 }
             }
-            
+
             let result = sqlx::query(
                 "UPDATE transcript_segments
                  SET speaker = ?
@@ -504,7 +505,7 @@ impl MeetingStorage {
         response: &TranscriptionResponse,
         provider: &str,
         model: &str,
-        duration_seconds: u64,
+        #[allow(unused_variables)] duration_seconds: u64,
     ) -> Result<()> {
         // Ensure meeting exists and fail with existing message shape.
         self.get_meeting(meeting_id).await?;
@@ -531,7 +532,7 @@ impl MeetingStorage {
                 )
                 .bind(meeting_id)
                 .bind(version)
-                .bind(idx as i64)  // Use array index for guaranteed unique segment_id
+                .bind(idx as i64) // Use array index for guaranteed unique segment_id
                 .bind(segment.start)
                 .bind(segment.end)
                 .bind(&segment.text)
@@ -559,7 +560,10 @@ impl MeetingStorage {
                     );
                     return Err(anyhow::anyhow!(
                         "Failed to insert transcript segment (meeting={}, ver={}, idx={}): {}",
-                        meeting_id, version, idx, e
+                        meeting_id,
+                        version,
+                        idx,
+                        e
                     ));
                 }
             }
@@ -585,7 +589,11 @@ impl MeetingStorage {
     }
 
     /// Get transcript for a meeting (latest version by default, or specific version).
-    pub async fn get_transcript(&self, meeting_id: &str, version: Option<u32>) -> Result<TranscriptionResponse> {
+    pub async fn get_transcript(
+        &self,
+        meeting_id: &str,
+        version: Option<u32>,
+    ) -> Result<TranscriptionResponse> {
         let segments = self
             .get_transcript_paginated(meeting_id, version, u32::MAX, 0)
             .await?;
@@ -672,12 +680,12 @@ impl MeetingStorage {
         );
 
         let mut q = sqlx::query(&query).bind(meeting_id);
-        
+
         // Bind meeting_id again for subquery if version is None
         if version.is_none() {
             q = q.bind(meeting_id);
         }
-        
+
         let rows = q
             .bind(limit as i64)
             .bind(offset as i64)
@@ -869,14 +877,13 @@ impl MeetingStorage {
         };
 
         // Get latest version for this meeting
-        let latest_version: Option<i64> = sqlx::query_scalar(
-            "SELECT MAX(version) FROM transcript_segments WHERE meeting_id = ?"
-        )
-        .bind(meeting_id)
-        .fetch_optional(&self.db)
-        .await
-        .context("Failed to get latest version")?
-        .flatten();
+        let latest_version: Option<i64> =
+            sqlx::query_scalar("SELECT MAX(version) FROM transcript_segments WHERE meeting_id = ?")
+                .bind(meeting_id)
+                .fetch_optional(&self.db)
+                .await
+                .context("Failed to get latest version")?
+                .flatten();
 
         let version = match latest_version {
             Some(v) => v,
@@ -1242,13 +1249,15 @@ impl MeetingStorage {
         template: SummaryTemplate,
         format: SummaryFormat,
     ) -> Result<()> {
-        let result = sqlx::query("DELETE FROM summaries WHERE meeting_id = ? AND template = ? AND format = ?")
-            .bind(meeting_id)
-            .bind(Self::template_to_db(&template))
-            .bind(Self::format_to_db(&format))
-            .execute(&self.db)
-            .await
-            .context("Failed to delete summary")?;
+        let result = sqlx::query(
+            "DELETE FROM summaries WHERE meeting_id = ? AND template = ? AND format = ?",
+        )
+        .bind(meeting_id)
+        .bind(Self::template_to_db(&template))
+        .bind(Self::format_to_db(&format))
+        .execute(&self.db)
+        .await
+        .context("Failed to delete summary")?;
         if result.rows_affected() == 0 {
             anyhow::bail!("Summary not found for meeting: {}", meeting_id);
         }
@@ -1696,10 +1705,7 @@ impl MeetingStorage {
     pub async fn apply_speaker_identities(
         &self,
         meeting_id: &str,
-        assignments: &std::collections::HashMap<
-            String,
-            (String, Option<String>, Option<f32>),
-        >,
+        assignments: &std::collections::HashMap<String, (String, Option<String>, Option<f32>)>,
     ) -> Result<u64> {
         self.get_meeting(meeting_id).await?;
         if assignments.is_empty() {
@@ -1970,7 +1976,11 @@ mod tests {
             )
             .await
             .unwrap();
-        let done = storage.get_orchestrator_run("run-1").await.unwrap().unwrap();
+        let done = storage
+            .get_orchestrator_run("run-1")
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(done.status, OrchestratorRunStatus::Completed);
         assert_eq!(done.job_id.as_deref(), Some("job-1"));
         assert_eq!(done.meeting_id.as_deref(), Some("meeting-1"));
@@ -2117,7 +2127,11 @@ mod tests {
         storage.delete_person(&person.id).await.unwrap();
         assert!(storage.get_person(&person.id).await.is_err());
         assert!(storage.get_voiceprint(&person.id).await.unwrap().is_none());
-        assert!(storage.list_voiceprint_samples(&person.id).await.unwrap().is_empty());
+        assert!(storage
+            .list_voiceprint_samples(&person.id)
+            .await
+            .unwrap()
+            .is_empty());
         let person_dir = dir.path().join("voiceprints").join(&person.id);
         assert!(!person_dir.exists());
     }
@@ -2216,12 +2230,9 @@ mod tests {
         .await;
         let _id2 =
             ready_meeting_with_transcript(&storage, "Standup", &["Daily sync about bugs"]).await;
-        let id3 = ready_meeting_with_transcript(
-            &storage,
-            "Review",
-            &["Finalizing the roadmap for Q4"],
-        )
-        .await;
+        let id3 =
+            ready_meeting_with_transcript(&storage, "Review", &["Finalizing the roadmap for Q4"])
+                .await;
 
         let (results, total) = storage
             .search_all_transcripts("roadmap", 50, 0)
@@ -2297,8 +2308,7 @@ mod tests {
     #[tokio::test]
     async fn search_all_empty_query_match_returns_empty() {
         let (_dir, storage) = setup().await;
-        ready_meeting_with_transcript(&storage, "A", &["hello world"])
-            .await;
+        ready_meeting_with_transcript(&storage, "A", &["hello world"]).await;
         let (results, total) = storage
             .search_all_transcripts("zzzznonexistent", 50, 0)
             .await
@@ -2309,10 +2319,7 @@ mod tests {
 
     #[test]
     fn escape_fts5_quotes_special_chars() {
-        assert_eq!(
-            escape_fts5_query("C++").as_deref(),
-            Some("\"C++\"")
-        );
+        assert_eq!(escape_fts5_query("C++").as_deref(), Some("\"C++\""));
         assert_eq!(
             escape_fts5_query("hello-world").as_deref(),
             Some("\"hello-world\"")

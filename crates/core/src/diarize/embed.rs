@@ -133,9 +133,7 @@ fn build_ort_session(model_path: &Path, mode: ExecutionMode) -> anyhow::Result<S
             #[cfg(all(feature = "diarization", target_os = "linux"))]
             {
                 builder
-                    .with_execution_providers([ep::CUDA::default()
-                        .with_device_id(0)
-                        .build()])
+                    .with_execution_providers([ep::CUDA::default().with_device_id(0).build()])
                     .map_err(ort_err)?
             }
             #[cfg(not(all(feature = "diarization", target_os = "linux")))]
@@ -197,12 +195,16 @@ fn load_resnet34(
     match EmbeddingModel::with_mode(&onnx, mode) {
         Ok(emb) => Ok((emb, mode)),
         Err(e) if !matches!(mode, ExecutionMode::Cpu) => {
-            log::warn!("[embed] ResNet34 GPU load failed (mode={mode}): {e:#}; falling back to CPU");
+            log::warn!(
+                "[embed] ResNet34 GPU load failed (mode={mode}): {e:#}; falling back to CPU"
+            );
             let emb = EmbeddingModel::with_mode(&onnx, ExecutionMode::Cpu)
                 .context("Failed to load ResNet34 EmbeddingModel on CPU")?;
             Ok((emb, ExecutionMode::Cpu))
         }
-        Err(e) => Err(anyhow::anyhow!("Failed to load ResNet34 EmbeddingModel: {e}")),
+        Err(e) => Err(anyhow::anyhow!(
+            "Failed to load ResNet34 EmbeddingModel: {e}"
+        )),
     }
 }
 
@@ -327,7 +329,9 @@ fn embed_campplus_window(session: &mut Session, samples: &[f32]) -> anyhow::Resu
 }
 
 fn embed_resnet_window(model: &mut EmbeddingModel, samples: &[f32]) -> anyhow::Result<Vec<f32>> {
-    let arr = model.embed(samples).context("WeSpeaker ResNet34 embed failed")?;
+    let arr = model
+        .embed(samples)
+        .context("WeSpeaker ResNet34 embed failed")?;
     let mut emb = arr.to_vec();
     l2_normalize(&mut emb);
     Ok(emb)
@@ -370,10 +374,7 @@ fn embed_samples_with_backend(
             }
             let emb = mean_pool_l2(&windows)?;
             if emb.len() != expected_dim {
-                anyhow::bail!(
-                    "CAM++ embed dim {} != expected {expected_dim}",
-                    emb.len()
-                );
+                anyhow::bail!("CAM++ embed dim {} != expected {expected_dim}", emb.len());
             }
             Ok(emb)
         }
@@ -595,10 +596,7 @@ async fn call_embed_service(
     }
     if let Some(dim) = result.dim {
         if dim as usize != emb.len() {
-            anyhow::bail!(
-                "embed service dim mismatch: header={dim} vec={}",
-                emb.len()
-            );
+            anyhow::bail!("embed service dim mismatch: header={dim} vec={}", emb.len());
         }
     }
     if emb.len() != cfg.embedding_dim as usize {

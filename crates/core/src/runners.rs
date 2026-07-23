@@ -150,8 +150,7 @@ async fn run_import_inner(
 
     check_cancelled(cancel_token)?;
 
-    let transcription =
-        maybe_diarize(final_audio, transcription, config, registry, job_id).await;
+    let transcription = maybe_diarize(final_audio, transcription, config, registry, job_id).await;
     check_cancelled(cancel_token)?;
 
     let transcription = refine_transcript(transcription, config, registry, job_id).await;
@@ -164,7 +163,7 @@ async fn run_import_inner(
     storage
         .save_audio(&meeting.id, &final_audio.to_path_buf())
         .await?;
-    
+
     let duration_seconds = transcription.duration.map(|d| d as u64).unwrap_or(0);
     storage
         .save_transcript(
@@ -186,13 +185,7 @@ async fn run_import_inner(
         .await?;
 
     // Voice-bank identify runs as its own job so import is not blocked.
-    spawn_identify_job_if_needed(
-        storage,
-        config,
-        registry,
-        &meeting.id,
-        &transcription,
-    );
+    spawn_identify_job_if_needed(storage, config, registry, &meeting.id, &transcription);
 
     Ok(())
 }
@@ -703,9 +696,7 @@ fn spawn_identify_job_if_needed(
             .cancel_token(&identify_job_id)
             .unwrap_or_else(CancellationToken::new);
 
-        log::info!(
-            "[identify] spawned background job {identify_job_id} for meeting {meeting_id}"
-        );
+        log::info!("[identify] spawned background job {identify_job_id} for meeting {meeting_id}");
 
         tokio::spawn(async move {
             run_identify_job(
@@ -769,8 +760,11 @@ pub async fn run_identify_job(
                 );
                 registry.update_progress(
                     &job_id,
-                    ProgressEvent::new("completed", format!("Identified speakers ({updated} segments)"))
-                        .with_percent(100.0),
+                    ProgressEvent::new(
+                        "completed",
+                        format!("Identified speakers ({updated} segments)"),
+                    )
+                    .with_percent(100.0),
                 );
                 registry.complete_job(&job_id);
             }
@@ -783,7 +777,10 @@ pub async fn run_identify_job(
     #[cfg(not(feature = "diarization"))]
     {
         let _ = (meeting_id, config, storage, cancel_token);
-        registry.fail_job(&job_id, "Speaker identify requires the diarization feature".into());
+        registry.fail_job(
+            &job_id,
+            "Speaker identify requires the diarization feature".into(),
+        );
     }
 }
 
@@ -824,7 +821,9 @@ async fn refine_transcript(
             );
             let mut response = transcription;
             if let Some(segments) = response.segments.as_mut() {
-                for (seg, refined_line) in segments.iter_mut().zip(refined.segment_refined.into_iter()) {
+                for (seg, refined_line) in
+                    segments.iter_mut().zip(refined.segment_refined.into_iter())
+                {
                     let trimmed = refined_line.trim();
                     if !trimmed.is_empty() {
                         seg.refined_text = Some(trimmed.to_string());
@@ -886,8 +885,8 @@ async fn run_retranscribe_inner(cfg: &RetranscribeConfig) -> Result<()> {
     );
 
     // Load audio metadata to get duration
-    let duration_seconds = audio::probe_duration(&cfg.audio_path)
-        .context("Failed to get audio duration")? as u64;
+    let duration_seconds =
+        audio::probe_duration(&cfg.audio_path).context("Failed to get audio duration")? as u64;
 
     cfg.registry.update_progress(
         &cfg.job_id,
@@ -931,13 +930,8 @@ async fn run_retranscribe_inner(cfg: &RetranscribeConfig) -> Result<()> {
         anyhow::bail!("Job cancelled before refinement");
     }
 
-    let transcription = refine_transcript(
-        transcription,
-        &cfg.config,
-        &cfg.registry,
-        &cfg.job_id,
-    )
-    .await;
+    let transcription =
+        refine_transcript(transcription, &cfg.config, &cfg.registry, &cfg.job_id).await;
 
     // Check cancellation before saving
     if cfg.cancel_token.is_cancelled() {
@@ -970,4 +964,3 @@ async fn run_retranscribe_inner(cfg: &RetranscribeConfig) -> Result<()> {
 
     Ok(())
 }
-

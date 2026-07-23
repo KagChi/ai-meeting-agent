@@ -71,19 +71,13 @@ pub async fn rebuild_voiceprint(
     for sample in &samples {
         let abs = storage.voiceprint_sample_abs_path(sample);
         if !abs.exists() {
-            log::warn!(
-                "[voiceprint] sample file missing: {}; skip",
-                abs.display()
-            );
+            log::warn!("[voiceprint] sample file missing: {}; skip", abs.display());
             continue;
         }
         match embed_audio_file(&abs, None, None, cfg) {
             Ok(vec) => embeddings.push(vec),
             Err(e) => {
-                log::warn!(
-                    "[voiceprint] embed failed for {}: {e:#}",
-                    abs.display()
-                );
+                log::warn!("[voiceprint] embed failed for {}: {e:#}", abs.display());
             }
         }
     }
@@ -114,10 +108,7 @@ pub async fn rebuild_voiceprint(
         dim: cfg.embedding_dim,
         centroid,
         enrolled_from: VoiceprintEnrolledFrom::Sample,
-        created_at: existing
-            .as_ref()
-            .map(|v| v.created_at)
-            .unwrap_or(now),
+        created_at: existing.as_ref().map(|v| v.created_at).unwrap_or(now),
         updated_at: now,
     };
     storage.upsert_voiceprint(&vp).await?;
@@ -241,11 +232,7 @@ fn cap_spans_to_duration(spans: &[(f64, f64)], max_s: f64) -> (Vec<(f64, f64)>, 
     if max_s <= 0.0 || spans.is_empty() {
         return (Vec::new(), 0.0);
     }
-    let mut ordered: Vec<(f64, f64)> = spans
-        .iter()
-        .copied()
-        .filter(|(a, b)| b - a > 0.0)
-        .collect();
+    let mut ordered: Vec<(f64, f64)> = spans.iter().copied().filter(|(a, b)| b - a > 0.0).collect();
     ordered.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
 
     let mut out = Vec::new();
@@ -377,15 +364,7 @@ pub async fn identify_transcript(
     cfg: &DiarizeConfig,
     threshold: f32,
 ) -> anyhow::Result<IdentifyResult> {
-    identify_transcript_with_meeting(
-        audio_path,
-        transcript,
-        storage,
-        cfg,
-        threshold,
-        None,
-    )
-    .await
+    identify_transcript_with_meeting(audio_path, transcript, storage, cfg, threshold, None).await
 }
 
 /// Per-label work item after embed (before bank match / enroll).
@@ -409,10 +388,8 @@ pub async fn identify_transcript_with_meeting(
     meeting_id: Option<&str>,
 ) -> anyhow::Result<IdentifyResult> {
     let persons = storage.list_persons().await?;
-    let mut name_by_id: HashMap<String, String> = persons
-        .into_iter()
-        .map(|p| (p.id, p.name))
-        .collect();
+    let mut name_by_id: HashMap<String, String> =
+        persons.into_iter().map(|p| (p.id, p.name)).collect();
 
     let Some(segments) = transcript.segments.as_mut() else {
         return Ok(IdentifyResult {
@@ -502,18 +479,10 @@ pub async fn identify_transcript_with_meeting(
     let mut unmatched_idx: Vec<usize> = Vec::new();
 
     for (i, item) in embedded.iter().enumerate() {
-        let m = match_embedding(
-            storage,
-            &item.query,
-            threshold,
-            Some(&cfg.embedding_model),
-        )
-        .await?;
+        let m =
+            match_embedding(storage, &item.query, threshold, Some(&cfg.embedding_model)).await?;
         if let Some(pid) = m.person_id {
-            let name = name_by_id
-                .get(&pid)
-                .cloned()
-                .unwrap_or_else(|| pid.clone());
+            let name = name_by_id.get(&pid).cloned().unwrap_or_else(|| pid.clone());
             bank_hit[i] = Some((pid, m.confidence, name));
         } else {
             unmatched_idx.push(i);
@@ -555,8 +524,7 @@ pub async fn identify_transcript_with_meeting(
     group_roots.sort_unstable();
 
     // Assignment per embedded index: (person_id, confidence, display_name)
-    let mut assign: Vec<Option<(Option<String>, Option<f32>, String)>> =
-        vec![None; embedded.len()];
+    let mut assign: Vec<Option<(Option<String>, Option<f32>, String)>> = vec![None; embedded.len()];
     let mut matched = 0u32;
     let mut guests = 0u32;
     let mut guest_n = next_guest_index(&name_by_id);
@@ -596,66 +564,63 @@ pub async fn identify_transcript_with_meeting(
         all_seg_ids.sort_unstable();
         all_seg_ids.dedup();
 
-        let (person_id, confidence, display_name) =
-            if total_speech + f64::EPSILON >= DEFAULT_AUTO_ENROLL_MIN_SPEECH_S {
-                let name = format!("Guest-{guest_n}");
-                guest_n += 1;
-                guests += 1;
-                let (sample_spans, sample_s) =
-                    cap_spans_to_duration(&all_spans, DEFAULT_AUTO_ENROLL_SAMPLE_MAX_S);
-                let enroll_spans = if sample_spans.is_empty() {
-                    embedded[rep].spans.clone()
-                } else {
-                    sample_spans
-                };
-                let enroll_dur = if sample_s > 0.0 {
-                    sample_s
-                } else {
-                    embedded[rep].speech_s.min(DEFAULT_AUTO_ENROLL_SAMPLE_MAX_S)
-                };
-                match auto_enroll_guest(
-                    storage,
-                    audio_path,
-                    meeting_id,
-                    &enroll_spans,
-                    enroll_dur,
-                    &embedded[rep].query,
-                    &name,
-                    &all_seg_ids,
-                    &cfg.embedding_model,
-                )
-                .await
-                {
-                    Ok(pid) => {
-                        name_by_id.insert(pid.clone(), name.clone());
-                        // Auto-enroll is not a bank match score.
-                        (Some(pid), None, name)
-                    }
-                    Err(e) => {
-                        log::warn!(
-                            "[identify] auto-enroll failed for {}: {e:#}",
-                            embedded[rep].label
-                        );
-                        (None, None, name)
-                    }
-                }
+        let (person_id, confidence, display_name) = if total_speech + f64::EPSILON
+            >= DEFAULT_AUTO_ENROLL_MIN_SPEECH_S
+        {
+            let name = format!("Guest-{guest_n}");
+            guest_n += 1;
+            guests += 1;
+            let (sample_spans, sample_s) =
+                cap_spans_to_duration(&all_spans, DEFAULT_AUTO_ENROLL_SAMPLE_MAX_S);
+            let enroll_spans = if sample_spans.is_empty() {
+                embedded[rep].spans.clone()
             } else {
-                let name = format!("Guest-{guest_n}");
-                guest_n += 1;
-                guests += 1;
-                log::info!(
+                sample_spans
+            };
+            let enroll_dur = if sample_s > 0.0 {
+                sample_s
+            } else {
+                embedded[rep].speech_s.min(DEFAULT_AUTO_ENROLL_SAMPLE_MAX_S)
+            };
+            match auto_enroll_guest(
+                storage,
+                audio_path,
+                meeting_id,
+                &enroll_spans,
+                enroll_dur,
+                &embedded[rep].query,
+                &name,
+                &all_seg_ids,
+                &cfg.embedding_model,
+            )
+            .await
+            {
+                Ok(pid) => {
+                    name_by_id.insert(pid.clone(), name.clone());
+                    // Auto-enroll is not a bank match score.
+                    (Some(pid), None, name)
+                }
+                Err(e) => {
+                    log::warn!(
+                        "[identify] auto-enroll failed for {}: {e:#}",
+                        embedded[rep].label
+                    );
+                    (None, None, name)
+                }
+            }
+        } else {
+            let name = format!("Guest-{guest_n}");
+            guest_n += 1;
+            guests += 1;
+            log::info!(
                     "[identify] {}: speech {total_speech:.1}s < auto-enroll min {DEFAULT_AUTO_ENROLL_MIN_SPEECH_S}s; label only",
                     embedded[rep].label
                 );
-                (None, None, name)
-            };
+            (None, None, name)
+        };
 
         for &mi in &members {
-            assign[mi] = Some((
-                person_id.clone(),
-                confidence,
-                display_name.clone(),
-            ));
+            assign[mi] = Some((person_id.clone(), confidence, display_name.clone()));
         }
     }
 
@@ -744,11 +709,7 @@ pub async fn identify_meeting(
     for id in &result.identities {
         assignments.insert(
             id.diar_label.clone(),
-            (
-                id.display_name.clone(),
-                id.person_id.clone(),
-                id.confidence,
-            ),
+            (id.display_name.clone(), id.person_id.clone(), id.confidence),
         );
     }
     let updated = storage

@@ -138,7 +138,9 @@ impl ServerHandler for MeetingAgentMcpServer {
                 let req: GetSummaryRequest = parse_arguments(&request.arguments)?;
                 let template = normalize_template(req.template.as_deref())?;
                 let format = normalize_format(req.format.as_deref())?;
-                self.client.get_summary(&req.meeting_id, template, format).await?
+                self.client
+                    .get_summary(&req.meeting_id, template, format)
+                    .await?
             }
             "updateMeeting" => {
                 let req: UpdateMeetingRequest = parse_arguments(&request.arguments)?;

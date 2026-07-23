@@ -141,10 +141,7 @@ pub fn validate_diarize(d: &DiarizeConfig) -> Result<(), Vec<String>> {
             d.embedding_dim
         ));
     }
-    if !is_campplus
-        && d.embedding_model.contains("resnet34")
-        && d.embedding_dim != 256
-    {
+    if !is_campplus && d.embedding_model.contains("resnet34") && d.embedding_dim != 256 {
         errs.push(format!(
             "diarize.embedding_dim should be 256 for ResNet34 (got {})",
             d.embedding_dim

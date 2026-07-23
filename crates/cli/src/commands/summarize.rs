@@ -10,7 +10,12 @@ use meeting_agent_core::{
     summary::{SummarizeOptions, SummaryClient},
 };
 
-pub async fn run(id: String, template: String, format: Option<String>, language: Option<String>) -> Result<()> {
+pub async fn run(
+    id: String,
+    template: String,
+    format: Option<String>,
+    language: Option<String>,
+) -> Result<()> {
     let template = match template.as_str() {
         "full" => SummaryTemplate::Full,
         "key-points" | "keypoints" => SummaryTemplate::KeyPoints,
@@ -29,10 +34,7 @@ pub async fn run(id: String, template: String, format: Option<String>, language:
         Some("markdown") | None => SummaryFormat::Markdown,
         Some("raw-text") | Some("rawtext") => SummaryFormat::RawText,
         Some(other) => {
-            anyhow::bail!(
-                "Unknown format: {}. Use: markdown, raw-text",
-                other
-            )
+            anyhow::bail!("Unknown format: {}. Use: markdown, raw-text", other)
         }
     };
 

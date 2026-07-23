@@ -131,13 +131,8 @@ pub fn ensure_campplus_model(model_dir: Option<&Path>) -> anyhow::Result<PathBuf
         // Also accept the upstream filename in a local dir.
         let remote_name = dir.join(CAMPPLUS_REMOTE_ONNX);
         if remote_name.exists() {
-            std::fs::copy(&remote_name, &local).with_context(|| {
-                format!(
-                    "copy {} → {}",
-                    remote_name.display(),
-                    local.display()
-                )
-            })?;
+            std::fs::copy(&remote_name, &local)
+                .with_context(|| format!("copy {} → {}", remote_name.display(), local.display()))?;
             return Ok(dir.to_path_buf());
         }
         anyhow::bail!(
@@ -168,13 +163,8 @@ pub fn ensure_campplus_model(model_dir: Option<&Path>) -> anyhow::Result<PathBuf
     if !local.exists() {
         // Prefer hardlink/copy so path is stable for EmbeddingModel load.
         if std::fs::hard_link(&remote_path, &local).is_err() {
-            std::fs::copy(&remote_path, &local).with_context(|| {
-                format!(
-                    "copy {} → {}",
-                    remote_path.display(),
-                    local.display()
-                )
-            })?;
+            std::fs::copy(&remote_path, &local)
+                .with_context(|| format!("copy {} → {}", remote_path.display(), local.display()))?;
         }
     }
 

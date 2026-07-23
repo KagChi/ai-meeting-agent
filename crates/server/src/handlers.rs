@@ -206,9 +206,7 @@ pub async fn get_transcript(
     let meeting = state.storage.get_meeting(&id).await?;
 
     // Parse optional version parameter
-    let version = params
-        .get("version")
-        .and_then(|v| v.parse::<u32>().ok());
+    let version = params.get("version").and_then(|v| v.parse::<u32>().ok());
 
     // Try to get transcript
     let transcript = state.storage.get_transcript(&id, version).await.ok();
@@ -415,7 +413,10 @@ pub async fn identify_speakers(
     .await
     .map_err(|e| {
         let msg = e.to_string();
-        if msg.contains("not found") || msg.contains("Transcript not found") || msg.contains("Recording not found") {
+        if msg.contains("not found")
+            || msg.contains("Transcript not found")
+            || msg.contains("Recording not found")
+        {
             ApiError::NotFound(msg)
         } else {
             ApiError::InternalServerError(msg)
@@ -443,7 +444,7 @@ pub async fn identify_speakers(
 }
 
 /// Clear speaker identification from a meeting transcript.
-/// 
+///
 /// Removes person_id and identify_confidence from all segments, reverting to manual/diarization labels only.
 #[utoipa::path(
     patch,
@@ -462,7 +463,7 @@ pub async fn clear_speaker_identification(
     Path(id): Path<String>,
 ) -> Result<Json<ClearIdentificationResponse>, ApiError> {
     validation::validate_uuid(&id)?;
-    
+
     let cleared = state
         .storage
         .clear_speaker_identification(&id)
@@ -538,7 +539,9 @@ pub async fn retranscribe_meeting(
         .storage
         .get_recording_path(&meeting.id)
         .await
-        .map_err(|_| ApiError::Conflict("No audio file available for retranscription".to_string()))?;
+        .map_err(|_| {
+            ApiError::Conflict("No audio file available for retranscription".to_string())
+        })?;
 
     if !audio_path.exists() {
         return Err(ApiError::Conflict(

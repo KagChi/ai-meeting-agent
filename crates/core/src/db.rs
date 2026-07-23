@@ -61,12 +61,11 @@ pub async fn init_memory_database() -> Result<Pool<Sqlite>> {
 /// is not `IF NOT EXISTS` and concurrent migrators / re-runs fail with
 /// "duplicate column name".
 async fn ensure_voice_bank_segment_columns(pool: &Pool<Sqlite>) -> Result<()> {
-    let cols: Vec<String> = sqlx::query_scalar(
-        "SELECT name FROM pragma_table_info('transcript_segments')",
-    )
-    .fetch_all(pool)
-    .await
-    .context("Failed to read transcript_segments columns")?;
+    let cols: Vec<String> =
+        sqlx::query_scalar("SELECT name FROM pragma_table_info('transcript_segments')")
+            .fetch_all(pool)
+            .await
+            .context("Failed to read transcript_segments columns")?;
 
     if !cols.iter().any(|c| c == "person_id") {
         sqlx::query(
@@ -84,12 +83,10 @@ async fn ensure_voice_bank_segment_columns(pool: &Pool<Sqlite>) -> Result<()> {
             .context("Failed to add transcript_segments.identify_confidence")?;
     }
 
-    sqlx::query(
-        "CREATE INDEX IF NOT EXISTS idx_segments_person ON transcript_segments(person_id)",
-    )
-    .execute(pool)
-    .await
-    .context("Failed to create idx_segments_person")?;
+    sqlx::query("CREATE INDEX IF NOT EXISTS idx_segments_person ON transcript_segments(person_id)")
+        .execute(pool)
+        .await
+        .context("Failed to create idx_segments_person")?;
 
     Ok(())
 }
@@ -111,7 +108,7 @@ mod tests {
             "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN (
                 'meetings', 'transcript_segments', 'summaries', 'transcript_versions',
                 'persons', 'voiceprints', 'voiceprint_samples', 'orchestrator_runs'
-            )"
+            )",
         )
         .fetch_one(&pool)
         .await

@@ -187,17 +187,21 @@ async fn embed_handler(
                 let t = field.text().await.map_err(|e| {
                     AppError::InvalidRequest(format!("Failed to read start_s: {}", e))
                 })?;
-                start_s = Some(t.trim().parse::<f64>().map_err(|e| {
-                    AppError::InvalidRequest(format!("Invalid start_s: {e}"))
-                })?);
+                start_s = Some(
+                    t.trim()
+                        .parse::<f64>()
+                        .map_err(|e| AppError::InvalidRequest(format!("Invalid start_s: {e}")))?,
+                );
             }
             "end_s" => {
                 let t = field.text().await.map_err(|e| {
                     AppError::InvalidRequest(format!("Failed to read end_s: {}", e))
                 })?;
-                end_s = Some(t.trim().parse::<f64>().map_err(|e| {
-                    AppError::InvalidRequest(format!("Invalid end_s: {e}"))
-                })?);
+                end_s = Some(
+                    t.trim()
+                        .parse::<f64>()
+                        .map_err(|e| AppError::InvalidRequest(format!("Invalid end_s: {e}")))?,
+                );
             }
             _ => {
                 warn!("Unknown field in embed multipart: {}", name);
@@ -222,10 +226,9 @@ async fn embed_handler(
 
     let config = state.config.clone();
     let path = temp_path.clone();
-    let result = tokio::task::spawn_blocking(move || {
-        embed_audio_file_local(&path, start_s, end_s, &config)
-    })
-    .await;
+    let result =
+        tokio::task::spawn_blocking(move || embed_audio_file_local(&path, start_s, end_s, &config))
+            .await;
 
     if let Err(e) = fs::remove_file(&temp_path).await {
         warn!("Failed to remove embed temp {}: {}", temp_path.display(), e);

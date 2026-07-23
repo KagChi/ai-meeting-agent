@@ -168,10 +168,7 @@ impl SummaryClient {
     ///
     /// When segments are present, returns refined text **per segment** (same length/order)
     /// plus a joined document-level string. Without segments, only the document string is set.
-    pub async fn refine(
-        &self,
-        transcript: &TranscriptionResponse,
-    ) -> Result<RefineResult> {
+    pub async fn refine(&self, transcript: &TranscriptionResponse) -> Result<RefineResult> {
         let system_prompt = "You are a transcript refinement assistant. Your task is to improve raw transcripts by:\n\
             1. Adding proper punctuation and capitalization\n\
             2. Fixing transcription errors and making the text more readable\n\
@@ -284,7 +281,10 @@ impl SummaryClient {
 
         Ok(RefineResult {
             refined_text: refined_joined,
-            segment_refined: segment_refined.into_iter().map(|s| s.unwrap_or_default()).collect(),
+            segment_refined: segment_refined
+                .into_iter()
+                .map(|s| s.unwrap_or_default())
+                .collect(),
         })
     }
 
@@ -378,7 +378,9 @@ fn parse_chat_completion_body(body: &str, content_type: &str) -> Result<String> 
         anyhow::bail!("chat completion response body was empty");
     }
 
-    let looks_like_sse = content_type.to_ascii_lowercase().contains("text/event-stream")
+    let looks_like_sse = content_type
+        .to_ascii_lowercase()
+        .contains("text/event-stream")
         || trimmed.lines().any(|line| {
             let t = line.trim_start();
             t.starts_with("data:") || t.starts_with("data: ")
@@ -472,10 +474,7 @@ fn preview_body(body: &str) -> String {
 }
 
 /// Group indexed segment lines into character-budgeted chunks (never split a line).
-fn chunk_indexed_lines(
-    lines: &[(usize, String)],
-    max_chars: usize,
-) -> Vec<Vec<(usize, String)>> {
+fn chunk_indexed_lines(lines: &[(usize, String)], max_chars: usize) -> Vec<Vec<(usize, String)>> {
     let mut chunks: Vec<Vec<(usize, String)>> = Vec::new();
     let mut current: Vec<(usize, String)> = Vec::new();
     let mut current_len = 0usize;
@@ -614,10 +613,20 @@ fn meeting_notes_system_prompt(format: SummaryFormat) -> String {
 
 fn format_meeting_context(meeting: &MeetingContext) -> String {
     let mut lines = Vec::new();
-    if let Some(title) = meeting.title.as_ref().map(|t| t.trim()).filter(|t| !t.is_empty()) {
+    if let Some(title) = meeting
+        .title
+        .as_ref()
+        .map(|t| t.trim())
+        .filter(|t| !t.is_empty())
+    {
         lines.push(format!("- Title: {title}"));
     }
-    if let Some(date) = meeting.date.as_ref().map(|d| d.trim()).filter(|d| !d.is_empty()) {
+    if let Some(date) = meeting
+        .date
+        .as_ref()
+        .map(|d| d.trim())
+        .filter(|d| !d.is_empty())
+    {
         lines.push(format!("- Date: {date}"));
     }
     if let Some(participants) = &meeting.participants {

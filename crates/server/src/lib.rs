@@ -35,10 +35,7 @@ pub fn build_router(state: AppState) -> Router {
         .merge(SwaggerUi::new("/docs").url("/api-docs/openapi.json", openapi::ApiDoc::openapi()))
         .route("/health", get(handlers::health))
         .route("/version", get(handlers::version))
-        .route(
-            "/webhooks/vexa",
-            post(orchestrator_handlers::vexa_webhook),
-        );
+        .route("/webhooks/vexa", post(orchestrator_handlers::vexa_webhook));
 
     // Protected routes — auth middleware applies to all of these.
     let protected_routes = Router::new()
@@ -55,10 +52,7 @@ pub fn build_router(state: AppState) -> Router {
             "/config/summary",
             get(config_handlers::get_summary_config).put(config_handlers::update_summary_config),
         )
-        .route(
-            "/transcripts/search",
-            get(handlers::search_all_transcripts),
-        )
+        .route("/transcripts/search", get(handlers::search_all_transcripts))
         .route(
             "/meetings",
             get(handlers::list_meetings).post(handlers::create_meeting),
@@ -70,7 +64,10 @@ pub fn build_router(state: AppState) -> Router {
                 .delete(handlers::delete_meeting),
         )
         .route("/meetings/:id/recording", get(handlers::get_recording))
-        .route("/meetings/:id/retranscribe", post(handlers::retranscribe_meeting))
+        .route(
+            "/meetings/:id/retranscribe",
+            post(handlers::retranscribe_meeting),
+        )
         .route("/meetings/:id/transcript", get(handlers::get_transcript))
         .route(
             "/meetings/:id/transcript/versions",

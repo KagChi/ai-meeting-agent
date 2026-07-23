@@ -30,8 +30,13 @@ pub async fn start_import_from_event(
 
     if !event.is_completed() {
         let external_key = event.external_key();
-        let run = create_skipped_run(&storage, &event, &external_key, "meeting status is not completed")
-            .await?;
+        let run = create_skipped_run(
+            &storage,
+            &event,
+            &external_key,
+            "meeting status is not completed",
+        )
+        .await?;
         return Ok(OrchestratorStartResult {
             run_id: run.id,
             external_key: run.external_key,
@@ -150,9 +155,7 @@ pub async fn start_import_from_event(
             .await;
 
             // After import job finishes, link meeting_id from job registry
-            let meeting_id = registry_bg
-                .get_job(&job_id_bg)
-                .and_then(|j| j.meeting_id);
+            let meeting_id = registry_bg.get_job(&job_id_bg).and_then(|j| j.meeting_id);
             let job_state = registry_bg.get_job_state(&job_id_bg);
 
             match job_state {

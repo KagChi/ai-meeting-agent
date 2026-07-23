@@ -116,7 +116,9 @@ mod tests {
 
     #[test]
     fn test_from_anyhow_fts5_is_bad_request() {
-        let err = anyhow::anyhow!("error returned from database: (code: 1) fts5: syntax error near \"+\"");
+        let err = anyhow::anyhow!(
+            "error returned from database: (code: 1) fts5: syntax error near \"+\""
+        );
         let api_err = ApiError::from(err);
         assert!(matches!(api_err, ApiError::BadRequest(_)));
     }

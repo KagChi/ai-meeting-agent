@@ -229,9 +229,10 @@ pub async fn add_sample(
                     .text()
                     .await
                     .map_err(|e| ApiError::BadRequest(format!("Failed to read duration_s: {e}")))?;
-                let v: f64 = text.trim().parse().map_err(|_| {
-                    ApiError::BadRequest(format!("Invalid duration_s: {text}"))
-                })?;
+                let v: f64 = text
+                    .trim()
+                    .parse()
+                    .map_err(|_| ApiError::BadRequest(format!("Invalid duration_s: {text}")))?;
                 if v < 0.0 {
                     return Err(ApiError::BadRequest(
                         "duration_s must be non-negative".to_string(),
@@ -272,13 +273,7 @@ pub async fn add_sample(
 
     // Best-effort centroid rebuild (needs diarization feature + enough speech).
     let cfg = state.config.read().await.diarize.clone();
-    if let Err(e) = rebuild_voiceprint(
-        &state.storage,
-        &id,
-        &cfg,
-        DEFAULT_ENROLL_MIN_SPEECH_S,
-    )
-    .await
+    if let Err(e) = rebuild_voiceprint(&state.storage, &id, &cfg, DEFAULT_ENROLL_MIN_SPEECH_S).await
     {
         log::warn!("[persons] rebuild after sample add failed: {e:#}");
     }
@@ -367,13 +362,9 @@ pub async fn list_voiceprints(
     State(state): State<AppState>,
 ) -> Result<Json<ListVoiceprintsResponse>, ApiError> {
     let vps = state.storage.list_voiceprints().await?;
-    let voiceprints: Vec<VoiceprintMetaResponse> =
-        vps.into_iter().map(voiceprint_meta).collect();
+    let voiceprints: Vec<VoiceprintMetaResponse> = vps.into_iter().map(voiceprint_meta).collect();
     let total = voiceprints.len() as u64;
-    Ok(Json(ListVoiceprintsResponse {
-        voiceprints,
-        total,
-    }))
+    Ok(Json(ListVoiceprintsResponse { voiceprints, total }))
 }
 
 #[utoipa::path(

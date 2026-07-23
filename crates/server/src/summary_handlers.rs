@@ -158,7 +158,10 @@ pub async fn get_summary(
 
     let template = parse_template(&template)?;
     let format = query.format.unwrap_or_default(); // Default to markdown
-    let summary = state.storage.get_summary(&meeting_id, template, format).await?;
+    let summary = state
+        .storage
+        .get_summary(&meeting_id, template, format)
+        .await?;
     Ok(Json(SummaryResponse { summary }))
 }
 
@@ -202,9 +205,7 @@ pub async fn update_summary(
         meeting_agent_core::models::SummaryFormat::Markdown => {
             meeting_agent_core::summary::parse_sections(&req.content, template.clone())
         }
-        meeting_agent_core::models::SummaryFormat::RawText => {
-            (Vec::new(), Vec::new(), Vec::new())
-        }
+        meeting_agent_core::models::SummaryFormat::RawText => (Vec::new(), Vec::new(), Vec::new()),
     };
 
     let summary = meeting_agent_core::models::Summary {
@@ -229,10 +230,7 @@ pub async fn update_summary(
             .as_ref()
             .map(|s| s.model.clone())
             .unwrap_or_else(|| "user-edit".to_string()),
-        created_at: existing
-            .as_ref()
-            .map(|s| s.created_at)
-            .unwrap_or(now),
+        created_at: existing.as_ref().map(|s| s.created_at).unwrap_or(now),
         updated_at: now,
     };
 

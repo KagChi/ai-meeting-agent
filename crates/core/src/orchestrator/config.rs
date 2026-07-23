@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct OrchestratorConfig {
     /// Master switch. When false, HTTP handlers return 503.
     #[serde(default)]
@@ -27,22 +27,6 @@ pub struct OrchestratorConfig {
     pub minio_bucket: Option<String>,
     #[serde(default)]
     pub minio_secure: bool,
-}
-
-impl Default for OrchestratorConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            vexa_api_base: None,
-            vexa_api_key: None,
-            webhook_secret: None,
-            minio_endpoint: None,
-            minio_access_key: None,
-            minio_secret_key: None,
-            minio_bucket: None,
-            minio_secure: false,
-        }
-    }
 }
 
 impl OrchestratorConfig {

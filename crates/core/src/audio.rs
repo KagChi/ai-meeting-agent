@@ -71,11 +71,7 @@ pub fn convert_bytes_to_wav(input_bytes: &[u8], filename: &str) -> Result<PathBu
         .map(|e| e.to_lowercase())
         .filter(|e| !e.is_empty())
         .unwrap_or_else(|| "bin".to_string());
-    let input_path = temp_dir.join(format!(
-        "meeting-agent-in-{}.{}",
-        uuid::Uuid::new_v4(),
-        ext
-    ));
+    let input_path = temp_dir.join(format!("meeting-agent-in-{}.{}", uuid::Uuid::new_v4(), ext));
 
     std::fs::write(&input_path, input_bytes).with_context(|| {
         format!(
@@ -623,7 +619,11 @@ pub fn extract_spans_to_wav_bytes(path: &Path, spans: &[(f64, f64)]) -> Result<V
     }
     // Cap total extract work: keep longest spans first if many.
     if valid.len() > 40 {
-        valid.sort_by(|a, b| (b.1 - b.0).partial_cmp(&(a.1 - a.0)).unwrap_or(std::cmp::Ordering::Equal));
+        valid.sort_by(|a, b| {
+            (b.1 - b.0)
+                .partial_cmp(&(a.1 - a.0))
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         valid.truncate(40);
         valid.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
     }
@@ -647,9 +647,7 @@ pub fn extract_spans_to_wav_bytes(path: &Path, spans: &[(f64, f64)]) -> Result<V
                 cleanup.push(p);
             }
             Err(e) => {
-                log::debug!(
-                    "[audio] skip enroll span {start:.2}-{end:.2}: {e:#}"
-                );
+                log::debug!("[audio] skip enroll span {start:.2}-{end:.2}: {e:#}");
             }
         }
     }

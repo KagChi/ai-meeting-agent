@@ -21,14 +21,14 @@ pub mod merge;
 pub mod models;
 pub mod models_download;
 
-pub use error::{DiarizeError, Result};
-pub use merge::{merge as merge_segments, CleanedSegment};
-pub use models::{WhisperSegment, WhisperTranscript};
-pub use models_download::{ensure_pretrained_models, resolve_hf_hub_cache};
 pub use embed::{
     cosine_similarity, embed_audio_file, embed_audio_file_local, embed_samples, l2_normalize,
     mean_pool_l2, EMBED_DIM, EMBED_MODEL_ID,
 };
+pub use error::{DiarizeError, Result};
+pub use merge::{merge as merge_segments, CleanedSegment};
+pub use models::{WhisperSegment, WhisperTranscript};
+pub use models_download::{ensure_pretrained_models, resolve_hf_hub_cache};
 
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};

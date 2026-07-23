@@ -45,7 +45,10 @@ impl VexaClient {
     }
 
     /// Resolve recording bytes for a meeting-ended event.
-    pub async fn download_recording(&self, event: &MeetingEndedEvent) -> Result<DownloadedRecording> {
+    pub async fn download_recording(
+        &self,
+        event: &MeetingEndedEvent,
+    ) -> Result<DownloadedRecording> {
         if let Some(url) = event.recording_url.as_deref() {
             if !url.is_empty() {
                 return self.download_url(url, event.filename.as_deref()).await;
@@ -54,9 +57,10 @@ impl VexaClient {
 
         // Try Vexa API: GET /recordings?platform=&native_meeting_id=
         if let Some(base) = &self.config.vexa_api_base {
-            if let (Some(platform), Some(native)) =
-                (event.platform.as_deref(), event.native_meeting_id.as_deref())
-            {
+            if let (Some(platform), Some(native)) = (
+                event.platform.as_deref(),
+                event.native_meeting_id.as_deref(),
+            ) {
                 if let Some(rec) = self
                     .try_fetch_via_recordings_api(base, platform, native, event.filename.as_deref())
                     .await?
@@ -66,9 +70,10 @@ impl VexaClient {
             }
 
             // Path-style: GET /recordings/{platform}/{native_meeting_id}
-            if let (Some(platform), Some(native)) =
-                (event.platform.as_deref(), event.native_meeting_id.as_deref())
-            {
+            if let (Some(platform), Some(native)) = (
+                event.platform.as_deref(),
+                event.native_meeting_id.as_deref(),
+            ) {
                 let url = format!(
                     "{}/recordings/{}/{}",
                     base.trim_end_matches('/'),
@@ -114,10 +119,7 @@ impl VexaClient {
             return Ok(None);
         };
         if !resp.status().is_success() {
-            log::debug!(
-                "Vexa GET /recordings query returned {}",
-                resp.status()
-            );
+            log::debug!("Vexa GET /recordings query returned {}", resp.status());
             return Ok(None);
         }
 

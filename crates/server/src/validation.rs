@@ -178,9 +178,7 @@ pub fn validate_person_aliases(aliases: &[String]) -> Result<(), ApiError> {
     for alias in aliases {
         let trimmed = alias.trim();
         if trimmed.is_empty() {
-            return Err(ApiError::BadRequest(
-                "Aliases cannot be empty".to_string(),
-            ));
+            return Err(ApiError::BadRequest("Aliases cannot be empty".to_string()));
         }
         if trimmed.len() > MAX_ALIAS_LEN {
             return Err(ApiError::BadRequest(format!(

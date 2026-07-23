@@ -217,7 +217,7 @@ pub async fn run(
 
     storage.create_meeting(&meeting).await?;
     storage.save_audio(&meeting.id, &file_path).await?;
-    
+
     let duration_seconds = response.duration.map(|d| d as u64).unwrap_or(0);
     storage
         .save_transcript(
