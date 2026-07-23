@@ -1,15 +1,15 @@
 import { Elysia, t } from "elysia";
-import { config, ensureDataDirs } from "./config";
+import { z } from "zod";
+import { config, CreateBotBodySchema, ensureDataDirs } from "./config";
 import {
   countActiveJobs,
   getJob,
   insertJob,
   listJobs,
-  updateJob,
 } from "./db/client";
 import { isSupported, listPlatforms } from "./platforms/registry";
 import { abortJob, runBotJob } from "./runner";
-import type { BotJob, BotJobStatus, CreateBotRequest, Platform } from "./types";
+import type { BotJob, BotJobStatus, Platform } from "./types";
 
 ensureDataDirs();
 
@@ -66,20 +66,26 @@ const app = new Elysia()
   .post(
     "/bots",
     async ({ body, set }) => {
-      const req = body as CreateBotRequest;
-      if (!req.platform || !isSupported(req.platform)) {
+      const parsed = CreateBotBodySchema.safeParse(body);
+      if (!parsed.success) {
         set.status = 400;
         return {
-          error: `invalid platform; supported: ${listPlatforms()
+          error: "validation failed",
+          details: z.treeifyError(parsed.error),
+        };
+      }
+      const req = parsed.data;
+
+      if (!isSupported(req.platform)) {
+        set.status = 400;
+        return {
+          error: `platform not implemented: ${req.platform}; available: ${listPlatforms()
             .filter((p) => p.status === "available")
             .map((p) => p.id)
             .join(", ")}`,
         };
       }
-      if (!req.meeting_url?.trim() && !req.native_meeting_id?.trim()) {
-        set.status = 400;
-        return { error: "meeting_url or native_meeting_id required" };
-      }
+
       if (countActiveJobs() >= config.maxConcurrent) {
         set.status = 409;
         return {
@@ -103,7 +109,6 @@ const app = new Elysia()
         updated_at: now,
       };
       insertJob(job);
-      // Fire and forget
       void runBotJob(job);
       set.status = 202;
       return {
@@ -129,7 +134,6 @@ const app = new Elysia()
       set.status = 404;
       return { error: "not found" };
     }
-    // Signal runner to stop; runner finalizes status (import partial if any).
     abortJob(params.id);
     return getJob(params.id) ?? job;
   })
@@ -139,7 +143,20 @@ const app = new Elysia()
   });
 
 console.log(
-  `meeting-bot listening on http://${config.host}:${config.port} (sqlite=${config.sqlitePath})`,
+  `meeting-bot listening on http://${config.host}:${config.port} ` +
+    `sqlite=${config.sqlitePath} ` +
+    `MEETING_AGENT_URL=${config.meetingAgentUrl} ` +
+    `import_auth=${config.meetingAgentApiKey ? "yes" : "no"} ` +
+    `max_bots=${config.maxConcurrent}`,
 );
+if (
+  config.meetingAgentUrl.includes("127.0.0.1") ||
+  config.meetingAgentUrl.includes("localhost")
+) {
+  console.warn(
+    "[config] MEETING_AGENT_URL points at localhost — inside Docker this is the bot container itself. " +
+      "Use the API service hostname, e.g. http://meeting-agent-api:8080",
+  );
+}
 
 export type App = typeof app;

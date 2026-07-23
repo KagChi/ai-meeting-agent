@@ -93,3 +93,4 @@ graphify-out-*/
 services/meeting-bot/data/
 services/meeting-bot/node_modules/
 services/meeting-bot/bun.lockb
+services/meeting-bot/.env

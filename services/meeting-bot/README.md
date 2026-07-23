@@ -16,13 +16,11 @@ cd services/meeting-bot
 bun install
 bunx playwright install chromium
 
-export MEETING_AGENT_URL=http://127.0.0.1:8080
-export MEETING_AGENT_API_KEY=   # if agent requires it
-export BOT_API_KEY=dev-internal # optional; agent should send same key
-export DATA_DIR=./data
+cp .env.example .env
+# edit MEETING_AGENT_URL, MEETING_AGENT_API_KEY, BOT_API_KEY, …
 
 bun run dev
-# → http://127.0.0.1:8091
+# → loads .env via `import "dotenv/config"` in src/config.ts
 ```
 
 ## Internal API
@@ -47,12 +45,36 @@ Auth: if `BOT_API_KEY` or `MEETING_BOT_INTERNAL_KEY` is set, require header `X-A
 | `BOT_API_KEY` | empty | Internal auth |
 | `DATA_DIR` | `./data` | SQLite + recordings |
 | `SQLITE_PATH` | `$DATA_DIR/meeting-bot.db` | DB path |
-| `MEETING_AGENT_URL` | `http://127.0.0.1:8080` | Import target |
-| `MEETING_AGENT_API_KEY` | empty | Agent API key |
+| `MEETING_AGENT_URL` | `http://127.0.0.1:8080` | **Import target.** In Compose use the **API service name**, e.g. `http://meeting-agent-api:8080` — **not** `127.0.0.1` |
+| `MEETING_AGENT_API_KEY` | empty | Same as agent `MEETING_AGENT_API_KEY` if auth enabled |
 | `BOT_NAME` | `BMW-Lab-Bot` | Guest display name |
 | `JOIN_TIMEOUT_MS` | `900000` | Lobby admit timeout |
 | `HEADLESS` | `false` | Chromium headless |
 | `MAX_CONCURRENT_BOTS` | `1` | Parallel jobs |
+
+### Compose gotchas (upload failed / “Unable to connect”)
+
+```yaml
+# WRONG — typo: env never applied → bot uses 127.0.0.1:8080 inside container
+environtment:
+  - MEETING_AGENT_URL: http://meeting-agent-api:8080
+
+# RIGHT — mapping form
+environment:
+  MEETING_AGENT_URL: http://meeting-agent-api:8080
+  MEETING_AGENT_API_KEY: ""          # match server if set
+  MAX_CONCURRENT_BOTS: "10"
+  BOT_NAME: BMW-Lab-Bot
+  DATA_DIR: /data
+  HEADLESS: "true"
+
+# OR list form
+environment:
+  - MEETING_AGENT_URL=http://meeting-agent-api:8080
+  - MAX_CONCURRENT_BOTS=10
+```
+
+Both services must share a Docker network so DNS name `meeting-agent-api` resolves.
 
 ## How this mirrors Vexa (Teams)
 
