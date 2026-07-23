@@ -568,6 +568,32 @@ GET /meetings/550e8400/summary/full?format=rawtext
 
 ---
 
+## Meeting bots (public; Meetily uses these)
+
+Live join + record is implemented by the internal **`services/meeting-bot`** worker.
+**Clients only call meeting-agent-server** — never the bot port directly.
+
+Enable on the agent:
+
+```bash
+MEETING_BOT_ENABLED=true
+MEETING_BOT_URL=http://127.0.0.1:8091
+MEETING_BOT_INTERNAL_KEY=   # if bot has BOT_API_KEY set
+```
+
+| Method | Path | Description |
+| --- | --- | --- |
+| `GET` | `/bots/platforms` | Available platforms (`teams` in v1) |
+| `GET` | `/bots/health` | Worker health |
+| `POST` | `/bots` | Start bot — body `{ "platform":"teams", "meeting_url":"…", "bot_name"?, "title"? }` → `202` |
+| `GET` | `/bots` | List jobs |
+| `GET` | `/bots/{id}` | Job status; when done includes `meeting_agent_job_id` from `/import` |
+| `DELETE` | `/bots/{id}` | Cancel / leave |
+
+After the call, the worker uploads audio via `POST /import`. Poll `GET /jobs/{meeting_agent_job_id}/status` for transcription.
+
+---
+
 ## Orchestrator (live bot → import)
 
 Phase 4 v1: after a Vexa bot meeting ends, download the **recording** and run the same pipeline as `POST /import`. Vexa live STT is not used.

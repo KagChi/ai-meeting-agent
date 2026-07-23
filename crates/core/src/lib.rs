@@ -4,6 +4,7 @@
 //! Handles file system operations, transcription, and summary generation.
 
 pub mod audio;
+pub mod bots;
 pub mod config;
 pub mod config_validation;
 pub mod db;

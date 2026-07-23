@@ -29,7 +29,10 @@ Branch: `ian`.
 ## Later
 - [x] **Phase 4 v1 — orchestrator in core + server:** meeting-end → download recording →
       `run_import_memory` (POST `/webhooks/vexa`, POST `/orchestrator/import`, runs table)
+- [x] **Meeting-bot service (v1 Teams):** `services/meeting-bot` (Bun/Elysia/SQLite/local WAV)
+      + agent proxy `POST/GET/DELETE /bots` (Meetily → agent only)
 - [ ] **Phase 4 remainder:** auto-summary / SOP minutes → review gate → daily-log + GCal
+- [ ] Meetily UI: join meeting via agent `/bots` + job poll
 - [ ] **Phase 5 — mobile (optional):** one-tap in-person recorder → same ingest API.
 - [ ] **Phase 6 — realtime (optional):** live captions / MCP agent hooks off Vexa WS.
 - [ ] Consent + retention policy before enabling identification on real meetings (BIPA risk, PRD §8).

@@ -88,3 +88,8 @@ graphify-out/
 graphify-out-*/
 
 .omo
+
+# meeting-bot local data
+services/meeting-bot/data/
+services/meeting-bot/node_modules/
+services/meeting-bot/bun.lockb

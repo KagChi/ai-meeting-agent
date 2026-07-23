@@ -3,6 +3,7 @@
 //! HTTP API server library for the meeting agent system.
 
 pub mod auth;
+pub mod bot_handlers;
 pub mod config_handlers;
 pub mod error;
 pub mod handlers;
@@ -129,6 +130,17 @@ pub fn build_router(state: AppState) -> Router {
         .route(
             "/orchestrator/runs/:id",
             get(orchestrator_handlers::get_orchestrator_run),
+        )
+        // Live meeting bots (proxy → services/meeting-bot). Meetily uses these only.
+        .route("/bots/platforms", get(bot_handlers::list_platforms))
+        .route("/bots/health", get(bot_handlers::bot_worker_health))
+        .route(
+            "/bots",
+            get(bot_handlers::list_bots).post(bot_handlers::create_bot),
+        )
+        .route(
+            "/bots/:id",
+            get(bot_handlers::get_bot).delete(bot_handlers::delete_bot),
         )
         .route("/jobs", get(import_handlers::list_jobs))
         .route(

@@ -12,6 +12,8 @@ pub struct Config {
     pub diarize: DiarizeConfig,
     #[serde(default)]
     pub orchestrator: crate::orchestrator::OrchestratorConfig,
+    #[serde(default)]
+    pub meeting_bot: crate::bots::MeetingBotConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -231,6 +233,7 @@ impl Default for Config {
             },
             diarize: DiarizeConfig::default(),
             orchestrator: crate::orchestrator::OrchestratorConfig::default(),
+            meeting_bot: crate::bots::MeetingBotConfig::default(),
         }
     }
 }
@@ -323,6 +326,9 @@ impl Config {
 
         // Live-bot orchestrator (Vexa meeting-end → import)
         config.orchestrator.apply_env();
+
+        // Internal meeting-bot worker (Teams join + record)
+        config.meeting_bot.apply_env();
 
         // Server overrides (MEETING_AGENT_* env vars documented in .env.example)
         if let Ok(port) = std::env::var("MEETING_AGENT_PORT") {

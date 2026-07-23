@@ -1,5 +1,6 @@
 //! OpenAPI documentation setup
 
+use crate::bot_handlers;
 use crate::config_handlers;
 use crate::handlers;
 use crate::import_handlers;
@@ -67,6 +68,12 @@ use utoipa::OpenApi;
         orchestrator_handlers::create_orchestrator_import,
         orchestrator_handlers::vexa_webhook,
         orchestrator_handlers::get_orchestrator_run,
+        // Bots (proxy to meeting-bot)
+        bot_handlers::list_platforms,
+        bot_handlers::list_bots,
+        bot_handlers::get_bot,
+        bot_handlers::create_bot,
+        bot_handlers::delete_bot,
     ),
     components(
         schemas(
@@ -148,6 +155,7 @@ use utoipa::OpenApi;
         (name = "config", description = "Configuration management endpoints"),
         (name = "persons", description = "Voice bank: persons, enrollment samples, voiceprints"),
         (name = "orchestrator", description = "Live-bot meeting-end → download → import"),
+        (name = "bots", description = "Dispatch meeting bots (proxied to meeting-bot service)"),
     )
 )]
 pub struct ApiDoc;

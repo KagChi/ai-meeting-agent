@@ -7,10 +7,9 @@ spec in [PRD.md](PRD.md); deployment in [deploy/README.md](deploy/README.md).
 
 Two cooperating stacks, all models on the **DGX Spark**, no meeting data leaves the lab:
 
-1. **Bot spine — Vexa** (external, `Vexa-ai/vexa`, Apache-2.0; sibling checkout).
-   Joins Teams/Zoom/Meet and **records to MinIO only** (no Vexa live STT:
-   `TRANSCRIBE_ENABLED=false`). Include via `deploy/docker-compose.bots.yml`.
-   Call `POST /bots` on gateway `:18056`; pull recordings from MinIO / `GET /recordings`.
+1. **Bot spine — `services/meeting-bot`** (Bun + Elysia; internal).
+   Platform adapters (Teams v1); SQLite jobs + local WAV; handoff via agent `POST /import`.
+   **Meetily talks only to meeting-agent-server** (`POST /bots` proxy). Optional Vexa remains external.
 2. **Lab-intelligence layer — this repo** (Rust workspace + DGX model services):
    - `crates/core` — models, storage (`~/.meeting-agent/`), transcription/summary
      clients, jobs. File-import path retained as an ingest source.

@@ -238,6 +238,7 @@ mod tests {
             server: good_server(),
             diarize: good_diarize(),
             orchestrator: Default::default(),
+            meeting_bot: Default::default(),
         };
         assert!(validate_config(&c).is_ok());
     }
