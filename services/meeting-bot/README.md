@@ -54,12 +54,22 @@ Auth: if `BOT_API_KEY` or `MEETING_BOT_INTERNAL_KEY` is set, require header `X-A
 | `HEADLESS` | `false` | Chromium headless |
 | `MAX_CONCURRENT_BOTS` | `1` | Parallel jobs |
 
+## How this mirrors Vexa (Teams)
+
+| Concern | Vexa | meeting-bot |
+| --- | --- | --- |
+| Join | Playwright + `msteams/join.ts` | `platforms/teams/adapter.ts` (same steps/selectors) |
+| Record | **In-page MediaRecorder** (Web Audio mix) | `capture/media-recorder.ts` |
+| Pulse/ffmpeg host | Zoom Web only | Optional fallback only (`capture/recorder.ts`) |
+| After call | Chunks → MinIO | Local WAV/WebM → agent `POST /import` |
+
 ## Teams notes
 
 1. Pass a full Teams **join URL** (`meeting_url`).  
 2. Host must **admit** the guest from the lobby.  
-3. System audio capture uses **ffmpeg + Pulse** (`default` source). On macOS/desktop without Pulse, install/configure audio or run in the Docker image.  
-4. Selectors live in `src/platforms/teams/selectors.ts` — update when Teams UI changes.
+3. Audio is captured **inside Chromium** (MediaRecorder), not host Pulse — same as Vexa for Teams.  
+4. Selectors live in `src/platforms/teams/selectors.ts` — update when Teams UI changes.  
+5. Camera uses blank/black fallback (no green Chromium test pattern).
 
 ## Docker
 

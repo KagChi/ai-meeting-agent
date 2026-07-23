@@ -272,9 +272,12 @@ export const teamsAdapter: PlatformAdapter = {
     // Step 2.5 — pre-join readiness (incl. without-media modal)
     await waitForPreJoinReadiness(page, 45_000);
 
-    // Step 3 — camera off
+    // Step 3 — camera OFF (avoid any preview; no green test pattern if cam was on)
     if (await clickFirst(page, cameraOffSelectors)) {
       console.log("[teams] camera turned off");
+    } else {
+      // Already off shows "Turn on camera" — leave it
+      console.log("[teams] camera off control not found (may already be off)");
     }
 
     // Step 4 — display name
@@ -309,12 +312,13 @@ export const teamsAdapter: PlatformAdapter = {
     // Step 6c — AV confirmation modal after Join now (Vexa #467)
     await handlePostJoinAvModal(page);
 
-    // Mute mic (Ctrl+Shift+M)
+    // Mute mic again in-call; re-assert camera off if toolbar is available
     try {
       await page.keyboard.press("Control+Shift+M");
     } catch {
       /* ignore */
     }
+    await clickFirst(page, cameraOffSelectors);
 
     // Step 7 — wait for admission (lobby or Leave button)
     const deadline = Date.now() + joinTimeoutMs;

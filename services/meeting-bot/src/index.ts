@@ -129,15 +129,9 @@ const app = new Elysia()
       set.status = 404;
       return { error: "not found" };
     }
+    // Signal runner to stop; runner finalizes status (import partial if any).
     abortJob(params.id);
-    const active = ["queued", "joining", "in_call", "recording", "uploading"];
-    if (active.includes(job.status)) {
-      updateJob(params.id, {
-        status: "failed",
-        error: "cancelled by user",
-      });
-    }
-    return getJob(params.id);
+    return getJob(params.id) ?? job;
   })
   .listen({
     port: config.port,

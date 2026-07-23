@@ -34,6 +34,11 @@ RUN bun install --frozen-lockfile || bun install
 RUN bunx playwright install chromium
 
 COPY . .
+RUN chmod +x /app/entrypoint.sh \
+    && apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+       pulseaudio-utils \
+    && rm -rf /var/lib/apt/lists/*
+
 ENV BOT_PORT=8091 \
     BOT_HOST=0.0.0.0 \
     DATA_DIR=/data \
@@ -42,5 +47,5 @@ ENV BOT_PORT=8091 \
 VOLUME ["/data"]
 EXPOSE 8091
 
-# Xvfb when not truly headless-display; HEADLESS=true still uses Chromium headless
-CMD ["bun", "run", "src/index.ts"]
+# Pulse null-sink + Bun server (see entrypoint.sh)
+ENTRYPOINT ["/app/entrypoint.sh"]
