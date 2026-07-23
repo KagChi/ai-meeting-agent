@@ -286,9 +286,11 @@ mod tests {
 
     #[test]
     fn minio_url_builds() {
-        let mut cfg = OrchestratorConfig::default();
-        cfg.minio_endpoint = Some("127.0.0.1:9000".into());
-        cfg.minio_bucket = Some("vexa".into());
+        let cfg = OrchestratorConfig {
+            minio_endpoint: Some("127.0.0.1:9000".into()),
+            minio_bucket: Some("vexa".into()),
+            ..Default::default()
+        };
         let c = VexaClient::new(cfg).unwrap();
         assert_eq!(
             c.minio_object_url("meetings/x.webm").as_deref(),

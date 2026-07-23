@@ -286,6 +286,7 @@ fn uf_union(parent: &mut [usize], a: usize, b: usize) {
 
 /// Create person + meeting-turn sample (+ optional centroid) for an unmatched speaker.
 #[cfg(feature = "diarization")]
+#[allow(clippy::too_many_arguments)]
 async fn auto_enroll_guest(
     storage: &MeetingStorage,
     audio_path: &Path,
@@ -532,7 +533,8 @@ pub async fn identify_transcript_with_meeting(
     group_roots.sort_unstable();
 
     // Assignment per embedded index: (person_id, confidence, display_name)
-    let mut assign: Vec<Option<(Option<String>, Option<f32>, String)>> = vec![None; embedded.len()];
+    type SpeakerAssign = (Option<String>, Option<f32>, String);
+    let mut assign: Vec<Option<SpeakerAssign>> = vec![None; embedded.len()];
     let mut matched = 0u32;
     let mut guests = 0u32;
     let mut guest_n = next_guest_index(&name_by_id);

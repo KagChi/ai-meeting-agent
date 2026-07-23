@@ -175,20 +175,15 @@ pub enum SummaryTemplate {
 }
 
 /// Output format for summary content.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[serde(rename_all = "lowercase")]
 pub enum SummaryFormat {
     /// Structured markdown with headings and bullet points (default).
+    #[default]
     Markdown,
     /// Plain text without markdown formatting.
     RawText,
-}
-
-impl Default for SummaryFormat {
-    fn default() -> Self {
-        Self::Markdown
-    }
 }
 
 /// Status of a summary generation job.

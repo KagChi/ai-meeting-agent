@@ -16,7 +16,7 @@ use crate::summary::{SummarizeOptions, SummaryClient};
 use crate::transcription::{TranscriptionClient, TranscriptionRequest, TranscriptionResponse};
 use anyhow::{Context, Result};
 use chrono::Utc;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 
@@ -288,12 +288,7 @@ async fn run_summary_inner(
         Some(
             chat_messages
                 .into_iter()
-                .map(|m| {
-                    (
-                        m.author.unwrap_or_else(|| "Unknown".to_string()),
-                        m.body,
-                    )
-                })
+                .map(|m| (m.author.unwrap_or_else(|| "Unknown".to_string()), m.body))
                 .collect(),
         )
     };
@@ -436,7 +431,7 @@ async fn run_import_memory_inner(cfg: &ImportMemoryConfig) -> Result<()> {
 async fn run_import_memory_work(
     cfg: &ImportMemoryConfig,
     needs_conversion: bool,
-    original_temp: &PathBuf,
+    original_temp: &Path,
 ) -> Result<()> {
     check_cancelled(&cfg.cancel_token)?;
 
@@ -448,7 +443,7 @@ async fn run_import_memory_work(
             cfg.audio_bytes.len()
         );
         let converted = tokio::task::spawn_blocking({
-            let path = original_temp.clone();
+            let path = original_temp.to_path_buf();
             move || audio::convert_to_wav(&path)
         })
         .await??;
@@ -464,7 +459,7 @@ async fn run_import_memory_work(
             original_temp.display()
         );
         converted_temp = None;
-        original_temp.clone()
+        original_temp.to_path_buf()
     };
 
     let cleanup_converted = |path: &Option<PathBuf>| {
@@ -732,9 +727,7 @@ fn spawn_identify_job_if_needed(
         let config = config.clone();
         let registry = Arc::clone(registry);
         let meeting_id = meeting_id.to_string();
-        let cancel_token = registry
-            .cancel_token(&identify_job_id)
-            .unwrap_or_else(CancellationToken::new);
+        let cancel_token = registry.cancel_token(&identify_job_id).unwrap_or_default();
 
         log::info!("[identify] spawned background job {identify_job_id} for meeting {meeting_id}");
 

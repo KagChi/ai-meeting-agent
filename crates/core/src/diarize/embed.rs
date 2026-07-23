@@ -37,7 +37,7 @@ const CAMPPLUS_MIN_SAMPLES: usize = 8_000;
 
 enum Backend {
     CampPlus(Session),
-    ResNet34(EmbeddingModel),
+    ResNet34(Box<EmbeddingModel>),
 }
 
 struct CachedEmbedder {
@@ -223,7 +223,7 @@ fn load_backend(
     } else {
         let (emb, loaded) = load_resnet34(model_dir, mode)?;
         Ok((
-            Backend::ResNet34(emb),
+            Backend::ResNet34(Box::new(emb)),
             loaded,
             if cfg.embedding_model.is_empty() {
                 RESNET34_MODEL_ID.to_string()

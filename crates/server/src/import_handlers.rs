@@ -91,9 +91,10 @@ pub async fn create_import(
                 }
             }
             "chat" => {
-                let text = field.text().await.map_err(|e| {
-                    ApiError::BadRequest(format!("Failed to read chat field: {e}"))
-                })?;
+                let text = field
+                    .text()
+                    .await
+                    .map_err(|e| ApiError::BadRequest(format!("Failed to read chat field: {e}")))?;
                 if !text.trim().is_empty() {
                     chat = Some(parse_import_chat(&text, platform.as_deref())?);
                 }

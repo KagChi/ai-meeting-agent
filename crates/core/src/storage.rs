@@ -662,9 +662,7 @@ impl MeetingStorage {
         let version_clause = if let Some(v) = version {
             format!("AND version = {}", v)
         } else {
-            format!(
-                "AND version = (SELECT COALESCE(MAX(version), 1) FROM transcript_segments WHERE meeting_id = ?)"
-            )
+            "AND version = (SELECT COALESCE(MAX(version), 1) FROM transcript_segments WHERE meeting_id = ?)".to_string()
         };
 
         let query = format!(
